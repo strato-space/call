@@ -1,0 +1,19 @@
+.inbox/
+.inbox2/
+.idea/
+.venv/
+.wenv/
+.env
+logs/
+*.log
+wallet/
+news/
+node_modules/
+vendor/
+composer.phar
+symfony.lock
+package-lock.json
+
+# macOS specific files
+.DS_Store
+.DS_Store?
