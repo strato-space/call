@@ -39,6 +39,41 @@ Call integrates with and executes artifacts produced by:
 
 See also the strategy doc: `org/strato/context/01. strato stategy/process-agents.md`.
 
+## AgentFab (Group Agent) — Quick Start
+
+- Invocation (chat/shell):
+
+  ```text
+  @AgentFab @AgentName <input>
+  ```
+  - `<input>` may be a free-form string (treated as goal), a file/URL to an agent scaffold, or a YAML-like block.
+- MCP method (planned/minimal): `call(agentName, input)`
+- Resolvers used by Call:
+  - `agentName` → `AgentObj`
+  - `input` (string) → `inputObj`
+  - `output` (string) → `outputObj`
+- Discovery order (creator → execution):
+  - `prompt/AgentFab/<AgentName>.yaml`
+  - `prompt/AgentFab/<AgentName>/agent.yaml`
+  - `prompt/agents/<AgentName>/agent.yaml`
+- Output artifacts (runnable): `prompt/agents/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
+- Reference: `prompt/AgentFab/agent.yaml`.
+
+- AgentFab card fields:
+  - `agents`: map of `AgentName: goal` (names only, without `@`). This replaces the old list format.
+  - Note: `agent_goals` is deprecated; goals are now embedded in the `agents` mapping.
+
+- Agent card fields:
+  - `prompts`: map of `PromptName: goal` (names only, without `@`). This replaces the old table/list format.
+  - Example:
+
+    ```yaml
+    id: DialogSummary
+    name: "🕶 A / DialogSummary"
+    prompts:
+      InterviewSummary: "Сгенерировать summary: цели, задачи, ограничения, критерии успеха"
+    ```
+
 ## Typical Use Cases
 
 - Invoke a named agent pipeline on a payload and route the result to a file/Google Sheet/Telegram.
@@ -47,7 +82,7 @@ See also the strategy doc: `org/strato/context/01. strato stategy/process-agents
 
 ## CLI (planned minimal interface)
 
-```
+```bash
 call "@UralAiNewsAggr:DailyDigest" --payload "text: ..." --out "file-path:reports/daily.md"
 ```
 
@@ -91,6 +126,32 @@ security:
   mcpAllowlist: [fs, gsh, rag, seq]
 ```
 
+### Environment variables (current Python runtime)
+
+The module `call/app/call.py` expects the following environment variables (can be provided via `.env`):
+
+- `TELEGRAM_TOKEN` — Telegram Bot token
+- `TELEGRAM_CHAT_ID` — primary chat id (int). If a 10‑digit id is provided, it will be normalized to `-100XXXXXXXXXX` internally.
+- `TELEGRAM_SECOND_CHAT_ID` — secondary chat id (int)
+- `TELEGRAM_THREAD_ID` — optional thread id (int)
+- `TELEGRAPH_TOKEN` — Telegra.ph access token
+- `OPENAI_API_KEY` — API key for the LLM
+- `PROMPT_REPO` — absolute path to the Prompt repository; if not set, discovery tries sibling `../prompt` (see `discover_prompt_repo()` in `call/app/call.py`).
+
+Notes:
+- On startup, `call/app/call.py` will copy `../.env` into local `.env` if `.env` is missing.
+- All envs are sanitized by `ensure_env()`; missing required ones will raise.
+
+### Python dependencies
+
+Install Python deps from `app/requirements.txt`:
+
+```bash
+uv venv && source .venv/bin/activate
+uv pip install -r app/requirements.txt
+# or: pip install -r app/requirements.txt
+```
+
 ## Execution Model (MVP)
 
 1. Parse address: `@[Org][Agent][:Pipeline][:Prompt]` → normalized identifiers.
@@ -121,7 +182,7 @@ uvicorn call.app:app --reload --port 8088
 
 Directory layout (proposed):
 
-```
+```text
 call/
   README.md
   config.yaml           # optional local config
