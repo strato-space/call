@@ -209,7 +209,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
 
 logging.getLogger("openai").setLevel(logging.DEBUG)
 
-default_samples_dir = os.getcwd()
+default_samples_dir = str(Path(os.getcwd()).parent)
 
 def _flatten_output_section(output_val) -> dict:
     """Normalize 'output' which may be a list of single-key maps into a flat dict.
@@ -544,8 +544,38 @@ def discover_prompt_repo() -> Path:
 
 
 def discover_agent_yaml(agent_name: str) -> Path | None:
-    """Find agent.yaml for given AgentName (PascalCase) inside prompt/agents/"""
+    """Discover agent definition YAML with creator->execution precedence.
+
+    Search order (separates creator system from execution system):
+    1) Creator:   prompt/AgentFab/<AgentName>.yaml
+                  prompt/AgentFab/<AgentName>/agent.yaml
+       (case-insensitive matching on <AgentName>)
+    2) Execution: prompt/agents/<AgentName>/agent.yaml
+       (existing behavior; case-insensitive dir match)
+
+    Args:
+        agent_name: PascalCase AgentName (use to_pascal_case() on inputs).
+
+    Returns:
+        Path to YAML file or None if not found.
+    """
     repo = discover_prompt_repo()
+
+    # 1) Creator system lookup under prompt/AgentFab
+    creator_dir = repo / 'AgentFab'
+    if creator_dir.exists():
+        # 1.a direct file: AgentFab/<AgentName>.yaml
+        direct_file = creator_dir / f"{agent_name}.yaml"
+        if direct_file.exists():
+            return direct_file
+        # 1.b nested folder: AgentFab/<AgentName>/agent.yaml (case-insensitive)
+        for child in creator_dir.iterdir():
+            if child.is_dir() and child.name.lower() == agent_name.lower():
+                cand = child / 'agent.yaml'
+                if cand.exists():
+                    return cand
+
+    # 2) Execution system lookup under prompt/agents (existing behavior)
     agents_dir = repo / 'agents'
     if not agents_dir.exists():
         return None
