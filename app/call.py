@@ -18,24 +18,31 @@ except ModuleNotFoundError:
     from app.utils.agent_utils import extract_agent_attributes, get_agent_instructions
 from pathlib import Path
 import shutil
-from bs4 import BeautifulSoup      # html5lib is used implicitly by BS
-from htmlmin.minify import html_minify
+from bs4 import BeautifulSoup      # use stdlib 'html.parser' to avoid extra deps
 
 
 from mcp.types import CallToolResult
 
-# Check if `.env` exists, if not copy from `../.env`
-# [Environment]::SetEnvironmentVariable('API_ACCESS_TOKEN', '123123142356365864895789678967', 'User')
-# wsl: source /home/iqdoctor/.virtualenvs/ai/bin/activate
+"""
+Environment loading: resolve .env relative to this file location, not CWD.
+Search order:
+  1) call/.env (sibling of this app/ directory)
+  2) repo_root/.env (one level above call/)
+If not found, raise with a helpful message. We do not copy files.
+"""
+_here = Path(__file__).resolve()
+_app_dir = _here.parent
+_call_dir = _app_dir.parent
+_repo_root = _call_dir.parent
 
-env_path = Path(".env")
-template_env_path = Path("../.env")
-
-if not env_path.exists():
-    if not template_env_path.exists():
-        raise FileNotFoundError(f"Template .env file not found at {template_env_path.absolute()}")
-    shutil.copy(template_env_path, env_path)
-    print("Copied .env from ../.env as it was missing.")
+_env_candidates = [
+    _call_dir / ".env",
+    _repo_root / ".env",
+]
+_env_file = next((p for p in _env_candidates if p.exists()), None)
+if _env_file is None:
+    checked = ", ".join(str(p) for p in _env_candidates)
+    raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
 from agents.run_context import RunContextWrapper
@@ -49,7 +56,7 @@ from telegram import Bot, Message
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=str(_env_file))
 
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
@@ -259,9 +266,9 @@ def _normalize_chat_id(v) -> int | None:
         return None
 
 def clean_html_for_telegraph(html_content: str) -> str:
-    # Parse with html5lib (robust) and sanitize to Telegraph-allowed subset
+    # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
     # Note: Telegraph rejects many tags (e.g., h1/h2, hr, html/body/head, small, etc.)
-    soup = BeautifulSoup(html_content, "html5lib")
+    soup = BeautifulSoup(html_content, "html.parser")
 
     # 1) Drop document-level wrappers early
     for tag in soup.find_all(["html", "head", "body"]):
@@ -319,15 +326,22 @@ def clean_html_for_telegraph(html_content: str) -> str:
     return cleaned.strip()
 
 def minify_html_func(html_string: str) -> str:
+    """Sanitize and lightly minify HTML without external minifiers.
+
+    Steps:
+    - Whitelist sanitizer via clean_html_for_telegraph()
+    - Strip HTML comments
+    - Collapse inter-tag whitespace (">   <" -> "><")
+    - Trim leading/trailing whitespace
+    """
+    import re
+
     cleaned = clean_html_for_telegraph(html_string)
-    minified = html_minify(
-        cleaned,
-        ignore_comments=False  # remove comments
-    )
-    # Document wrappers should already be unwrapped, but double-ensure
-    for tag in ['<html>', '</html>', '<body>', '</body>', '<head>', '</head>']:
-        minified = minified.replace(tag, '')
-    return minified.strip()
+    # Remove HTML comments
+    s = re.sub(r"<!--.*?-->", "", cleaned, flags=re.DOTALL)
+    # Collapse inter-tag whitespace only (preserves spacing inside text nodes)
+    s = re.sub(r">\s+<", "><", s)
+    return s.strip()
 
 async def load_prompt(directory="prompt", variables: dict = None, agent_path: str | None = None) -> dict:
     """
