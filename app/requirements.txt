@@ -5,11 +5,11 @@ requests[socks]>=2.31.0            # Requests + PySocks for SOCKS5 proxy
 # httpx-socks>=0.6.0
 
 openai-agents>=0.1.0               # Multi-agent workflows SDK :contentReference[oaicite:3]{index=3}
-minify-html>=0.4.5                 # Rust‑powered HTML minifier :contentReference[oaicite:4]{index=4}
+ # minify-html removed: required Rust toolchain, not used
 telegraph[aio]>=0.3.2              # Python Telegraph API wrapper :contentReference[oaicite:5]{index=5}
 python-telegram-bot>=22.2.0        # Async Telegram Bot API :contentReference[oaicite:6]{index=6}
 python-dotenv>=1.0.0               # Load .env files into env vars :contentReference[oaicite:7]{index=7}
-django-htmlmin>=0.1.12             # Django middleware for HTML minification :contentReference[oaicite:8]{index=8}
+ # django-htmlmin removed: Django not used here
 beautifulsoup4
-llama-index==0.10.46               # Windows-friendly package name/version
+ # llama-index removed: pulls pandas build on Python 3.13; not used in call/
 # pathway>=0.5.0
