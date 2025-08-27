@@ -120,9 +120,11 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
     """
     global telegram_last_message
     try:
+        # Sanitize for Telegram HTML to avoid unsupported tags (e.g., ul/li)
+        safe_text = clean_html_for_telegram(text) if parse_mode == ParseMode.HTML else (text or "")
         message = await bot.send_message(
             chat_id=chat_id or telegram_last_message.chat_id,
-            text=text,
+            text=safe_text,
             parse_mode=parse_mode,
             message_thread_id=message_thread_id or telegram_last_message.message_thread_id or None,
         )
@@ -203,11 +205,12 @@ async def send_digest_notification(url: str, themes_url: str | None = None, prom
 
 async def telegram_send_message(chat_id: int = None, text: str = None, message_thread_id: int = None, reply_markup: InlineKeyboardMarkup = None):
 
+    safe_text = clean_html_for_telegram(text or "")
     message = await bot.send_message(
         chat_id=chat_id or telegram_last_message.chat_id,
         message_thread_id = message_thread_id or (
         telegram_last_message.message_thread_id if telegram_last_message else None),
-        text=text,
+        text=safe_text,
         parse_mode=ParseMode.HTML,
         reply_markup=reply_markup
     )
@@ -264,6 +267,32 @@ def _normalize_chat_id(v) -> int | None:
         return int(s)
     except Exception:
         return None
+
+def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
+    """Extract chat_id and thread_id from various 'output' layouts.
+
+    Supports:
+    - output: { chat_id: ..., thread_id: ... }
+    - output: [ {chat_id: ...}, {thread_id: ...} ]
+    - output: { tg: { chat_id: ..., thread_id: ... } }
+    - output: [ { tg: { chat_id: ..., thread_id: ... } } ]
+    Returns tuple(chat_id:int|None, thread_id:int|None)
+    """
+    flat = _flatten_output_section(output_val)
+    chat_id = _normalize_chat_id(flat.get("chat_id"))
+    def _to_int(v):
+        try:
+            return int(str(v).strip())
+        except Exception:
+            return None
+    thread_id = _to_int(flat.get("thread_id"))
+
+    tg = flat.get("tg")
+    if isinstance(tg, dict):
+        chat_id = chat_id if chat_id is not None else _normalize_chat_id(tg.get("chat_id"))
+        thread_id = thread_id if thread_id is not None else _to_int(tg.get("thread_id"))
+
+    return chat_id, thread_id
 
 def clean_html_for_telegraph(html_content: str) -> str:
     # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
@@ -323,6 +352,63 @@ def clean_html_for_telegraph(html_content: str) -> str:
     cleaned = str(soup).replace('\n', '')
     if not soup.get_text(strip=True):
         raise ValueError("Cleaned HTML has no text content!")
+    return cleaned.strip()
+
+def clean_html_for_telegram(html_content: str) -> str:
+    """Sanitize HTML for Telegram parse_mode=HTML.
+
+    Telegram supports a limited subset of tags. This function:
+    - Converts <ul>/<ol>/<li> into plain-text bullet or numbered lines.
+    - Unwraps unsupported tags while preserving text.
+    - Strips disallowed attributes, keeping only href on <a>.
+    """
+    from bs4 import BeautifulSoup
+
+    if not isinstance(html_content, str):
+        return ""
+
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    # Convert lists to plain text lines
+    for ul in list(soup.find_all("ul")):
+        lines = []
+        for li in ul.find_all("li", recursive=False):
+            txt = li.get_text(" ", strip=True)
+            if txt:
+                lines.append(f"• {txt}")
+        new_p = soup.new_tag("p")
+        new_p.string = "\n".join(lines) if lines else ""
+        ul.replace_with(new_p)
+
+    for ol in list(soup.find_all("ol")):
+        lines = []
+        idx = 1
+        for li in ol.find_all("li", recursive=False):
+            txt = li.get_text(" ", strip=True)
+            if txt:
+                lines.append(f"{idx}. {txt}")
+                idx += 1
+        new_p = soup.new_tag("p")
+        new_p.string = "\n".join(lines) if lines else ""
+        ol.replace_with(new_p)
+
+    # Allowed tags for Telegram HTML
+    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
+
+    # Unwrap unsupported tags
+    for tag in list(soup.find_all(True)):
+        if tag.name not in allowed_tags:
+            tag.unwrap()
+
+    # Strip attributes, keep only href for <a>
+    for tag in soup.find_all(True):
+        allowed_attrs = {}
+        if tag.name == "a" and tag.has_attr("href"):
+            allowed_attrs["href"] = tag["href"]
+        tag.attrs = allowed_attrs
+
+    cleaned = str(soup)
+    # Telegram is sensitive to stray newlines before/after code/pre; basic trim
     return cleaned.strip()
 
 def minify_html_func(html_string: str) -> str:
@@ -1077,7 +1163,7 @@ async def main(agent_path: str = None, input_text: str = "", debug: bool = False
         welcome_text = ' <b>🔌AI News Aggregator Father</b>: старт подготовки дайджеста'
 
     
-    # Prefer chat/thread from agent YAML (raw), then default prompt, then attributes
+    # Prefer chat/thread from agent YAML/prompt (including output.tg.*), then attributes, then env
     prompt_chat_id = None
     prompt_thread_id = None
     try:
@@ -1085,14 +1171,10 @@ async def main(agent_path: str = None, input_text: str = "", debug: bool = False
         if agent_path:
             try:
                 _raw_yaml = load_yaml(Path(agent_path))
-                _raw_out = _flatten_output_section(_raw_yaml.get("output")) if isinstance(_raw_yaml, dict) else {}
-                prompt_chat_id = _normalize_chat_id(_raw_out.get("chat_id")) or prompt_chat_id
-                def _to_int0(v):
-                    try:
-                        return int(str(v).strip())
-                    except Exception:
-                        return None
-                prompt_thread_id = _to_int0(_raw_out.get("thread_id")) or prompt_thread_id
+                _raw_out = _raw_yaml.get("output") if isinstance(_raw_yaml, dict) else {}
+                c_id, t_id = _extract_tg_targets(_raw_out)
+                prompt_chat_id = c_id or prompt_chat_id
+                prompt_thread_id = t_id or prompt_thread_id
             except Exception:
                 pass
         # Prefer explicit agent_path passed to main()
@@ -1112,28 +1194,19 @@ async def main(agent_path: str = None, input_text: str = "", debug: bool = False
             output_raw = default_prompt.get("output") if isinstance(default_prompt, dict) else None
             if not output_raw and isinstance(dto.attributes, dict):
                 output_raw = dto.attributes.get("output")
-            flat_output = _flatten_output_section(output_raw)
-            # Coerce to ints when possible
-            def _to_int(v):
-                try:
-                    return int(str(v).strip())
-                except Exception:
-                    return None
-            prompt_chat_id = _normalize_chat_id(flat_output.get("chat_id")) or prompt_chat_id
-            prompt_thread_id = _to_int(flat_output.get("thread_id")) or prompt_thread_id
+            c_id2, t_id2 = _extract_tg_targets(output_raw)
+            prompt_chat_id = c_id2 or prompt_chat_id
+            prompt_thread_id = t_id2 or prompt_thread_id
     except Exception:
         pass
 
     # Fallback: read from agent_attrs if still missing
     if (prompt_chat_id is None or prompt_thread_id is None) and isinstance(agent_attrs, dict):
-        flat_out2 = _flatten_output_section(agent_attrs.get("output"))
-        def _to_int2(v):
-            try:
-                return int(str(v).strip())
-            except Exception:
-                return None
-        prompt_chat_id = prompt_chat_id if prompt_chat_id is not None else _normalize_chat_id(flat_out2.get("chat_id"))
-        prompt_thread_id = prompt_thread_id if prompt_thread_id is not None else _to_int2(flat_out2.get("thread_id"))
+        c_id3, t_id3 = _extract_tg_targets(agent_attrs.get("output"))
+        if prompt_chat_id is None:
+            prompt_chat_id = c_id3
+        if prompt_thread_id is None:
+            prompt_thread_id = t_id3
 
     if not debug:
         print(f"[INFO] Agent path: {agent_path}")
