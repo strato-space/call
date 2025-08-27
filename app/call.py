@@ -918,7 +918,7 @@ class AgentDTO:
         return None
 
 
-async def run_digest_pipeline(samples_dir: str, agent_path: str = None, input_text: str = "", debug: bool = False):
+async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False):
     # Запускаем два MCP-сервера параллельно (filesystem и sequential-thinking)
     server_gsheets = None
     async with MCPServerStdioHook(
@@ -1105,16 +1105,21 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, input_te
             instructions=agent_instructions,
             # prompt=prompt_data["prompt"],
             tools=[WebSearchTool()],
-            # tools=[],
             mcp_servers=[server_fs, server_seq],
             model=model_name,
             model_settings=(model_settings_obj or ModelSettings())
         )
 
-        # Выполняем запрос
+        # Выполняем запрос: передаём user_input как элемент истории {"user": user_input}
+        _seed_history = []
+        try:
+            if user_input:
+                _seed_history.append({"user": user_input})
+        except Exception:
+            pass
         result1 = await Runner.run(
-            starting_agent=agent,
-            input=input_text or "",
+            agent,
+            _seed_history,
             max_turns=50
         )
 
@@ -1143,7 +1148,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, input_te
 
         return agent, history, step1_output
 
-async def main(agent_path: str = None, input_text: str = "", debug: bool = False):
+async def main(agent_path: str = None, user_input: str = "", debug: bool = False):
     # When debugging, avoid external side effects like Telegram messages
     if not debug:
         await init_bot()
@@ -1230,7 +1235,7 @@ async def main(agent_path: str = None, input_text: str = "", debug: bool = False
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir, 
         agent_path=agent_path,
-        input_text=input_text,
+        user_input=user_input,
         debug=debug
     )
 
@@ -1288,13 +1293,7 @@ if __name__ == "__main__":
     agent_name = raw_agent
     user_input = args.input or ''
 
-    # Echo mode: print structured agent/input and exit without running pipeline
-    if args.echo:
-        try:
-            print(json.dumps({"name": agent_name, "input": user_input}, ensure_ascii=False))
-        except Exception:
-            print(f"{agent_name}\t{user_input}")
-        sys.exit(0)
+    
 
     # Try discover agent YAML by normalized name
     yaml_path = discover_agent_yaml(agent_name)
@@ -1302,9 +1301,19 @@ if __name__ == "__main__":
     if not agent_path and yaml_path:
         agent_path = str(yaml_path)
 
+    # Echo mode: print structured agent/input and exit without running pipeline
+    if args.echo:
+        try:
+            print(json.dumps({"module": "call.app.call", "name": agent_name, "input": user_input, "echo": True, "agent_path": agent_path, "debug": args.debug}, ensure_ascii=False))
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+        except Exception:
+            print(f"{agent_name}\t{user_input}")
+        sys.exit(0)
+
     try:
         # Pass discovered/explicit agent profile into pipeline
-        asyncio.run(main(agent_path=agent_path, debug=args.debug))
+        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug))
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(1)
