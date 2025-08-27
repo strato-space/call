@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Dict, Any
 import urllib.parse
 from pathlib import Path
+import json
 
 # Import agent utilities
 try:
@@ -1276,6 +1277,7 @@ if __name__ == "__main__":
     parser.add_argument('input', type=str, nargs='?', default='', help='Input payload text')
     parser.add_argument('--agent-profile', type=str, help='Path to agent profile (optional)', default=os.getenv('AI_AGENT_PROFILE'))
     parser.add_argument('--debug', action='store_true', help='Enable debug prints and stop after AgentDTO load')
+    parser.add_argument('--echo', action='store_true', help='Echo agent and input as JSON, then exit')
 
     args = parser.parse_args()
 
@@ -1285,6 +1287,14 @@ if __name__ == "__main__":
         raw_agent = raw_agent[1:]
     agent_name = raw_agent
     user_input = args.input or ''
+
+    # Echo mode: print structured agent/input and exit without running pipeline
+    if args.echo:
+        try:
+            print(json.dumps({"name": agent_name, "input": user_input}, ensure_ascii=False))
+        except Exception:
+            print(f"{agent_name}\t{user_input}")
+        sys.exit(0)
 
     # Try discover agent YAML by normalized name
     yaml_path = discover_agent_yaml(agent_name)
