@@ -1,16 +1,16 @@
-openai>=0.27.0                     # OpenAI’s official Python library
+openai                     # OpenAI’s official Python library
 requests[socks]>=2.31.0            # Requests + PySocks for SOCKS5 proxy
 # OR, if using HTTPX instead of requests:
 # httpx>=0.23.0
 # httpx-socks>=0.6.0
 
-openai-agents>=0.1.0               # Multi-agent workflows SDK :contentReference[oaicite:3]{index=3}
+openai-agents              # Multi-agent workflows SDK :contentReference[oaicite:3]{index=3}
  # minify-html removed: required Rust toolchain, not used
 telegraph[aio]>=0.3.2              # Python Telegraph API wrapper :contentReference[oaicite:5]{index=5}
-python-telegram-bot>=22.2.0        # Async Telegram Bot API :contentReference[oaicite:6]{index=6}
-python-dotenv>=1.0.0               # Load .env files into env vars :contentReference[oaicite:7]{index=7}
-PyYAML>=6.0.1                      # YAML parsing for agent configs (required by call.py)
+python-telegram-bot        # Async Telegram Bot API :contentReference[oaicite:6]{index=6}
+python-dotenv               # Load .env files into env vars :contentReference[oaicite:7]{index=7}
+PyYAML                      # YAML parsing for agent configs (required by call.py)
  # django-htmlmin removed: Django not used here
 beautifulsoup4
- # llama-index removed: pulls pandas build on Python 3.13; not used in call/
+# llama-index removed: pulls pandas build on Python 3.13; not used in call/
 # pathway>=0.5.0
