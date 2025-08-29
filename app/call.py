@@ -541,9 +541,10 @@ async def publish_results(title: str = "AI News Aggregator Results", content: st
     telegraph = Telegraph(TELEGRAPH_TOKEN)
 
     clear_context = minify_html_func(content)
-    # Save clear_context to logs/y.html
-    with open('logs/y.html', 'w', encoding='utf-8') as f:
-        f.write(clear_context)
+    # Save clear_context to call/logs/y.html
+    # todo: use [MCP Hook] Parameters: {'path': '/home/strato-space/prompt/agents/AiNewsAggr/memory/ai-news-aggr'}
+    # with open('call/logs/y.html', 'w', encoding='utf-8') as f:
+    #    f.write(clear_context)
     response = telegraph.create_page(
         title="AI News Aggregator Results",
         html_content=clear_context,
