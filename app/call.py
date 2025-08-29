@@ -1114,7 +1114,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 extra_attrs = {k: v for k, v in extra_attrs.items() if k not in {"alias", "aliases"}}
             agent_attrs |= extra_attrs
         # Create agent with attributes from profile or defaults
-        agent_name = agent_attrs.get("name", "AI News Aggregator")
+        # Prefer CLI-provided name if available, fallback to profile or default
+        agent_name = (locals().get('cli_agent_name') or agent_attrs.get("name", "AI News Aggregator"))
         # Ensure we use DTO-derived instructions (default prompt) and never fall back to legacy loader
         agent_instructions = locals().get('agent_instructions', None) or (await dto.getInstructions())[0] or ""
         
@@ -1198,15 +1199,12 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     if agent_path and os.path.exists(agent_path):
         agent_attrs = extract_agent_attributes(agent_path)
     
-    # Prepare the welcome message based on agent profile or default
-    if agent_attrs:
-        # Use agent's name and goal for the welcome message
-        agent_name = agent_attrs.get("name", "AI News Aggregator Father")
-        agent_goal = agent_attrs.get("goal", "gathering news")
-        yaml = agent_attrs.get("yaml", "")
-        welcome_text = f"<code class='language-yaml'>\n{yaml[:3950]}\n</code>"
-    else:
-        welcome_text = ' <b>🔌AI News Aggregator Father</b>: старт подготовки дайджеста'
+    # Prepare the welcome message: show agent name and input
+    display_name = (agent_attrs.get("name") if agent_attrs else None) or (agent_name or "Agent")
+    welcome_text = (
+        f"<b>🔌 {display_name}</b>\n"
+        f"<code>input: {user_input[:3800]}</code>"
+    )
 
     
     # Prefer chat/thread from agent YAML/prompt (including output.tg.*), then attributes, then env
@@ -1273,13 +1271,23 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
 
     samples_dir = default_samples_dir
     # Run the digest pipeline with the agent profile
-    agent, history, step1_output = await run_digest_pipeline(
-        samples_dir, 
-        agent_path=agent_path,
-        user_input=user_input,
-        debug=debug,
-        cli_agent_name=agent_name
-    )
+    # Backward compatibility: some deployments may have older run_digest_pipeline signature
+    try:
+        agent, history, step1_output = await run_digest_pipeline(
+            samples_dir,
+            agent_path=agent_path,
+            user_input=user_input,
+            debug=debug,
+            cli_agent_name=agent_name,
+        )
+    except TypeError:
+        # Fallback: call without cli_agent_name for older servers
+        agent, history, step1_output = await run_digest_pipeline(
+            samples_dir,
+            agent_path=agent_path,
+            user_input=user_input,
+            debug=debug,
+        )
 
 
 async def republish_results() -> str:
