@@ -1,0 +1,2 @@
+# Keep logs directory in git.
+# Other files remain ignored by patterns in call/.gitignore.
