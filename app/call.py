@@ -1232,6 +1232,7 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     else:
         samples_dir = default_samples_dir
 
+    samples_dir = '/home/strato-space'
     # Run the digest pipeline with the agent profile
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir, 
