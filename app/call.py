@@ -138,18 +138,45 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
         raise e
 
 
-async def send_digest_notification(url: str, themes_url: str | None = None, prompt_url: str | None = None, *,
-                                   text: str = None, message_thread_id: int = None) -> Optional[Message]:
+async def send_digest_notification(
+    url: str,
+    themes_url: str | None = None,
+    prompt_url: str | None = None,
+    *,
+    text: str = None,
+    message_thread_id: int = None,
+    agent_name: str | None = None,
+    agent_path: str | Path | None = None,
+    input_text: str | None = None,
+) -> Optional[Message]:
     # Send digest to a specific Telegram chat.
     if text is None:
-        text = f"📰 <b>Дайджест</b>\n\n{url}"
+        text = f"📰 {url}"
+        if input_text:
+            try:
+                safe_input = (input_text or "")[:3800]
+                text = text + f"\n<code>input: {safe_input}</code>"
+            except Exception:
+                pass
 
     # Try to load buttons configuration from agent.yaml and perform macro substitution
     keyboard = None
     try:
-        agent_yaml_path = discover_agent_yaml("AiNewsAggr")
-        if agent_yaml_path:
-            agent_cfg = load_yaml(agent_yaml_path) or {}
+        resolved_yaml: Path | None = None
+        if agent_path and Path(agent_path).exists():
+            p = Path(agent_path)
+            resolved_yaml = p if p.name.lower().endswith('.yaml') else (p / 'agent.yaml')
+            if not resolved_yaml.exists():
+                resolved_yaml = None
+        if resolved_yaml is None:
+            agent_name_norm = to_pascal_case(agent_name or "") if agent_name else None
+            if agent_name_norm:
+                try:
+                    resolved_yaml = discover_agent_yaml(agent_name_norm)
+                except Exception:
+                    resolved_yaml = None
+        if resolved_yaml:
+            agent_cfg = load_yaml(resolved_yaml) or {}
             btns = agent_cfg.get("buttons")
             if isinstance(btns, list) and btns:
                 row = []
@@ -173,23 +200,9 @@ async def send_digest_notification(url: str, themes_url: str | None = None, prom
         # Silent fallback to static buttons below
         keyboard = None
 
-    if keyboard is None:
-        # Fallback: build buttons with requested static GitHub URLs
-        # Ensure defaults if not provided
-        themes_url = themes_url or "https://github.com/strato-space/prompt/blob/master/agents/AiNewsAggr/memory/themes.md"
-        prompt_url = prompt_url or "https://github.com/strato-space/prompt/blob/master/agents/AiNewsAggr/prompt.yaml"
-        agent_url = "https://github.com/strato-space/prompt/blob/master/agents/AiNewsAggr/agent.yaml"
+    # If keyboard wasn't configured in agent.yaml, do not show any buttons
 
-        row = [InlineKeyboardButton("🔗 Дайджест", url=url)]
-        if themes_url:
-            row.append(InlineKeyboardButton("🔗 Темы", url=themes_url))
-        # Place "Агент" before "Промпт"
-        row.append(InlineKeyboardButton("🔗 Агент", url=agent_url))
-        if prompt_url:
-            row.append(InlineKeyboardButton("🔗 Промпт", url=prompt_url))
-        keyboard = [row]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
     try:
         message_obj = await telegram_send_message(
@@ -1173,7 +1186,14 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         title_name = (cli_agent_name or agent_name or "Agent")
         url = await publish_results(title=title_name, content=step1_output)
 
-        await send_digest_notification(url, prompt_data["themes_url"], prompt_data["url"])
+        await send_digest_notification(
+            url,
+            prompt_data["themes_url"],
+            prompt_data["url"],
+            agent_name=agent_name,
+            agent_path=agent_path,
+            input_text=user_input,
+        )
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
