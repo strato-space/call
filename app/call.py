@@ -535,7 +535,7 @@ async def create_telegrath_account():
     print(f"Telegraph access_token: {token}")
 
 
-async def publish_results(title: str = "AI News Aggregator Results", content: str = None) -> str:
+async def publish_results(title: str = "AgentName Results", content: str = None) -> str:
     """Publish aggregation results on Telegra.ph."""
 
     telegraph = Telegraph(TELEGRAPH_TOKEN)
@@ -545,8 +545,10 @@ async def publish_results(title: str = "AI News Aggregator Results", content: st
     # todo: use [MCP Hook] Parameters: {'path': '/home/strato-space/prompt/agents/AiNewsAggr/memory/ai-news-aggr'}
     # with open('call/logs/y.html', 'w', encoding='utf-8') as f:
     #    f.write(clear_context)
+    # Build dynamic title: if caller passed an agent name, append ' Results' unless already present
+    page_title = (f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results"))
     response = telegraph.create_page(
-        title="AI News Aggregator Results",
+        title=page_title,
         html_content=clear_context,
     )
 
@@ -775,20 +777,20 @@ class AgentDTO:
             include_usage=ms_dict.get('include_usage'),
         )
 
-    def getInstructions(self) -> tuple[str, dict]:
+    async def getInstructions(self) -> tuple[str, dict]:
         """Return final instructions text and attributes.
 
         Priority:
         1) If default prompt loaded and contains 'instructions', use it.
         2) Else if top-level 'instructions' provided, use it.
-        3) Else fallback to load_prompt().
+        3) Else fallback to await load_prompt().
         """
         default_prompt = self.getDefaultPrompt()
         if isinstance(default_prompt, dict) and default_prompt.get('instructions'):
             return default_prompt.get('instructions'), self.attributes
         if self.instructions:
             return self.instructions, self.attributes
-        prompt = asyncio.get_event_loop().run_until_complete(load_prompt())
+        prompt = await load_prompt()
         return prompt["instructions"], self.attributes
 
     # -------- Variant A prompt support --------
@@ -878,7 +880,12 @@ class AgentDTO:
         return None
 
     def _load_prompts_variant_a(self):
-        """Load prompts according to Variant A rules."""
+        """Load prompts according to Variant A rules, supporting both list and mapping forms.
+
+        Supported shapes:
+        - list of strings: ["on|path/to/prompt.yaml", "off|Other.yaml"]
+        - mapping: { Name: "instructions text" | {instructions: ..., ...} }
+        """
         ordered_candidates: list[tuple[str, bool]] = []  # (file_or_name, is_on)
         # Do NOT auto-include prompt_file; default = first ON in prompts per user's preference
         # Parse entries in self.prompts
@@ -890,19 +897,49 @@ class AgentDTO:
                 if len(parts) >= 2:
                     marker, target = parts[0], parts[1]
                     is_on = self._is_on_marker(marker)
-                    ordered_candidates.append((target, is_on))
-        # Load prompts: resolve targets to files (with or without extension)
-        for target, is_on in ordered_candidates:
-            if not isinstance(target, str):
-                continue
-            resolved = self._resolve_prompt_target(target)
-            if resolved is None:
-                continue
-            data = self._load_prompt_file(str(resolved))
-            if data is None:
-                continue
-            name = Path(target).stem if Path(target).suffix else Path(resolved).stem
-            self._register_prompt(name, data, is_on)
+                else:
+                    # entry is a plain path without marker
+                    target = parts[0]
+                    is_on = False
+                ordered_candidates.append((target, is_on))
+            # Load prompts: resolve targets to files (with or without extension).
+            # The FIRST entry in the list is considered the default, regardless of marker.
+            first = True
+            for target, is_on in ordered_candidates:
+                if not isinstance(target, str):
+                    continue
+                resolved = self._resolve_prompt_target(target)
+                if resolved is None:
+                    continue
+                data = None
+                suffix = resolved.suffix.lower()
+                if suffix in ('.yaml', '.yml'):
+                    data = self._load_prompt_file(str(resolved))
+                elif suffix == '.md':
+                    try:
+                        with open(resolved, 'r', encoding='utf-8') as f:
+                            md_text = f.read()
+                        data = {"instructions": md_text}
+                    except Exception:
+                        data = None
+                if data is None:
+                    continue
+                name = Path(target).stem if Path(target).suffix else Path(resolved).stem
+                # Set default on the very first successfully loaded entry
+                self._register_prompt(name, data, is_default_candidate=first or is_on)
+                first = False
+        elif isinstance(self.prompts, dict):
+            # Mapping form: name -> instructions string or prompt object
+            first = True
+            for name, value in self.prompts.items():
+                prompt_obj = None
+                if isinstance(value, str):
+                    prompt_obj = {"instructions": value}
+                elif isinstance(value, dict):
+                    prompt_obj = dict(value)
+                if prompt_obj:
+                    self._register_prompt(str(name), prompt_obj, is_default_candidate=first)
+                    first = False
 
     def getPromptNames(self) -> list[str]:
         return list(self._prompts.keys())
@@ -919,7 +956,7 @@ class AgentDTO:
         return None
 
 
-async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False):
+async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = ""):
     # Запускаем два MCP-сервера параллельно (filesystem и sequential-thinking)
     server_gsheets = None
     async with MCPServerStdioHook(
@@ -1060,7 +1097,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         if dto.model_settings:
             model_settings_obj = dto.model_settings
         # use instructions from DTO; augment with non-model settings attrs for LLM context
-        dto_instructions, extra_attrs = dto.getInstructions()
+        dto_instructions, extra_attrs = await dto.getInstructions()
         if dto_instructions:
             try:
                 ms_keys = {"temperature", "top_p", "max_tokens", "stop", "presence_penalty", "frequency_penalty", "n", "best_of", "alias", "aliases"}
@@ -1079,7 +1116,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         # Create agent with attributes from profile or defaults
         agent_name = agent_attrs.get("name", "AI News Aggregator")
         # Ensure we use DTO-derived instructions (default prompt) and never fall back to legacy loader
-        agent_instructions = locals().get('agent_instructions', None) or dto.getInstructions()[0] or ""
+        agent_instructions = locals().get('agent_instructions', None) or (await dto.getInstructions())[0] or ""
         
         # Note: temperature handling removed per request. Keep dto.model_settings as-is, but sanitize max token fields.
         # Some providers require numeric types for max tokens; drop or coerce invalid string values like ">= 30000".
@@ -1131,7 +1168,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         print(step1_output)
         title = "📰 AI News Aggregator"
 
-        url = await publish_results(title=agent_name, content=step1_output)
+        # Prefer CLI-provided agent name for publication title
+        title_name = (cli_agent_name or agent_name or "Agent")
+        url = await publish_results(title=title_name, content=step1_output)
 
         await send_digest_notification(url, prompt_data["themes_url"], prompt_data["url"])
 
@@ -1149,7 +1188,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         return agent, history, step1_output
 
-async def main(agent_path: str = None, user_input: str = "", debug: bool = False):
+async def main(agent_path: str = None, user_input: str = "", debug: bool = False, agent_name: str = ""):
     # When debugging, avoid external side effects like Telegram messages
     if not debug:
         await init_bot()
@@ -1232,13 +1271,14 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     else:
         samples_dir = default_samples_dir
 
-    samples_dir = '/home/strato-space'
+    samples_dir = default_samples_dir
     # Run the digest pipeline with the agent profile
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir, 
         agent_path=agent_path,
         user_input=user_input,
-        debug=debug
+        debug=debug,
+        cli_agent_name=agent_name
     )
 
 
@@ -1315,7 +1355,7 @@ if __name__ == "__main__":
 
     try:
         # Pass discovered/explicit agent profile into pipeline
-        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug))
+        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug, agent_name=agent_name))
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(1)
