@@ -4,7 +4,8 @@
 .venv/
 .wenv/
 .env
-logs/
+logs/*
+!logs/.gitkeep
 *.log
 wallet/
 news/
