@@ -1110,11 +1110,11 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             model_settings=(model_settings_obj or ModelSettings())
         )
 
-        # Выполняем запрос: передаём user_input как элемент истории {"user": user_input}
+        # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
         _seed_history = []
         try:
             if user_input:
-                _seed_history.append({"user": user_input})
+                _seed_history.append({"role": "user", "content": user_input})
         except Exception:
             pass
         result1 = await Runner.run(
