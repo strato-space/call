@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 
 # Import agent utilities (internal copy)
-from app.utils.agent_utils import extract_agent_attributes, get_agent_instructions
+from utils.agent_utils import extract_agent_attributes, get_agent_instructions
 from pathlib import Path
 import shutil
 from bs4 import BeautifulSoup      # use stdlib 'html.parser' to avoid extra deps
