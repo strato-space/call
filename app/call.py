@@ -45,7 +45,6 @@ from telegraph import Telegraph
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
-from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
@@ -95,8 +94,20 @@ bot: Bot
 async def init_bot():
     global bot
     # Avoid picking up system proxy vars that break outbound connections on server
-    request = HTTPXRequest(client_params={"trust_env": False})
-    bot = Bot(token=telegram_token, request=request)
+    for key in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+        if os.environ.get(key):
+            os.environ.pop(key, None)
+    # Ensure direct access to common hosts
+    no_proxy_hosts = [
+        "localhost", "127.0.0.1", "::1",
+        "api.telegram.org", "api.telegra.ph", "telegra.ph", "github.com",
+    ]
+    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    merged = set(filter(None, [s.strip() for s in existing.split(",")]))
+    merged.update(no_proxy_hosts)
+    if merged:
+        os.environ["NO_PROXY"] = ",".join(sorted(merged))
+    bot = Bot(token=telegram_token)
     return bot
 
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
