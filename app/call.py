@@ -5,6 +5,8 @@ from typing import Optional, Dict, Any
 import urllib.parse
 from pathlib import Path
 import json
+import httpx
+from openai import OpenAI
 
 # Import agent utilities (internal copy)
 from utils.agent_utils import extract_agent_attributes, get_agent_instructions
@@ -86,10 +88,16 @@ telegrath_token = ensure_env("TELEGRAPH_TOKEN")
 TELEGRAM_THREAD_ID = get_telegram_chat_id("TELEGRAM_THREAD_ID", "")
 TELEGRAPH_TOKEN = ensure_env("TELEGRAPH_TOKEN")
 OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
-HTTP_PROXY = ensure_env("OPENAI_API_KEY")
+# Optional outbound proxy for OpenAI via httpx
+PROXY_URL = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or None
 
-if HTTP_PROXY:
-    openai.proxy = HTTP_PROXY
+# Global OpenAI client configured once
+openai_client: OpenAI
+if PROXY_URL:
+    _transport = httpx.HTTPTransport(proxy=PROXY_URL)
+    openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(transport=_transport))
+else:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize bot at module level
 global bot
