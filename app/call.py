@@ -45,6 +45,7 @@ from telegraph import Telegraph
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
+from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
@@ -93,7 +94,9 @@ bot: Bot
 
 async def init_bot():
     global bot
-    bot = Bot(token=telegram_token)
+    # Avoid picking up system proxy vars that break outbound connections on server
+    request = HTTPXRequest(client_params={"trust_env": False})
+    bot = Bot(token=telegram_token, request=request)
     return bot
 
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
