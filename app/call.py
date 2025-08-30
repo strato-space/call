@@ -208,6 +208,41 @@ async def send_digest_notification(
         return None
 
 
+async def post_run_git_push(agent_name: str, user_input: str) -> None:
+    """Commit and push changes in the prompt repo after the run.
+
+    - Uses normalized agent_name resolved in the pipeline
+    - Uses user_input as-is (preserve newlines)
+    - No fallback names
+    """
+    try:
+        prompt_repo = discover_prompt_repo()
+        commit_msg = f"{agent_name} {user_input}"
+
+        import asyncio
+        from asyncio.subprocess import PIPE
+
+        async def _run_git(cmd: list[str]) -> int:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(prompt_repo),
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+            out, err = await proc.communicate()
+            print(f"[git] {' '.join(cmd)}\nexit={proc.returncode}\nstdout={out.decode(errors='ignore')}\nstderr={err.decode(errors='ignore')}")
+            return proc.returncode
+
+        await _run_git(["git", "add", "-A", "."])
+        rc_commit = await _run_git(["git", "commit", "-m", commit_msg])
+        if rc_commit == 0:
+            await _run_git(["git", "push"])
+        else:
+            print("[git] No changes to commit; skipping push")
+    except Exception as e:
+        print(f"[git] Post-run push failed: {e}")
+
+
 async def telegram_send_message(chat_id: int = None, text: str = None, message_thread_id: int = None, reply_markup: InlineKeyboardMarkup = None):
 
     safe_text = clean_html_for_telegram(text or "")
@@ -224,7 +259,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
 
 logging.getLogger("openai").setLevel(logging.DEBUG)
 
-default_samples_dir = str(Path(os.getcwd()).parent)
+default_samples_dir = str(Path(__file__).resolve().parents[2])
 
 def _flatten_output_section(output_val) -> dict:
     """Normalize 'output' which may be a list of single-key maps into a flat dict.
@@ -586,7 +621,7 @@ class MCPServerStdioHook(MCPServerStdio):
         parameters = arguments
 
         if tool_name != 'sequentialthinking':
-            return await super().call_tool(tool_name, parameters)
+             return await super().call_tool(tool_name, parameters)
         try:
             thought = parameters['thought']
             if telegram_last_message:
@@ -975,15 +1010,20 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
         },
         client_session_timeout_seconds=30
-    ) as server_seq:
-    #     , MCPServerStdioHook(
-    #     params={
-    #         "command": "uvx",
-    #         # "args": ["--env-file", samples_dir + "/.env", "mcp-google-sheets@latest"]
-    #         "args": ["--env-file", samples_dir + "/.env", "--from", "../mcp-google-sheets/", "mcp-google-sheets"]
-    #     },
-    #     client_session_timeout_seconds=30
-    # ) as server_gsheets:
+    ) as server_seq, MCPServerStdioHook(
+        params={
+            "command": "uvx",
+            "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
+            # "args": ["--env-file", samples_dir + "/call/.env", "--from", "mcp-google-sheets/", "mcp-google-sheets"]
+        },
+        client_session_timeout_seconds=30
+    ) as server_gsheets, MCPServerStdioHook(
+            params={
+                "command": "uvx",
+                "args": ["--env-file", samples_dir + "/server/mcp/.env", "--from", samples_dir + "/voice", "mcp-voicebot"]
+            },
+        client_session_timeout_seconds=30
+    ) as server_voice:
 
         # Получаем инструменты от обоих серверов
         run_context = RunContextWrapper(context=None)
@@ -1175,16 +1215,30 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         # Prefer CLI-provided agent name for publication title
         title_name = (cli_agent_name or agent_name or "Agent")
-        url = await publish_results(title=title_name, content=step1_output)
+        if isinstance(step1_output, str) and len(step1_output) < 4000:
+            # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
+            await send_digest_notification(
+                "",
+                prompt_data["themes_url"],
+                prompt_data["url"],
+                agent_name=agent_name,
+                agent_path=agent_path,
+                input_text=user_input,
+                text=step1_output,
+            )
+        else:
+            url = await publish_results(title=title_name, content=step1_output)
+            await send_digest_notification(
+                url,
+                prompt_data["themes_url"],
+                prompt_data["url"],
+                agent_name=agent_name,
+                agent_path=agent_path,
+                input_text=user_input,
+            )
 
-        await send_digest_notification(
-            url,
-            prompt_data["themes_url"],
-            prompt_data["url"],
-            agent_name=agent_name,
-            agent_path=agent_path,
-            input_text=user_input,
-        )
+        # Post-run: commit and push changes using normalized agent_name and raw user_input
+        await post_run_git_push(agent_name=agent_name, user_input=user_input)
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
