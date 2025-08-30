@@ -86,6 +86,10 @@ telegrath_token = ensure_env("TELEGRAPH_TOKEN")
 TELEGRAM_THREAD_ID = get_telegram_chat_id("TELEGRAM_THREAD_ID", "")
 TELEGRAPH_TOKEN = ensure_env("TELEGRAPH_TOKEN")
 OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
+HTTP_PROXY = ensure_env("OPENAI_API_KEY")
+
+if HTTP_PROXY:
+    openai.proxy = HTTP_PROXY
 
 # Initialize bot at module level
 global bot
