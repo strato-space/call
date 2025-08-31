@@ -8,7 +8,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 ### Simplified Agent Discovery (Updated Aug 31, 2025)
 
-- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/agents/` and `prompt/AgentFab/` 
+- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/AgentFab/` and `prompt/agents/` (AgentFab takes precedence)
 - **Case-insensitive matching**: Agent names are normalized to PascalCase but matched case-insensitively
 - **No registry scanning**: Removed complex metadata matching and registry file processing
 - **Simple syntax**: `@AgentName` or just `AgentName`
