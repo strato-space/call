@@ -203,7 +203,7 @@ security:
 
 ### Environment variables (current Python runtime)
 
-The module `call/app/call.py` expects the following environment variables (can be provided via `.env`):
+The module `call.app.call` expects the following environment variables (can be provided via `.env`):
 
 - `TELEGRAM_TOKEN` — Telegram Bot token
 - `TELEGRAM_CHAT_ID` — primary chat id (int). If a 10‑digit id is provided, it will be normalized to `-100XXXXXXXXXX` internally.
@@ -214,8 +214,8 @@ The module `call/app/call.py` expects the following environment variables (can b
 - `PROMPT_REPO` — absolute path to the Prompt repository; if not set, discovery tries sibling `../prompt` (see `discover_prompt_repo()` in `call/app/call.py`).
 
 Notes:
-- On startup, `call/app/call.py` will copy `../.env` into local `.env` if `.env` is missing.
-- All envs are sanitized by `ensure_env()`; missing required ones will raise.
+- On startup, `call.app.call` will copy `../.env` into local `.env` if `.env` is missing.
+- All mandatory envs are sanitized by `ensure_env()`; missing required ones will raise.
 
 ### Python dependencies
 
