@@ -655,7 +655,8 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     """Discover agent YAML by directory name only.
 
     Search order:
-    1) prompt/agents/<AgentName>/agent.yaml (case-insensitive directory match)
+    1) prompt/AgentFab/<AgentName>/agent.yaml
+    2) prompt/agents/<AgentName>/agent.yaml (case-insensitive directory match)
 
     Args:
         agent_name: Agent name (will be normalized with to_pascal_case).
@@ -669,22 +670,27 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
 
-    agents_dir = repo / 'agents'
-    if not agents_dir.exists():
+    def find_in_dir(base: Path) -> Path | None:
+        if not base.exists():
+            return None
+        direct = base / query_norm / 'agent.yaml'
+        if direct.exists():
+            return direct
+        for child in base.iterdir():
+            if child.is_dir() and child.name.lower() == query_norm.lower():
+                cand = child / 'agent.yaml'
+                if cand.exists():
+                    return cand
         return None
 
-    # Direct exact case first
-    direct = agents_dir / query_norm / 'agent.yaml'
-    if direct.exists():
-        return direct
+    # AgentFab takes precedence
+    agentfab_path = find_in_dir(repo / 'AgentFab')
+    if agentfab_path:
+        return agentfab_path
 
-    # Case-insensitive directory scan
-    for child in agents_dir.iterdir():
-        if child.is_dir() and child.name.lower() == query_norm.lower():
-            cand = child / 'agent.yaml'
-            if cand.exists():
-                return cand
-    return None
+    # Fallback to prompt/agents
+    agents_path = find_in_dir(repo / 'agents')
+    return agents_path
 
 
 def load_yaml(path: Path) -> dict:
