@@ -1219,7 +1219,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 sys.exit(0)
         # Merge attrs from DTO for normal (non-debug) run (guard dto None)
         if isinstance(dto, AgentDTO):
-            agent_attrs = {**getattr(dto, 'attributes', {}) or {}, **agent_attrs}
+            agent_attrs = {**(getattr(dto, 'attributes', {}) or {}), **agent_attrs}
             if getattr(dto, 'model', None):
                 model_name = dto.model
             if getattr(dto, 'model_settings', None):
