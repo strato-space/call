@@ -1091,14 +1091,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 #         client_session_timeout_seconds=30
 #     ) as server_gsheets, 
 
-        # Получаем инструменты от обоих серверов
-        run_context = RunContextWrapper(context=None)
-        agent = Agent(name="test", instructions="test")
-        tools_fs = await server_fs.list_tools(run_context, agent)
-        tools_seq = await server_seq.list_tools(run_context, agent)
-        if server_gsheets:
-          tools_gsheets = await server_gsheets.list_tools(run_context, agent)
-          print("Google Sheets tools:", tools_gsheets)
+        
 
         # Load agent profile if specified
         agent_attrs = {}
@@ -1249,6 +1242,10 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     setattr(model_settings_obj, 'max_output_tokens', _to_int_or_none(v))
         except Exception:
             pass
+        
+        # Получаем инструменты от обоих серверов
+        run_context = RunContextWrapper(context=None)
+        # agent = Agent(name="test", instructions="test")
         agent = Agent(
             name=f"{agent_name} [agent]",
             instructions=agent_instructions,
@@ -1258,18 +1255,25 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             model=model_name,
             model_settings=(model_settings_obj or ModelSettings())
         )
+        tools_fs = await server_fs.list_tools(run_context, agent)
+        tools_seq = await server_seq.list_tools(run_context, agent)
+        if server_gsheets:
+          tools_gsheets = await server_gsheets.list_tools(run_context, agent)
+          print("Google Sheets tools:", tools_gsheets)
 
         # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
         _seed_history = []
         try:
             if user_input:
                 _seed_history.append({"role": "user", "content": user_input})
+            else:
+                _seed_history.append({"role": "user", "content": "go"})
         except Exception:
             pass
         result1 = await Runner.run(
             agent,
             _seed_history,
-            max_turns=50
+            max_turns=50,
         )
 
         history = result1.to_input_list()
