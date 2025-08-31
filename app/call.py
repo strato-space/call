@@ -88,16 +88,41 @@ telegrath_token = ensure_env("TELEGRAPH_TOKEN")
 TELEGRAM_THREAD_ID = get_telegram_chat_id("TELEGRAM_THREAD_ID", "")
 TELEGRAPH_TOKEN = ensure_env("TELEGRAPH_TOKEN")
 OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
-# Optional outbound proxy for OpenAI via httpx
-PROXY_URL = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or None
+# Global OpenAI client - will be configured with proxy in create_openai_client()
+openai_client: OpenAI = None
 
-# Global OpenAI client configured once
-openai_client: OpenAI
-if PROXY_URL:
-    _transport = httpx.HTTPTransport(proxy=PROXY_URL)
-    openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(transport=_transport))
-else:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+def create_openai_client():
+    """Create and configure OpenAI client with proper proxy configuration for agents SDK."""
+    from openai import AsyncOpenAI
+    import agents
+    
+    # Get proxy configuration from environment
+    proxy_url = os.environ.get("OPENAI_PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+    
+    if proxy_url:
+        # For agents SDK, we need to configure the underlying httpx client properly
+        import httpx
+        
+        # Create httpx client with proxy
+        http_client = httpx.AsyncClient(
+            proxy=proxy_url,
+            timeout=httpx.Timeout(60.0),  # Longer timeout for proxy connections
+            verify=True,  # Keep SSL verification
+            follow_redirects=True
+        )
+        
+        # Create AsyncOpenAI client with proxied httpx client
+        client = AsyncOpenAI(
+            api_key=OPENAI_API_KEY,
+            http_client=http_client
+        )
+    else:
+        # Direct connection
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    
+    # Set as default client for agents SDK
+    agents.set_default_openai_client(client)
+    return client
 
 # Initialize bot at module level
 global bot
@@ -105,22 +130,15 @@ bot: Bot
 
 async def init_bot():
     global bot
-    # Avoid picking up system proxy vars that break outbound connections on server
-    for key in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
-        if os.environ.get(key):
-            os.environ.pop(key, None)
-    # Ensure direct access to common hosts
-    no_proxy_hosts = [
-        "localhost", "127.0.0.1", "::1",
-        "api.telegram.org", "api.telegra.ph", "telegra.ph", "github.com",
-    ]
-    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    merged = set(filter(None, [s.strip() for s in existing.split(",")]))
-    merged.update(no_proxy_hosts)
-    if merged:
-        os.environ["NO_PROXY"] = ",".join(sorted(merged))
     bot = Bot(token=telegram_token)
     return bot
+
+async def init_openai_client():
+    """Initialize the global OpenAI client with proper proxy configuration."""
+    global openai_client
+    if openai_client is None:
+        openai_client = create_openai_client()
+    return openai_client
 
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
     """
@@ -1293,6 +1311,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         return agent, history, step1_output
 
 async def main(agent_path: str = None, user_input: str = "", debug: bool = False, agent_name: str = ""):
+    # Initialize OpenAI client with proper proxy configuration
+    await init_openai_client()
+    
     # When debugging, avoid external side effects like Telegram messages
     if not debug:
         await init_bot()
