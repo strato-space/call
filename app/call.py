@@ -655,7 +655,8 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     """Discover agent YAML by directory name only.
 
     Search order:
-    1) prompt/agents/<AgentName>/agent.yaml (case-insensitive directory match)
+    1) prompt/AgentFab/<AgentName>/agent.yaml (case-insensitive dir match)
+    2) prompt/agents/<AgentName>/agent.yaml (case-insensitive dir match)
 
     Args:
         agent_name: Agent name (will be normalized with to_pascal_case).
@@ -669,21 +670,34 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
 
+    # 1) Try AgentFab first
+    agentfab_dir = repo / 'AgentFab'
+    if agentfab_dir.exists():
+        # exact case first
+        direct_af = agentfab_dir / query_norm / 'agent.yaml'
+        if direct_af.exists():
+            return direct_af
+        # case-insensitive
+        for child in agentfab_dir.iterdir():
+            if child.is_dir() and child.name.lower() == query_norm.lower():
+                cand = child / 'agent.yaml'
+                if cand.exists():
+                    return cand
+
+    # 2) Fallback to agents/
     agents_dir = repo / 'agents'
-    if not agents_dir.exists():
-        return None
+    if agents_dir.exists():
+        # exact case first
+        direct_ag = agents_dir / query_norm / 'agent.yaml'
+        if direct_ag.exists():
+            return direct_ag
+        # case-insensitive
+        for child in agents_dir.iterdir():
+            if child.is_dir() and child.name.lower() == query_norm.lower():
+                cand = child / 'agent.yaml'
+                if cand.exists():
+                    return cand
 
-    # Direct exact case first
-    direct = agents_dir / query_norm / 'agent.yaml'
-    if direct.exists():
-        return direct
-
-    # Case-insensitive directory scan
-    for child in agents_dir.iterdir():
-        if child.is_dir() and child.name.lower() == query_norm.lower():
-            cand = child / 'agent.yaml'
-            if cand.exists():
-                return cand
     return None
 
 
