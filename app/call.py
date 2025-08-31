@@ -474,6 +474,14 @@ def clean_html_for_telegram(html_content: str) -> str:
         tag.attrs = allowed_attrs
 
     cleaned = str(soup)
+    
+    # Fix self-closing tags that Telegram doesn't like
+    import re
+    # Convert <br/> to <br> and other self-closing tags
+    cleaned = re.sub(r'<(\w+)/>', r'<\1>', cleaned)
+    # Remove any remaining XML-style self-closing tags
+    cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
+    
     # Telegram is sensitive to stray newlines before/after code/pre; basic trim
     return cleaned.strip()
 
