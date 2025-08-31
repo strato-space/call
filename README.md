@@ -6,6 +6,63 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 ## Key Concepts
 
+### Simplified Agent Discovery (Updated Aug 31, 2025)
+
+- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/agents/` and `prompt/AgentFab/` 
+- **Case-insensitive matching**: Agent names are normalized to PascalCase but matched case-insensitively
+- **No registry scanning**: Removed complex metadata matching and registry file processing
+- **Simple syntax**: `@AgentName` or just `AgentName`
+
+### Agent Loading Logic
+
+- **Zero prompts**: Uses `agent.yaml` content directly as instructions
+- **With prompts**: Uses first prompt from `prompts` list, merges with agent metadata
+- **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
+- **Recursive file listing**: All agent directory files added to seed history as filenames list
+
+## Error Reporting
+
+On any unhandled error, the CLI emits a structured JSON object with detailed diagnostics:
+
+```json
+{
+  "module": "call.app.call",
+  "ok": false,
+  "error": {
+    "type": "AttributeError",
+    "message": "'NoneType' object has no attribute 'attributes'",
+    "file": "d:/home/strato-space/call/app/call.py", "line": 1103,
+    "stack": [
+      {"file": "d:/home/strato-space/call/app/call.py", "line": 1103, "function": "run_digest_pipeline", "code": "dto = AgentDTO.from_yaml_file(path_obj)"},
+      {"file": "d:/home/strato-space/call/app/call.py", "line": 1539, "function": "<module>", "code": "asyncio.run(main(...))"}
+    ]
+  }
+}
+```
+
+Notes:
+- Fields `file` and `line` point to the top stack frame where the exception occurred.
+- `stack` is an array of frames with `file`, `line`, `function`, and source `code` snippet when available.
+
+### Running with local virtual environment
+
+Prefer the project venv interpreter to run commands:
+
+```powershell
+cd D:\home\strato-space 
+.venv\Scripts\Activate.ps1
+python -m call.app.call "Vasil3" "рассказывай"
+python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
+```
+```bash
+cd /home/strato-space 
+. .venv/bin/activate.sh 
+python -m call.app.call "Vasil3" "рассказывай"
+python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
+```
+
+### Legacy Agent Addressing (Deprecated)
+
 - Agent addressing syntax (canonical): `@[OrgName][AgentName][:PipelineName][:PromptName]`
   - All parts are optional; inside Call, names are normalized to PascalCase.
   - Defaults: `OrgName=Strato`, `AgentName=DiscoveryAgent`, `PromptName=DiscoveryAgentPrompt`.
@@ -31,25 +88,43 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 Call integrates with and executes artifacts produced by:
 
-- Agent Fab — a factory of early analytical prompts and agent cards.
-- Prompt Repository — canonical storage of prompts, schemas, tests, and metadata.
-- ai-team — organization-specific sets of agents with active execution environment.
-- RAG and MCP servers — optional data access and tool affordances.
+- Agent Fab — a factory of early analytical agnets cards and there prompts stored in repo `prompt` directory `AgentFab`.
+- Prompt Repository — canonical storage of prompts, schemas, tests, and metadata stored in repo `prompt` directory `agents`.
+- RAG and MCP servers — optional data access and tool affordances:
+  - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice []   
 - Voice Bot, AI News Aggregator, Telegram, Google Sheets/Pages — integration touchpoints.
 
-See also the strategy doc: `org/strato/context/01. strato stategy/process-agents.md`.
+- Repos list:
+  - prompt - prompt repository;
+  - call - this repo;
+  - server mcp's starter, nginx cofings 
+  - rms sample custromer's of project repo, 
+  - voice - voicebot backed lib, mcp, actions, cli interfaces   
+
+See also the strategy doc: 
+ - `org/strato/context/01. strato stategy/process-agents.md`;
+ - `prompt/plan/`
 
 ## AgentFab (Group Agent) — Quick Start
 
 - Invocation (chat/shell):
 
   ```text
-  @AgentFab @AgentName <input>
+  @AgentName "user-input"
+
+  @AiNewsAggr "Собери новости про Уральские Авиалинии, темы три блока: ценообразование, бортпроводники, ИТ"
   ```
-  - `<input>` may be a free-form string (treated as goal), a file/URL to an agent scaffold, or a YAML-like block.
+  ```text
+  # TODO 
+  @AgentFab "input-sample: create|update agnet @AgentName with goai: goal-text" 
+  ```
+
+  [ ] @AgentFab shoud inpockes all agents in @AgentFab on-by one as described in `prompt/AgentFab/agents.yaml` `agents` attribute
+
+  - `<input>` may be a free-form string (treated as goal or task), contains file/URL/voice-bot-url to an agent scaffold, or a YAML-like or json-like block.
 - MCP method (planned/minimal): `call(agentName, input)`
 - Resolvers used by Call:
-  - `agentName` → `AgentObj`
+  - `agentName` → `AgentNameObj`
   - `input` (string) → `inputObj`
   - `output` (string) → `outputObj`
 - Discovery order (creator → execution):
@@ -57,7 +132,7 @@ See also the strategy doc: `org/strato/context/01. strato stategy/process-agents
   - `prompt/AgentFab/<AgentName>/agent.yaml`
   - `prompt/agents/<AgentName>/agent.yaml`
 - Output artifacts (runnable): `prompt/agents/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
-- Reference: `prompt/AgentFab/agent.yaml`.
+- Reference: `prompt/AgentFab/agent.yaml` and .
 
 - AgentFab card fields:
   - `agents`: map of `AgentName: goal` (names only, without `@`). This replaces the old list format.
