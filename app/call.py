@@ -9,7 +9,14 @@ import httpx
 from openai import OpenAI
 
 # Import agent utilities (internal copy)
-from .utils.agent_utils import extract_agent_attributes, get_agent_instructions
+try:
+    from .utils.agent_utils import extract_agent_attributes, get_agent_instructions
+except ImportError:
+    # Fallback for when running as script directly
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
+    from agent_utils import extract_agent_attributes, get_agent_instructions
 from pathlib import Path
 import shutil
 from bs4 import BeautifulSoup      # use stdlib 'html.parser' to avoid extra deps
