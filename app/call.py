@@ -1072,10 +1072,10 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
     ) as server_seq, MCPServerStdioHook(
         params={
             "command": "uvx",
-            # "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
-            "args": [
-                "--env-file", samples_dir + "/call/.env", 
-                "--from", samples_dir + "/mcp-google-sheets/", "mcp-google-sheets"]
+            "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
+            # "args": [
+            #     "--env-file", samples_dir + "/call/.env", 
+            #     "--from", samples_dir + "/mcp-google-sheets/", "mcp-google-sheets"]
         },
         client_session_timeout_seconds=30
     ) as server_gsheets, MCPServerStdioHook(
