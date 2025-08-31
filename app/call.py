@@ -528,100 +528,6 @@ def minify_html_func(html_string: str) -> str:
     s = re.sub(r">\s+<", "><", s)
     return s.strip()
 
-async def load_prompt(directory="prompt", variables: dict = None, agent_path: str | None = None) -> dict:
-    """
-    Return the best available AI News Aggregator prompt and its GitHub URL.
-    
-    Args:
-        directory: Directory (under prompt repo) to search for legacy prompt files
-        variables: Optional dict of variables for template substitution.
-                  Keys should match {{varname}} placeholders in the template.
-        agent_path: Optional path to the agent.yaml; if provided, we will
-                    load instructions from the agent's prompt_file (prompt.yaml)
-                  
-    Returns:
-        dict: {
-            'instructions': str, # The prompt text with variables substituted
-            'url': str, # GitHub URL to edit the prompt
-            'themes_url': str # URL to the file with themes
-        }
-    """
-    # Base repo path (GitHub edit URL kept for compatibility)
-    repo_base_url = "https://github.com/strato-space/ai/edit/main/"
-    
-    # 1) Prefer loading from the agent profile directory if provided
-    if agent_path and os.path.exists(agent_path):
-        try:
-            # Use existing helper to extract instructions from agent.yaml
-            instructions = get_agent_instructions(agent_path)
-            agent_dir = Path(agent_path).parent
-            # Compute URLs to prompt.yaml and themes.md in the same folder
-            prompt_path = (agent_dir / "prompt.yaml")
-            themes_path = (agent_dir / "themes.md")
-            url = repo_base_url + urllib.parse.quote(str(prompt_path).replace('\\', '/'), safe="/")
-            themes_url = repo_base_url + urllib.parse.quote(str(themes_path).replace('\\', '/'), safe="/")
-            # Variable substitution
-            if variables is None:
-                variables = {}
-            for var_name, var_value in variables.items():
-                placeholder = f"{{{{{var_name}}}}}"
-                instructions = instructions.replace(placeholder, str(var_value))
-            return {
-                "instructions": instructions,
-                "url": url,
-                "themes_url": themes_url,
-            }
-        except Exception:
-            # Fallback to legacy search below
-            pass
-
-    # 2) Legacy search: look for prompt/ai-news-aggr/{v1,v2,v3}.md under discovered prompt repo
-    try:
-        prompt_repo = discover_prompt_repo()
-    except Exception:
-        prompt_repo = None
-    base_dir = (prompt_repo / directory) if prompt_repo else Path(directory)
-    candidates = []
-    for folder in ("ai-news-aggr", "AiNewsAggr"):
-        for name in ("v1.md", "v2.md", "v3.md"):
-            candidates.append(base_dir / folder / name)
-    
-    # Default empty dict if no variables provided
-    if variables is None:
-        variables = {}
-
-    instructions = None
-    for path in candidates:
-        path_str = path.as_posix()
-        if os.path.exists(path_str):
-            with open(path_str, "r", encoding="utf-8") as f:
-                instructions = f.read()
-                
-            # Perform variable substitution
-            for var_name, var_value in variables.items():
-                placeholder = f"{{{{{var_name}}}}}"  # Double braces for f-string, then format adds another set
-                instructions = instructions.replace(placeholder, str(var_value))
-            
-            quoted_path = urllib.parse.quote(path_str, safe="/")
-            url = repo_base_url + quoted_path
-            # Try both kebab and Pascal case for themes path in repo URL
-            themes_rel_candidates = [
-                "prompt/ai-news-aggr/themes.md",
-                "prompt/AiNewsAggr/themes.md",
-                "prompt/agents/ai-news-aggr/themes.md",
-                "prompt/agents/AiNewsAggr/themes.md",
-            ]
-            themes_url = None
-            for rel in themes_rel_candidates:
-                themes_url = repo_base_url + rel
-                break
-            return {
-                "instructions": instructions,
-                "url": url,
-                "themes_url": themes_url,
-            }
-    
-    raise FileNotFoundError("No prompt file found")
 
 async def create_telegrath_account():
 
@@ -746,48 +652,35 @@ def discover_prompt_repo() -> Path:
 
 
 def discover_agent_yaml(agent_name: str) -> Path | None:
-    """Discover agent definition YAML with creator->execution precedence.
+    """Discover agent YAML by directory name only.
 
-    Search order (separates creator system from execution system):
-    1) Creator:   prompt/AgentFab/<AgentName>.yaml
-                  prompt/AgentFab/<AgentName>/agent.yaml
-       (case-insensitive matching on <AgentName>)
-    2) Execution: prompt/agents/<AgentName>/agent.yaml
-       (existing behavior; case-insensitive dir match)
+    Search order:
+    1) prompt/agents/<AgentName>/agent.yaml (case-insensitive directory match)
 
     Args:
-        agent_name: PascalCase AgentName (use to_pascal_case() on inputs).
+        agent_name: Agent name (will be normalized with to_pascal_case).
 
     Returns:
-        Path to YAML file or None if not found.
+        Path to agent.yaml file or None if not found.
     """
+    if not agent_name:
+        return None
     repo = discover_prompt_repo()
+    query_raw = str(agent_name).strip().lstrip('@')
+    query_norm = to_pascal_case(query_raw)
 
-    # 1) Creator system lookup under prompt/AgentFab
-    creator_dir = repo / 'AgentFab'
-    if creator_dir.exists():
-        # 1.a direct file: AgentFab/<AgentName>.yaml
-        direct_file = creator_dir / f"{agent_name}.yaml"
-        if direct_file.exists():
-            return direct_file
-        # 1.b nested folder: AgentFab/<AgentName>/agent.yaml (case-insensitive)
-        for child in creator_dir.iterdir():
-            if child.is_dir() and child.name.lower() == agent_name.lower():
-                cand = child / 'agent.yaml'
-                if cand.exists():
-                    return cand
-
-    # 2) Execution system lookup under prompt/agents (existing behavior)
     agents_dir = repo / 'agents'
     if not agents_dir.exists():
         return None
-    # direct match
-    direct = agents_dir / agent_name / 'agent.yaml'
+
+    # Direct exact case first
+    direct = agents_dir / query_norm / 'agent.yaml'
     if direct.exists():
         return direct
-    # case-insensitive scan
+
+    # Case-insensitive directory scan
     for child in agents_dir.iterdir():
-        if child.is_dir() and child.name.lower() == agent_name.lower():
+        if child.is_dir() and child.name.lower() == query_norm.lower():
             cand = child / 'agent.yaml'
             if cand.exists():
                 return cand
@@ -795,9 +688,37 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
 
 
 def load_yaml(path: Path) -> dict:
-    import yaml  # lazy import
+    """Simple YAML loader."""
+    import yaml
     with open(path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f) or {}
+
+
+def format_exception_json(e: Exception) -> dict:
+    """Return a JSON-serializable dict with rich exception details.
+
+    Includes error type, message, top frame file:line, and full call stack.
+    """
+    import traceback, os
+    tb = e.__traceback__
+    frames = traceback.extract_tb(tb) if tb else []
+    stack = []
+    for fr in frames:
+        stack.append({
+            "file": os.fspath(fr.filename),
+            "line": fr.lineno,
+            "function": fr.name,
+            "code": (fr.line or "")
+        })
+    top_file = os.fspath(frames[-1].filename) if frames else None
+    top_line = frames[-1].lineno if frames else None
+    return {
+        "type": type(e).__name__,
+        "message": str(e),
+        "file": top_file,
+        "line": top_line,
+        "stack": stack,
+    }
 
 
 class AgentDTO:
@@ -810,6 +731,16 @@ class AgentDTO:
     - Enriches prompt with agent attributes if keys are missing (prompt overrides agent).
     - Exposes getDefaultPrompt(), getPrompt(name), getPromptNames().
     """
+    
+    @classmethod
+    def from_yaml_file(cls, yaml_path: str | Path) -> 'AgentDTO':
+        """Load AgentDTO from YAML file."""
+        import yaml
+        path = Path(yaml_path)
+        with open(path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+        return cls(data, base_dir=path.parent)
+    
     def __init__(self, raw: dict, base_dir: Path | None = None):
         self.raw = raw or {}
         self.base_dir: Path | None = base_dir
@@ -878,18 +809,43 @@ class AgentDTO:
     async def getInstructions(self) -> tuple[str, dict]:
         """Return final instructions text and attributes.
 
-        Priority:
-        1) If default prompt loaded and contains 'instructions', use it.
-        2) Else if top-level 'instructions' provided, use it.
-        3) Else fallback to await load_prompt().
+        New simplified logic:
+        1) If prompts count = 0, use only agent.yaml as prompt
+        2) If prompts exist, use first prompt and merge with agent metadata
+        3) If first prompt instructions is empty, use whole agent.yaml as agent_instructions
         """
-        default_prompt = self.getDefaultPrompt()
-        if isinstance(default_prompt, dict) and default_prompt.get('instructions'):
-            return default_prompt.get('instructions'), self.attributes
-        if self.instructions:
-            return self.instructions, self.attributes
-        prompt = await load_prompt()
-        return prompt["instructions"], self.attributes
+        # Check if we have any prompts loaded
+        if not self._prompts:
+            # No prompts - use agent.yaml content
+            try:
+                if self.base_dir:
+                    p = (self.base_dir / 'agent.yaml')
+                    if p.exists():
+                        return p.read_text(encoding='utf-8'), self.attributes
+            except Exception:
+                pass
+            return "", self.attributes
+        
+        # We have prompts - use first one
+        first_prompt = self.getDefaultPrompt()
+        if isinstance(first_prompt, dict):
+            instructions = first_prompt.get('instructions', '').strip()
+            if instructions:
+                # Merge prompt attributes with agent attributes (prompt has priority)
+                merged_attrs = dict(self.attributes)
+                merged_attrs.update(first_prompt)
+                return instructions, merged_attrs
+            else:
+                # Empty instructions - fallback to agent.yaml
+                try:
+                    if self.base_dir:
+                        p = (self.base_dir / 'agent.yaml')
+                        if p.exists():
+                            return p.read_text(encoding='utf-8'), self.attributes
+                except Exception:
+                    pass
+        
+        return "", self.attributes
 
     # -------- Variant A prompt support --------
     def _is_on_marker(self, token: str) -> bool:
@@ -978,57 +934,21 @@ class AgentDTO:
         return None
 
     def _load_prompts_variant_a(self):
-        """Load prompts according to Variant A rules, supporting both list and mapping forms.
+        """Load prompts with simplified logic.
 
-        Supported shapes:
-        - list of strings: ["on|path/to/prompt.yaml", "off|Other.yaml"]
-        - mapping: { Name: "instructions text" | {instructions: ..., ...} }
+        Extract first word from prompts list/text, try loading as .md or .yaml.
         """
-        ordered_candidates: list[tuple[str, bool]] = []  # (file_or_name, is_on)
-        # Do NOT auto-include prompt_file; default = first ON in prompts per user's preference
-        # Parse entries in self.prompts
-        if isinstance(self.prompts, list):
-            for entry in self.prompts:
-                if not isinstance(entry, str):
-                    continue
-                parts = [p.strip() for p in entry.split('|')]
-                if len(parts) >= 2:
-                    marker, target = parts[0], parts[1]
-                    is_on = self._is_on_marker(marker)
-                else:
-                    # entry is a plain path without marker
-                    target = parts[0]
-                    is_on = False
-                ordered_candidates.append((target, is_on))
-            # Load prompts: resolve targets to files (with or without extension).
-            # The FIRST entry in the list is considered the default, regardless of marker.
-            first = True
-            for target, is_on in ordered_candidates:
-                if not isinstance(target, str):
-                    continue
-                resolved = self._resolve_prompt_target(target)
-                if resolved is None:
-                    continue
-                data = None
-                suffix = resolved.suffix.lower()
-                if suffix in ('.yaml', '.yml'):
-                    data = self._load_prompt_file(str(resolved))
-                elif suffix == '.md':
-                    try:
-                        with open(resolved, 'r', encoding='utf-8') as f:
-                            md_text = f.read()
-                        data = {"instructions": md_text}
-                    except Exception:
-                        data = None
-                if data is None:
-                    continue
-                name = Path(target).stem if Path(target).suffix else Path(resolved).stem
-                # Set default on the very first successfully loaded entry
-                self._register_prompt(name, data, is_default_candidate=first or is_on)
-                first = False
+        if not self.prompts:
+            return
+        
+        # Extract first word/item from prompts
+        first_prompt_name = None
+        if isinstance(self.prompts, list) and self.prompts:
+            first_prompt_name = str(self.prompts[0]).strip().split()[0]
+        elif isinstance(self.prompts, str) and self.prompts.strip():
+            first_prompt_name = self.prompts.strip().split()[0]
         elif isinstance(self.prompts, dict):
             # Mapping form: name -> instructions string or prompt object
-            first = True
             for name, value in self.prompts.items():
                 prompt_obj = None
                 if isinstance(value, str):
@@ -1036,8 +956,31 @@ class AgentDTO:
                 elif isinstance(value, dict):
                     prompt_obj = dict(value)
                 if prompt_obj:
-                    self._register_prompt(str(name), prompt_obj, is_default_candidate=first)
-                    first = False
+                    self._register_prompt(str(name), prompt_obj, is_default_candidate=True)
+                    break  # Only use first one
+            return
+        
+        if not first_prompt_name:
+            return
+        
+        # Try loading first_prompt_name as .md or .yaml
+        base = self.base_dir or Path('.')
+        for ext in ['.md', '.yaml', '.yml']:
+            prompt_path = base / f"{first_prompt_name}{ext}"
+            if prompt_path.exists():
+                try:
+                    if ext == '.md':
+                        with open(prompt_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        data = {"instructions": content}
+                    else:  # .yaml or .yml
+                        data = self._load_prompt_file(str(prompt_path))
+                    
+                    if data:
+                        self._register_prompt(first_prompt_name, data, is_default_candidate=True)
+                        break
+                except Exception:
+                    continue
 
     def getPromptNames(self) -> list[str]:
         return list(self._prompts.keys())
@@ -1104,10 +1047,27 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         
 
-        # Load agent profile if specified
+        # Load agent profile if specified (defensive)
         agent_attrs = {}
+        agent_instructions = ""
+        agent_yaml_path = agent_path if agent_path else None
+        
         if agent_path and os.path.exists(agent_path):
-            agent_attrs = extract_agent_attributes(agent_path)
+            agent_dto = AgentDTO.from_yaml_file(agent_path)
+            if agent_dto is not None:
+                try:
+                    _instr, _attrs = await agent_dto.getInstructions()
+                except Exception as e:
+                    print(f"Error loading agent instructions: {e}")
+                    _instr, _attrs = "", {}
+                if _instr:
+                    agent_instructions = _instr
+                # Merge safely
+                dto_attrs = getattr(agent_dto, 'attributes', {}) or {}
+                if isinstance(_attrs, dict):
+                    agent_attrs = {**agent_attrs, **dto_attrs, **_attrs}
+                else:
+                    agent_attrs = {**agent_attrs, **dto_attrs}
             
         # Set up template variables with agent attributes
         template_vars = {
@@ -1117,17 +1077,70 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             "goal": agent_attrs.get("goal", "gather and summarize the latest news")
         }
         
-        # Load prompt with template variables and agent profile location
-        prompt_data = await load_prompt(variables=template_vars, agent_path=agent_path)
-        
-        # Determine agent yaml path: prefer explicit agent_path, otherwise discover
-        agent_yaml_path = agent_path if agent_path else None
-        # agent_path may come as YAML/MD path; keep existing attrs, and try to enrich from prompt repo
+        # Try to discover agent if not provided
         if not agent_yaml_path and agent_attrs.get("name"):
             norm = to_pascal_case(agent_attrs.get("name"))
             agent_yaml_path = discover_agent_yaml(norm)
         if debug:
-            print(f"[DEBUG] Discovered agent YAML path: {agent_yaml_path}")
+            print(f"[DEBUG] Agent YAML path: {agent_yaml_path}")
+        
+        # Build agent instructions and gather seed file list
+        seed_file_list_text = ""
+        agent_dir: Path | None = None
+        try:
+            path_obj = None
+            if agent_yaml_path:
+                try:
+                    from os import PathLike as _PathLike  # type: ignore
+                except Exception:
+                    _PathLike = tuple()
+                path_obj = Path(str(agent_yaml_path)) if isinstance(agent_yaml_path, (str, _PathLike)) else agent_yaml_path
+                agent_dir = path_obj.parent
+            # If we have an agent DTO, try to use its default prompt's instructions
+            dto = None
+            if path_obj and path_obj.exists():
+                dto = AgentDTO.from_yaml_file(path_obj)
+            default_prompt = (dto.getDefaultPrompt() if dto else None) or {}
+            instr = default_prompt.get('instructions') if isinstance(default_prompt, dict) else None
+            if instr is None:
+                # Fallback: use raw agent.yaml text as prompt
+                if path_obj and path_obj.exists():
+                    agent_instructions = Path(path_obj).read_text(encoding='utf-8')
+            else:
+                # If list, join; if str, take as-is. Optionally prefix with basic agent meta
+                if isinstance(instr, list):
+                    instr = "\n".join(str(x) for x in instr)
+                header = []
+                if isinstance(dto, AgentDTO):
+                    if dto.name:
+                        header.append(f"name: {dto.name}")
+                    if dto.role:
+                        header.append(f"role: {dto.role}")
+                    if getattr(dto, 'attributes', None):
+                        purpose = dto.attributes.get('purpose')
+                        goal = dto.attributes.get('goal')
+                        if goal:
+                            header.append(f"goal: {goal}")
+                        elif purpose:
+                            header.append(f"purpose: {purpose}")
+                agent_instructions = (("\n".join(header) + "\n\n") if header else "") + str(instr)
+
+            # Collect recursive file list under agent directory and prepare one message text
+            if agent_dir and agent_dir.exists():
+                names: list[str] = []
+                for root, dirs, files in os.walk(agent_dir):
+                    for fn in files:
+                        try:
+                            rel = str(Path(root).joinpath(fn).relative_to(agent_dir)).replace('\\', '/')
+                            names.append(rel)
+                        except Exception:
+                            names.append(fn)
+                names.sort()
+                seed_file_list_text = "\n".join(names)
+        except Exception:
+            # Silent fallback if anything fails
+            agent_instructions = agent_instructions or ""
+            seed_file_list_text = seed_file_list_text or ""
         # Get model from environment or default; may be overridden by yaml
         model_name = os.environ.get("LLM_MODEL", "gpt-4.5")
         model_settings_obj = None
@@ -1181,7 +1194,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
                 # Also show augmented instructions that will be sent to LLM (instructions + extra attrs as YAML, excluding model settings and aliases)
                 try:
-                    dto_instr, extra_attrs = dto.getInstructions()
+                    dto_instr, extra_attrs = await dto.getInstructions()
                     if dto_instr:
                         augmented = dto_instr
                         if extra_attrs:
@@ -1204,34 +1217,48 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     pass
                 print("[DEBUG] Stopping after AgentDTO dump (--debug).")
                 sys.exit(0)
-        # Merge attrs from DTO for normal (non-debug) run
-        agent_attrs = {**dto.attributes, **agent_attrs}
-        if dto.model:
-            model_name = dto.model
-        if dto.model_settings:
-            model_settings_obj = dto.model_settings
-        # use instructions from DTO; augment with non-model settings attrs for LLM context
-        dto_instructions, extra_attrs = await dto.getInstructions()
-        if dto_instructions:
+        # Merge attrs from DTO for normal (non-debug) run (guard dto None)
+        if isinstance(dto, AgentDTO):
+            agent_attrs = {**getattr(dto, 'attributes', {}) or {}, **agent_attrs}
+            if getattr(dto, 'model', None):
+                model_name = dto.model
+            if getattr(dto, 'model_settings', None):
+                model_settings_obj = dto.model_settings
+            # use instructions from DTO; augment with non-model settings attrs for LLM context
             try:
-                ms_keys = {"temperature", "top_p", "max_tokens", "stop", "presence_penalty", "frequency_penalty", "n", "best_of", "alias", "aliases"}
-                if dto.model_settings:
-                    ms_keys |= {k for k in vars(dto.model_settings).keys()}
-                filtered = {k: v for k, v in extra_attrs.items() if k not in ms_keys}
-                import yaml as _yaml
-                ctx_yaml = _yaml.safe_dump(filtered, allow_unicode=True, sort_keys=False) if filtered else ""
-                agent_instructions = dto_instructions if not ctx_yaml else f"{dto_instructions}\n\n# Context\n{ctx_yaml}"
+                dto_instructions, extra_attrs = await dto.getInstructions()
             except Exception:
-                agent_instructions = dto_instructions
-            # Do not let aliases seep into agent runtime attrs either
-            if isinstance(extra_attrs, dict):
-                extra_attrs = {k: v for k, v in extra_attrs.items() if k not in {"alias", "aliases"}}
-            agent_attrs |= extra_attrs
+                dto_instructions, extra_attrs = "", {}
+            if dto_instructions:
+                try:
+                    ms_keys = {"temperature", "top_p", "max_tokens", "stop", "presence_penalty", "frequency_penalty", "n", "best_of", "alias", "aliases"}
+                    if getattr(dto, 'model_settings', None):
+                        try:
+                            ms_keys |= {k for k in vars(dto.model_settings).keys()}
+                        except Exception:
+                            pass
+                    filtered = {k: v for k, v in (extra_attrs or {}).items() if k not in ms_keys}
+                    import yaml as _yaml
+                    ctx_yaml = _yaml.safe_dump(filtered, allow_unicode=True, sort_keys=False) if filtered else ""
+                    agent_instructions = dto_instructions if not ctx_yaml else f"{dto_instructions}\n\n# Context\n{ctx_yaml}"
+                except Exception:
+                    agent_instructions = dto_instructions
+                # Do not let aliases seep into agent runtime attrs either
+                if isinstance(extra_attrs, dict):
+                    extra_attrs = {k: v for k, v in extra_attrs.items() if k not in {"alias", "aliases"}}
+                agent_attrs |= extra_attrs
         # Create agent with attributes from profile or defaults
         # Prefer CLI-provided name if available, fallback to profile or default
         agent_name = (locals().get('cli_agent_name') or agent_attrs.get("name", "AI News Aggregator"))
-        # Ensure we use DTO-derived instructions (default prompt) and never fall back to legacy loader
-        agent_instructions = locals().get('agent_instructions', None) or (await dto.getInstructions())[0] or ""
+        # Ensure we use DTO-derived instructions when available; otherwise keep existing
+        if not locals().get('agent_instructions', None):
+            if isinstance(dto, AgentDTO):
+                try:
+                    agent_instructions = (await dto.getInstructions())[0] or ""
+                except Exception:
+                    agent_instructions = agent_instructions or ""
+            else:
+                agent_instructions = agent_instructions or ""
         
         # Note: temperature handling removed per request. Keep dto.model_settings as-is, but sanitize max token fields.
         # Some providers require numeric types for max tokens; drop or coerce invalid string values like ">= 30000".
@@ -1262,7 +1289,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             instructions=agent_instructions,
             # prompt=prompt_data["prompt"],
             tools=[WebSearchTool()],
-            mcp_servers=[server_fs, server_seq],
+            mcp_servers=[server_fs, server_seq, server_voice] + ([server_gsheets] if server_gsheets else []),
             model=model_name,
             model_settings=(model_settings_obj or ModelSettings())
         )
@@ -1274,13 +1301,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
         _seed_history = []
-        try:
-            if user_input:
-                _seed_history.append({"role": "user", "content": user_input})
-            else:
-                _seed_history.append({"role": "user", "content": "go"})
-        except Exception:
-            pass
+        if seed_file_list_text:
+            _seed_history.append({"role": "user", "content": seed_file_list_text})
+        _seed_history.append({"role": "user", "content": user_input or "go"})
         result1 = await Runner.run(
             agent,
             _seed_history,
@@ -1296,12 +1319,27 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         # Prefer CLI-provided agent name for publication title
         title_name = (cli_agent_name or agent_name or "Agent")
+        # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
+        themes_url = None
+        prompt_url = None
+        try:
+            repo_base_url = "https://github.com/strato-space/ai/edit/main/"
+            if agent_yaml_path:
+                from pathlib import Path as _Path
+                _p = _Path(str(agent_yaml_path))
+                prompt_url = repo_base_url + urllib.parse.quote(str(_p).replace('\\', '/'), safe='/')
+                _themes = _p.parent / 'themes.md'
+                if _themes.exists():
+                    themes_url = repo_base_url + urllib.parse.quote(str(_themes).replace('\\', '/'), safe='/')
+        except Exception:
+            pass
+
         if isinstance(step1_output, str) and len(step1_output) < 4000:
             # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
             await send_digest_notification(
                 "",
-                prompt_data["themes_url"],
-                prompt_data["url"],
+                themes_url,
+                prompt_url,
                 agent_name=agent_name,
                 agent_path=agent_path,
                 input_text=user_input,
@@ -1311,8 +1349,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             url = await publish_results(title=title_name, content=step1_output)
             await send_digest_notification(
                 url,
-                prompt_data["themes_url"],
-                prompt_data["url"],
+                themes_url,
+                prompt_url,
                 agent_name=agent_name,
                 agent_path=agent_path,
                 input_text=user_input,
@@ -1517,10 +1555,16 @@ if __name__ == "__main__":
         print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
-        import traceback
-        print("\nError:", file=sys.stderr)
-        traceback.print_exc()
-        print("\nFull error details:", file=sys.stderr)
-        print(f"Type: {type(e).__name__}", file=sys.stderr)
-        print(f"Message: {str(e)}", file=sys.stderr)
+        try:
+            err = {
+                "module": "call.app.call",
+                "ok": False,
+                "error": format_exception_json(e),
+            }
+            print(json.dumps(err, ensure_ascii=False))
+            sys.stderr.flush()
+            sys.stdout.flush()
+        except Exception:
+            # Absolute fallback
+            print(f"{{\"ok\": false, \"error\": {{\"type\": \"{type(e).__name__}\", \"message\": \"{str(e)}\"}}}}")
         sys.exit(1)
