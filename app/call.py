@@ -270,10 +270,9 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
         prompt_repo = discover_prompt_repo()
         commit_msg = f"{agent_name} {user_input}"
 
-        import asyncio
         from asyncio.subprocess import PIPE
 
-        async def _run_git(cmd: list[str]) -> int:
+        async def _run_git(cmd: list[str]) -> tuple[int, bytes, bytes]:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(prompt_repo),
@@ -281,17 +280,24 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
                 stderr=PIPE,
             )
             out, err = await proc.communicate()
-            print(f"[git] {' '.join(cmd)}\nexit={proc.returncode}\nstdout={out.decode(errors='ignore')}\nstderr={err.decode(errors='ignore')}")
-            return proc.returncode
+            return proc.returncode, out, err
 
+        # Check if there are any changes first; if none, return silently
+        rc, out, _ = await _run_git(["git", "status", "--porcelain", "-uno"])
+        if rc != 0:
+            return  # fail silently per requirement to avoid stdout logging
+        if out.strip() == b"":
+            return  # no changes
+
+        # Changes exist: add, commit, and push
         await _run_git(["git", "add", "-A", "."])
-        rc_commit = await _run_git(["git", "commit", "-m", commit_msg])
+        rc_commit, _, _ = await _run_git(["git", "commit", "-m", commit_msg])
         if rc_commit == 0:
             await _run_git(["git", "push"])
-        else:
-            print("[git] No changes to commit; skipping push")
-    except Exception as e:
-        print(f"[git] Post-run push failed: {e}")
+        # else: nothing to commit; return silently
+    except Exception:
+        # Fail silently to avoid writing to stdout as per requirements
+        return
 
 
 async def telegram_send_message(chat_id: int = None, text: str = None, message_thread_id: int = None, reply_markup: InlineKeyboardMarkup = None):
