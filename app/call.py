@@ -1020,14 +1020,14 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 "args": ["-y", "@modelcontextprotocol/server-filesystem", samples_dir]
             },
             name="fs",
-            client_session_timeout_seconds=30
+            client_session_timeout_seconds=60
     ) as server_fs, MCPServerStdioHook(
         params={
             "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
         },
         name="seq",
-        client_session_timeout_seconds=30
+        client_session_timeout_seconds=60
     ) as server_seq, MCPServerStdioHook(
             params={
                 "command": "uvx",
@@ -1036,7 +1036,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     "--from", samples_dir + "/voice", "mcp-voicebot"]
             },
             name="voice",
-        client_session_timeout_seconds=30
+        client_session_timeout_seconds=60
     ) as server_voice:
 
     # MCPServerStdioHook(
@@ -1045,7 +1045,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
     #             "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
     #         },
     #         name="gsh",
-    #     client_session_timeout_seconds=30
+    #     client_session_timeout_seconds=60
     # ) as server_gsheets,
     
 #       MCPServerStdioHook(
@@ -1056,7 +1056,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 #             #     "--env-file", samples_dir + "/call/.env", 
 #             #     "--from", samples_dir + "/mcp-google-sheets/", "mcp-google-sheets"]
 #         },
-#         client_session_timeout_seconds=30
+#         client_session_timeout_seconds=60
 #     ) as server_gsheets, 
 
         
@@ -1315,8 +1315,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
         _seed_history = []
-        if seed_file_list_text:
-            _seed_history.append({"role": "user", "content": seed_file_list_text})
+        # if seed_file_list_text:
+        #     _seed_history.append({"role": "user", "content": seed_file_list_text})
         _seed_history.append({"role": "user", "content": user_input or "go"})
         result1 = await Runner.run(
             agent,
