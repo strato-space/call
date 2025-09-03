@@ -1,7 +1,8 @@
 import os
 import asyncio
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
 import json
@@ -871,24 +872,29 @@ class AgentDTO:
         return cls(data, base_dir=path.parent)
     
     def __init__(self, raw: dict, base_dir: Path | None = None):
-        self.raw = raw or {}
+        # Store raw and base path
+        self.raw: dict = raw or {}
         self.base_dir: Path | None = base_dir
+        # Basic identity
         self.id: str | None = self.raw.get('id')
-        self.name: str | None = self.raw.get('name')
+        self.name: str | None = self.raw.get('name') or self.id
+        # Model fields
         self.model: str | None = self.raw.get('model') or self.raw.get('llm')
-        self.instructions: str | None = self.raw.get('instructions') or self.raw.get('prompt')
-        self.prompts = self.raw.get('prompts') or []
-        self.prompt_file: str | None = self.raw.get('prompt_file')
-        self.attributes: dict[str, Any] = {}
-        # Extract model settings from possible sections
+        self.instructions: str | None = self.raw.get('instructions')
+        # Prompt references can be list/str/dict
+        self.prompts = self.raw.get('prompts') or self.raw.get('prompt') or self.raw.get('prompt_file')
+        # Extract model settings and general attributes
         self.model_settings = self._extract_model_settings()
-        # Everything not used in model settings goes to attributes map
-        used_keys = set(['id', 'name', 'model', 'llm', 'instructions', 'prompt', 'prompts', 'prompt_file', 'model_settings', 'modelSettings'])
+        self.attributes: dict = {}
+        used_keys = {
+            'id', 'name', 'model', 'llm', 'instructions', 'prompt', 'prompts', 'prompt_file',
+            'model_settings', 'modelSettings'
+        }
         for k, v in self.raw.items():
             if k not in used_keys:
                 self.attributes[k] = v
 
-        # Internal prompt registry: name -> enriched prompt dict
+        # Internal prompt registry
         self._prompts: dict[str, dict] = {}
         self._default_prompt_name: str | None = None
         self._load_prompts_variant_a()
@@ -1126,7 +1132,69 @@ class AgentDTO:
         return None
 
 
-async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = ""):
+@dataclass
+class AgentConfig:
+    name: str
+    instructions: str
+    model: str
+    model_settings: ModelSettings | None = None
+    vs_list: List[str] = field(default_factory=list)
+    attributes: Dict[str, Any] = field(default_factory=dict)
+    agent_yaml_path: Path | None = None
+    base_dir: Path | None = None
+
+
+def _normalize_vs_list(vs_val: Any) -> List[str]:
+    if vs_val is None:
+        return []
+    if isinstance(vs_val, (list, tuple, set)):
+        return [str(x) for x in vs_val if x is not None]
+    return [str(vs_val)]
+
+
+async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
+    """Build AgentConfig by discovering/loading YAML via normalized agent name."""
+    norm = to_pascal_case(agent_name or "") if agent_name else ""
+    path_obj: Path | None = discover_agent_yaml(norm) if norm else None
+
+    dto: AgentDTO | None = None
+    if path_obj and Path(path_obj).exists():
+        dto = AgentDTO(load_yaml(path_obj), base_dir=Path(path_obj).parent)
+
+    # Defaults
+    default_model = os.environ.get("LLM_MODEL", "gpt-4.5")
+    name = (dto.name if dto and dto.name else (agent_name or "Agent")).strip()
+    model = (dto.model if dto and dto.model else default_model)
+    model_settings = (dto.model_settings if dto else None)
+    attributes: Dict[str, Any] = dict(getattr(dto, 'attributes', {}) or {})
+    instructions = ""
+    if dto:
+        try:
+            instr, attrs = await dto.getInstructions()
+            instructions = instr or ""
+            if isinstance(attrs, dict):
+                # Merge, but strip aliases from runtime attrs
+                attrs = {k: v for k, v in attrs.items() if k not in {"alias", "aliases"}}
+                attributes |= attrs
+        except Exception:
+            instructions = instructions or ""
+
+    # Vector stores from attributes (agent or prompt)
+    vs_list = _normalize_vs_list(attributes.get('vs'))
+
+    return AgentConfig(
+        name=name,
+        instructions=instructions,
+        model=model,
+        model_settings=model_settings,
+        vs_list=vs_list,
+        attributes=attributes,
+        agent_yaml_path=path_obj,
+        base_dir=(path_obj.parent if path_obj else None),
+    )
+
+
+async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
     # Запускаем два MCP-сервера параллельно (filesystem и sequential-thinking)
     server_gsheets = None
     async with MCPServerStdioHook(
@@ -1176,280 +1244,40 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         
 
-        # Load agent profile if specified (defensive)
-        agent_attrs = {}
-        agent_instructions = ""
-        agent_yaml_path = agent_path if agent_path else None
-        
-        if agent_path and os.path.exists(agent_path):
-            agent_dto = AgentDTO.from_yaml_file(agent_path)
-            if agent_dto is not None:
-                try:
-                    _instr, _attrs = await agent_dto.getInstructions()
-                except Exception as e:
-                    print(f"Error loading agent instructions: {e}")
-                    _instr, _attrs = "", {}
-                if _instr:
-                    agent_instructions = _instr
-                # Merge safely
-                dto_attrs = getattr(agent_dto, 'attributes', {}) or {}
-                if isinstance(_attrs, dict):
-                    agent_attrs = {**agent_attrs, **dto_attrs, **_attrs}
-                else:
-                    agent_attrs = {**agent_attrs, **dto_attrs}
-            
-        # Set up template variables with agent attributes
-        template_vars = {
-            "agent": agent_path or "default",
-            "name": agent_attrs.get("name", "AI News Aggregator"),
-            "role": agent_attrs.get("role", "an AI news aggregation assistant"),
-            "goal": agent_attrs.get("goal", "gather and summarize the latest news")
-        }
-        
-        # Try to discover agent if not provided
-        if not agent_yaml_path and agent_attrs.get("name"):
-            norm = to_pascal_case(agent_attrs.get("name"))
-            agent_yaml_path = discover_agent_yaml(norm)
-        if debug:
-            print(f"[DEBUG] Agent YAML path: {agent_yaml_path}")
-        
-        # Build agent instructions and gather seed file list
-        seed_file_list_text = ""
-        agent_dir: Path | None = None
-        try:
-            path_obj = None
-            if agent_yaml_path:
-                try:
-                    from os import PathLike as _PathLike  # type: ignore
-                except Exception:
-                    _PathLike = tuple()
-                path_obj = Path(str(agent_yaml_path)) if isinstance(agent_yaml_path, (str, _PathLike)) else agent_yaml_path
-                agent_dir = path_obj.parent
-            # If we have an agent DTO, try to use its default prompt's instructions
-            dto = None
-            if path_obj and path_obj.exists():
-                dto = AgentDTO.from_yaml_file(path_obj)
-            default_prompt = (dto.getDefaultPrompt() if dto else None) or {}
-            instr = default_prompt.get('instructions') if isinstance(default_prompt, dict) else None
-            if instr is None:
-                # Fallback: use raw agent.yaml text as prompt
-                if path_obj and path_obj.exists():
-                    agent_instructions = Path(path_obj).read_text(encoding='utf-8')
-            else:
-                # If list, join; if str, take as-is. Optionally prefix with basic agent meta
-                if isinstance(instr, list):
-                    instr = "\n".join(str(x) for x in instr)
-                header = []
-                if isinstance(dto, AgentDTO):
-                    if dto.name:
-                        header.append(f"name: {dto.name}")
-                    if dto.role:
-                        header.append(f"role: {dto.role}")
-                    if getattr(dto, 'attributes', None):
-                        purpose = dto.attributes.get('purpose')
-                        goal = dto.attributes.get('goal')
-                        if goal:
-                            header.append(f"goal: {goal}")
-                        elif purpose:
-                            header.append(f"purpose: {purpose}")
-                agent_instructions = (("\n".join(header) + "\n\n") if header else "") + str(instr)
-
-            # Collect recursive file list under agent directory and prepare one message text
-            if agent_dir and agent_dir.exists():
-                names: list[str] = []
-                for root, dirs, files in os.walk(agent_dir):
-                    for fn in files:
-                        try:
-                            rel = str(Path(root).joinpath(fn).relative_to(agent_dir)).replace('\\', '/')
-                            names.append(rel)
-                        except Exception:
-                            names.append(fn)
-                names.sort()
-                seed_file_list_text = "\n".join(names)
-        except Exception:
-            # Silent fallback if anything fails
-            agent_instructions = agent_instructions or ""
-            seed_file_list_text = seed_file_list_text or ""
-        # Get model from environment or default; may be overridden by yaml
-        model_name = os.environ.get("LLM_MODEL", "gpt-4.5")
-        model_settings_obj = None
-        if agent_yaml_path:
-            # Normalize to Path in case a string was provided
-            path_obj = agent_yaml_path
-            try:
-                from os import PathLike as _PathLike  # type: ignore
-            except Exception:
-                _PathLike = tuple()
-            if isinstance(agent_yaml_path, (str, _PathLike)):
-                path_obj = Path(str(agent_yaml_path))
-            dto = AgentDTO(load_yaml(path_obj), base_dir=path_obj.parent)
-            if debug:
-                import pprint, sys, yaml
-                print(f"[DEBUG] AgentDTO loaded from: {path_obj}")
-                payload = {
-                    "id": dto.id,
-                    "name": dto.name,
-                    "model": dto.model,
-                    "instructions_preview": (dto.instructions[:200] + '...') if isinstance(dto.instructions, str) and len(dto.instructions or '') > 200 else dto.instructions,
-                    "prompts": dto.prompts,
-                    "prompt_names": dto.getPromptNames(),
-                    "default_prompt_name": getattr(dto, "_default_prompt_name", None),
-                    "attributes": dto.attributes,
-                    "model_settings": getattr(dto.model_settings, "__dict__", dto.model_settings),
-                }
-                pprint.PrettyPrinter(width=120).pprint(payload)
-                # Dump enriched default prompt as YAML
-                default_prompt = dto.getDefaultPrompt() or {}
-                print("[DEBUG] Enriched default prompt (YAML):")
-                try:
-                    print(yaml.safe_dump(default_prompt, allow_unicode=True, sort_keys=False))
-                except Exception:
-                    pprint.PrettyPrinter(width=120).pprint(default_prompt)
-
-                # Print instructions in readable form with line breaks
-                instr = default_prompt.get('instructions') if isinstance(default_prompt, dict) else None
-                if instr is not None:
-                    print("[DEBUG] Instructions (readable):")
-                    if isinstance(instr, str):
-                        print(instr)
-                    elif isinstance(instr, list):
-                        print("\n".join(str(x) for x in instr))
-                    else:
-                        # Fallback to YAML dump of just instructions
-                        try:
-                            print(yaml.safe_dump({'instructions': instr}, allow_unicode=True, sort_keys=False))
-                        except Exception:
-                            print(str(instr))
-
-                # Also show augmented instructions that will be sent to LLM (instructions + extra attrs as YAML, excluding model settings and aliases)
-                try:
-                    dto_instr, extra_attrs = await dto.getInstructions()
-                    if dto_instr:
-                        augmented = dto_instr
-                        if extra_attrs:
-                            # Filter out model-setting-like keys
-                            ms_keys = {"temperature", "top_p", "max_tokens", "stop", "presence_penalty", "frequency_penalty", "n", "best_of", "alias", "aliases"}
-                            try:
-                                if dto.model_settings:
-                                    ms_keys |= {k for k in vars(dto.model_settings).keys()}
-                            except Exception:
-                                pass
-                            filtered = {k: v for k, v in extra_attrs.items() if k not in ms_keys}
-                            try:
-                                ctx_yaml = yaml.safe_dump(filtered, allow_unicode=True, sort_keys=False)
-                            except Exception:
-                                ctx_yaml = str(filtered)
-                            augmented = f"{dto_instr}\n\n# Context\n{ctx_yaml}"
-                        print("[DEBUG] Augmented instructions (to LLM):")
-                        print(augmented)
-                except Exception:
-                    pass
-                print("[DEBUG] Stopping after AgentDTO dump (--debug).")
-                sys.exit(0)
-        # Merge attrs from DTO for normal (non-debug) run (guard dto None)
-        if isinstance(dto, AgentDTO):
-            agent_attrs = {**(getattr(dto, 'attributes', {}) or {}), **agent_attrs}
-            if getattr(dto, 'model', None):
-                model_name = dto.model
-            if getattr(dto, 'model_settings', None):
-                model_settings_obj = dto.model_settings
-            # use instructions from DTO; augment with non-model settings attrs for LLM context
-            try:
-                dto_instructions, extra_attrs = await dto.getInstructions()
-            except Exception:
-                dto_instructions, extra_attrs = "", {}
-            if dto_instructions:
-                try:
-                    ms_keys = {"temperature", "top_p", "max_tokens", "stop", "presence_penalty", "frequency_penalty", "n", "best_of", "alias", "aliases"}
-                    if getattr(dto, 'model_settings', None):
-                        try:
-                            ms_keys |= {k for k in vars(dto.model_settings).keys()}
-                        except Exception:
-                            pass
-                    filtered = {k: v for k, v in (extra_attrs or {}).items() if k not in ms_keys}
-                    import yaml as _yaml
-                    ctx_yaml = _yaml.safe_dump(filtered, allow_unicode=True, sort_keys=False) if filtered else ""
-                    agent_instructions = dto_instructions if not ctx_yaml else f"{dto_instructions}\n\n# Context\n{ctx_yaml}"
-                except Exception:
-                    agent_instructions = dto_instructions
-                # Do not let aliases seep into agent runtime attrs either
-                if isinstance(extra_attrs, dict):
-                    extra_attrs = {k: v for k, v in extra_attrs.items() if k not in {"alias", "aliases"}}
-                agent_attrs |= extra_attrs
-        # Create agent with attributes from profile or defaults
-        # Prefer CLI-provided name if available, fallback to profile or default
-        agent_name = (locals().get('cli_agent_name') or agent_attrs.get("name", "AI News Aggregator"))
-        # Ensure we use DTO-derived instructions when available; otherwise keep existing
-        if not locals().get('agent_instructions', None):
-            if isinstance(dto, AgentDTO):
-                try:
-                    agent_instructions = (await dto.getInstructions())[0] or ""
-                except Exception:
-                    agent_instructions = agent_instructions or ""
-            else:
-                agent_instructions = agent_instructions or ""
-        
-        # Note: temperature handling removed per request. Keep dto.model_settings as-is, but sanitize max token fields.
-        # Some providers require numeric types for max tokens; drop or coerce invalid string values like ">= 30000".
+        # Build unified configuration by name (agent_path will be discovered by name)
+        cfg = await build_agent_config(cli_agent_name)
+        # Sanitize numeric token fields if present in model_settings
         try:
             import re as _re
-            def _to_int_or_none(v):
-                if isinstance(v, int):
-                    return v
-                if isinstance(v, str):
-                    m = _re.search(r"\d+", v)
-                    return int(m.group(0)) if m else None
-                return None
-            if model_settings_obj:
-                if hasattr(model_settings_obj, 'max_tokens'):
-                    v = getattr(model_settings_obj, 'max_tokens')
-                    setattr(model_settings_obj, 'max_tokens', _to_int_or_none(v))
-                if hasattr(model_settings_obj, 'max_output_tokens'):
-                    v = getattr(model_settings_obj, 'max_output_tokens')
-                    setattr(model_settings_obj, 'max_output_tokens', _to_int_or_none(v))
+            if cfg.model_settings:
+                if hasattr(cfg.model_settings, 'max_tokens'):
+                    v = getattr(cfg.model_settings, 'max_tokens')
+                    m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
+                    setattr(cfg.model_settings, 'max_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
+                if hasattr(cfg.model_settings, 'max_output_tokens'):
+                    v = getattr(cfg.model_settings, 'max_output_tokens')
+                    m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
+                    setattr(cfg.model_settings, 'max_output_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
         except Exception:
-            pass
-
-        # If agent profile defines vector stores under `vs: [...]`, capture them for FileSearchTool
-        vs_list = None
-        try:
-            _vs_vals = None
-            # Prefer attrs merged earlier; fallback to DTO attributes if present
-            if isinstance(agent_attrs, dict) and agent_attrs.get('vs') is not None:
-                _vs_vals = agent_attrs.get('vs')
-            elif isinstance(dto, AgentDTO) and getattr(dto, 'attributes', None):
-                _vs_vals = dto.attributes.get('vs')
-            if _vs_vals is not None:
-                # Normalize to list of strings
-                if isinstance(_vs_vals, (str, bytes)):
-                    vs_list = [str(_vs_vals)]
-                elif isinstance(_vs_vals, (list, tuple, set)):
-                    vs_list = [str(x) for x in _vs_vals]
-                else:
-                    vs_list = [str(_vs_vals)]
-                # Do NOT pass `vs` via model_settings.extra_args.
-                # The OpenAI Responses API rejects unknown args (observed 'vs' TypeError).
-        except Exception:
-            # Non-fatal if vs propagation fails; continue with default settings
             pass
         
         # Получаем инструменты от обоих серверов
         run_context = RunContextWrapper(context=None)
         # agent = Agent(name="test", instructions="test")
         _tools = [WebSearchTool()]
-        if vs_list:
+        if cfg.vs_list:
             try:
-                _tools.append(FileSearchTool(vector_store_ids=vs_list))
+                _tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
             except Exception:
                 pass
         agent = Agent(
-            name=f"{agent_name} [agent]",
-            instructions=agent_instructions,
+            name=f"{cfg.name} [agent]",
+            instructions=cfg.instructions,
             # prompt=prompt_data["prompt"],
             tools=_tools,
             mcp_servers=[server_fs, server_seq, server_voice] + ([server_gsheets] if server_gsheets else []),
-            model=model_name,
-            model_settings=(model_settings_obj or ModelSettings())
+            model=cfg.model,
+            model_settings=(cfg.model_settings or ModelSettings())
         )
         tools_fs = await server_fs.list_tools(run_context, agent)
         tools_seq = await server_seq.list_tools(run_context, agent)
@@ -1458,13 +1286,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
           print("Google Sheets tools:", tools_gsheets)
 
         # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
-        _seed_history = []
-        # if seed_file_list_text:
-        #     _seed_history.append({"role": "user", "content": seed_file_list_text})
-        _seed_history.append({"role": "user", "content": user_input or "go"})
-
-        # history = list(_seed_history)
-        history = _seed_history
+        # Seed history: optional initial history + current user_input
+        history = list(initial_history) if initial_history else []
+        history.append({"role": "user", "content": user_input or "go"})
         # Simple loop: run pipeline, notify, then ask user to continue or exit
         while True:
             
@@ -1482,7 +1306,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             title = "📰 AI News Aggregator"
 
             # Prefer CLI-provided agent name for publication title
-            title_name = (cli_agent_name or agent_name or "Agent")
+            title_name = (cli_agent_name or cfg.name or "Agent")
             # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
             themes_url = None
             prompt_url = None
@@ -1493,8 +1317,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     "",
                     themes_url,
                     prompt_url,
-                    agent_name=agent_name,
-                    agent_path=agent_path,
+                    agent_name=cfg.name,
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
                     input_text=user_input,
                     text=step1_output,
                 )
@@ -1504,13 +1328,13 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     url,
                     themes_url,
                     prompt_url,
-                    agent_name=agent_name,
-                    agent_path=agent_path,
+                    agent_name=cfg.name,
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
                     input_text=user_input,
                 )
 
             # Post-run: commit and push changes using normalized agent_name and raw user_input
-            await post_run_git_push(agent_name=agent_name, user_input=user_input)
+            await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
             try:
                 choice = (input("continue [1]/exit: 0 > ").strip() or "1")
