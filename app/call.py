@@ -732,7 +732,7 @@ def _ensure_indices(rep: Path) -> None:
     """
     import yaml
     for sub in ('AgentFab', 'agents'):
-        base = repo / sub
+        base = rep / sub
         index = base / 'agents.yaml'
         if index.exists():
             continue
@@ -741,7 +741,7 @@ def _ensure_indices(rep: Path) -> None:
         aliases_map = {name: aliases for name, (_, aliases) in scanned.items() if aliases}
         if not agents_map and sub == 'AgentFab':
             # Try to derive from AgentFab root agent.yaml 'agents' section
-            af = repo / 'AgentFab' / 'agent.yaml'
+            af = rep / 'AgentFab' / 'agent.yaml'
             if af.exists():
                 try:
                     data = load_yaml(af) or {}
