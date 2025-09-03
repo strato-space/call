@@ -648,21 +648,47 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
-        print(f"[MCP Hook] Parameters: {arguments}")
-        parameters = arguments
+        # Try to present arguments in YAML for readability (console)
+        try:
+            yaml_args = yaml.safe_dump(arguments or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
+            print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
+        except Exception:
+            print(f"[MCP Hook] Arguments (raw): {arguments}")
 
         if tool_name != 'sequentialthinking':
-            return await super().call_tool(tool_name, parameters)
-        try:
-            thought = parameters['thought']
-            bar = telegram_progress_bar(parameters['thoughtNumber'], parameters['totalThoughts'])
-            text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
+            # For all other tools: send/edit YAML arguments in Telegram without progress bar
+            try:
+                yaml_text = yaml.safe_dump(arguments or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
+            except Exception:
+                yaml_text = str(arguments)
 
-            # Ensure a message exists for this MCP instance, then update it
+            body = f"🛠️ {tool_name}\n\n{yaml_text}".strip()
+            # Ensure message exists, then edit
             if self.__telegram_last_message is None:
-                await self.__send_message(text)
+                await self.__send_message(body)
             else:
-                await self.__edit_message_text(text)
+                await self.__edit_message_text(body)
+
+            return await super().call_tool(tool_name, arguments)
+        try:
+            thought = arguments['thought']
+            # On first write, send a banner-only message without progress bar
+            if self.__telegram_last_message is None:
+                # Try to include input if provided by tool args
+                input_text = (arguments or {}).get('input') or (arguments or {}).get('user_input') or (arguments or {}).get('prompt')
+                banner_lines = [f"🔌 {self._mcp_title}"]
+                if input_text:
+                    try:
+                        safe_input = str(input_text)[:1000]
+                        banner_lines.append(f"input: {safe_input}")
+                    except Exception:
+                        pass
+                await self.__send_message("\n".join(banner_lines))
+
+            # For subsequent updates (and immediately after banner), show progress bar
+            bar = telegram_progress_bar(arguments['thoughtNumber'], arguments['totalThoughts'])
+            text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
+            await self.__edit_message_text(text)
 
             # Send typing action on the same chat/thread when possible
             try:
@@ -674,7 +700,7 @@ class MCPServerStdioHook(MCPServerStdio):
             except Exception:
                 pass
 
-            result = await super().call_tool(tool_name, parameters)
+            result = await super().call_tool(tool_name, arguments)
             print(f"[MCP Hook] Tool {tool_name} completed successfully")
 
             return result
