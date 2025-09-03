@@ -1235,11 +1235,8 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
             name="seq",
             client_session_timeout_seconds=60
-    ) as server_seq, MCPServerStdioHook(
-            params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-realtime-api-voice"], "env": {"OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "")}},
-            name="voice",
-            client_session_timeout_seconds=60
-    ) as server_voice:
+    ) as server_seq:
+        print("[MCP] Voice server disabled (package '@modelcontextprotocol/server-realtime-api-voice' not available)")
         # Optionally enable Google Sheets server (kept disabled by default)
         # async with MCPServerStdioHook(
         #     params={
@@ -1260,7 +1257,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             name=f"{cfg.name} [agent]",
             instructions=cfg.instructions,
             tools=tools,
-            mcp_servers=[server_fs, server_seq, server_voice] + ([server_gsheets] if server_gsheets else []),
+            mcp_servers=[server_fs, server_seq] + ([server_gsheets] if server_gsheets else []),
             model=cfg.model,
             model_settings=(cfg.model_settings or ModelSettings()),
         )
