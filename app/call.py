@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
 import json
+import yaml
 import httpx
 from openai import OpenAI
 
@@ -649,18 +650,27 @@ class MCPServerStdioHook(MCPServerStdio):
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
         # Try to present arguments in YAML for readability (console)
-        try:
-            yaml_args = yaml.safe_dump(arguments or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
-            print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
-        except Exception:
-            print(f"[MCP Hook] Arguments (raw): {arguments}")
+        def _to_yaml_text(obj) -> str:
+            try:
+                return yaml.safe_dump(obj or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
+            except Exception:
+                try:
+                    # JSON roundtrip with default=str to sanitize non-serializable objects
+                    json_text = json.dumps(obj or {}, ensure_ascii=False, indent=2, default=str)
+                    return yaml.safe_dump(json.loads(json_text), allow_unicode=True, sort_keys=False, default_flow_style=False)
+                except Exception:
+                    # Last resort: pretty JSON string
+                    try:
+                        return json.dumps(obj or {}, ensure_ascii=False, indent=2, default=str)
+                    except Exception:
+                        return str(obj)
+
+        yaml_args = _to_yaml_text(arguments)
+        print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
 
         if tool_name != 'sequentialthinking':
             # For all other tools: send/edit YAML arguments in Telegram without progress bar
-            try:
-                yaml_text = yaml.safe_dump(arguments or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
-            except Exception:
-                yaml_text = str(arguments)
+            yaml_text = _to_yaml_text(arguments)
 
             body = f"🛠️ {tool_name}\n\n{yaml_text}".strip()
             # Ensure message exists, then edit
@@ -672,9 +682,12 @@ class MCPServerStdioHook(MCPServerStdio):
             return await super().call_tool(tool_name, arguments)
         try:
             thought = arguments['thought']
+            # Determine counters safely
+            tn = int((arguments or {}).get('thoughtNumber') or 0)
+            tt = int((arguments or {}).get('totalThoughts') or 0)
+
             # On first write, send a banner-only message without progress bar
             if self.__telegram_last_message is None:
-                # Try to include input if provided by tool args
                 input_text = (arguments or {}).get('input') or (arguments or {}).get('user_input') or (arguments or {}).get('prompt')
                 banner_lines = [f"🔌 {self._mcp_title}"]
                 if input_text:
@@ -684,10 +697,16 @@ class MCPServerStdioHook(MCPServerStdio):
                     except Exception:
                         pass
                 await self.__send_message("\n".join(banner_lines))
+                # Do not display progress bar on the very first tick
+                if tn <= 0:
+                    return await super().call_tool(tool_name, arguments)
 
-            # For subsequent updates (and immediately after banner), show progress bar
-            bar = telegram_progress_bar(arguments['thoughtNumber'], arguments['totalThoughts'])
-            text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
+            # Show progress bar only when tn > 0
+            if tn > 0 and tt > 0:
+                bar = telegram_progress_bar(tn, tt)
+                text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
+            else:
+                text = str(thought)
             await self.__edit_message_text(text)
 
             # Send typing action on the same chat/thread when possible
