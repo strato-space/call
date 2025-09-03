@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
@@ -183,9 +184,7 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
 
 
 async def send_digest_notification(
-    url: str,
-    themes_url: str | None = None,
-    prompt_url: str | None = None,
+    url: str | None = None,
     *,
     text: str = None,
     message_thread_id: int = None,
@@ -193,9 +192,19 @@ async def send_digest_notification(
     agent_path: str | Path | None = None,
     input_text: str | None = None,
 ) -> Optional[Message]:
-    # Send digest to a specific Telegram chat.
+    # If content is too long for Telegram, publish and use resulting URL
+    try:
+        if (text is not None) and isinstance(text, str) and len(text) >= 4000:
+            pub_title = (agent_name or "Agent")
+            url = await publish_results(title=pub_title, content=text)
+            text = None  # switch to link mode
+    except Exception:
+        # On failure to publish, fall back to sending as-is (may get truncated by Telegram)
+        pass
+
+    # Prepare final text
     if text is None:
-        text = f"📰 {url}"
+        text = f"📰 {url}" if url else "📰"
         if input_text:
             try:
                 safe_input = (input_text or "")[:3800]
@@ -231,11 +240,8 @@ async def send_digest_notification(
                     link = str(b.get("url", "")).strip()
                     # Macro substitutions
                     if link:
-                        link = link.replace("{{digest_url}}", url)
-                        if themes_url:
-                            link = link.replace("{{themes_url}}", themes_url)
-                        if prompt_url:
-                            link = link.replace("{{prompt_url}}", prompt_url)
+                        safe_url = url or ""
+                        link = link.replace("{{digest_url}}", safe_url)
                     if link:
                         row.append(InlineKeyboardButton(label, url=link))
                 if row:
@@ -541,7 +547,7 @@ async def create_telegrath_account():
 
     telegraph = Telegraph(TELEGRAPH_TOKEN)
 
-    acc = telegraph.create_account(short_name='strato.space', author_name='AI News Aggregator Agent @ strato.space',
+    acc = telegraph.create_account(short_name='strato.space', author_name='AI Agent @ strato.space',
                                    author_url='https://linkedin.com/in/iqdoctor')
     token = acc.get('access_token')
     print(f"Telegraph access_token: {token}")
@@ -1182,6 +1188,21 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
     # Vector stores from attributes (agent or prompt)
     vs_list = _normalize_vs_list(attributes.get('vs'))
 
+    # Sanitize numeric token fields in model_settings (if provided)
+    try:
+        import re as _re
+        if model_settings:
+            if hasattr(model_settings, 'max_tokens'):
+                v = getattr(model_settings, 'max_tokens')
+                m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
+                setattr(model_settings, 'max_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
+            if hasattr(model_settings, 'max_output_tokens'):
+                v = getattr(model_settings, 'max_output_tokens')
+                m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
+                setattr(model_settings, 'max_output_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
+    except Exception:
+        pass
+
     return AgentConfig(
         name=name,
         instructions=instructions,
@@ -1194,8 +1215,14 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
     )
 
 
-async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
-    # Запускаем два MCP-сервера параллельно (filesystem и sequential-thinking)
+@asynccontextmanager
+async def build_agent_by_name(agent_name: str, samples_dir: str):
+    """Async context manager that creates MCP servers and builds an Agent by name.
+
+    Usage:
+        async with build_agent_by_name(name, samples_dir) as (agent, cfg):
+            ...
+    """
     server_gsheets = None
     async with MCPServerStdioHook(
             params={
@@ -1205,93 +1232,73 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             name="fs",
             client_session_timeout_seconds=60
     ) as server_fs, MCPServerStdioHook(
-        params={
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-        },
-        name="seq",
-        client_session_timeout_seconds=60
+            params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
+            name="seq",
+            client_session_timeout_seconds=60
     ) as server_seq, MCPServerStdioHook(
-            params={
-                "command": "uvx",
-                "args": [
-                    "--env-file", samples_dir + "/server/mcp/.env", 
-                    "--from", samples_dir + "/voice", "mcp-voicebot"]
-            },
+            params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-realtime-api-voice"], "env": {"OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "")}},
             name="voice",
-        client_session_timeout_seconds=60
+            client_session_timeout_seconds=60
     ) as server_voice:
+        # Optionally enable Google Sheets server (kept disabled by default)
+        # async with MCPServerStdioHook(
+        #     params={
+        #         "command": "uvx",
+        #         "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
+        #     },
+        #     client_session_timeout_seconds=60
+        # ) as server_gsheets:
 
-    # MCPServerStdioHook(
-    #         params={
-    #             "command": "uvx",
-    #             "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
-    #         },
-    #         name="gsh",
-    #     client_session_timeout_seconds=60
-    # ) as server_gsheets,
-    
-#       MCPServerStdioHook(
-#         params={
-#             "command": "uvx",
-#             "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
-#             # "args": [
-#             #     "--env-file", samples_dir + "/call/.env", 
-#             #     "--from", samples_dir + "/mcp-google-sheets/", "mcp-google-sheets"]
-#         },
-#         client_session_timeout_seconds=60
-#     ) as server_gsheets, 
-
-        
-
-        # Build unified configuration by name (agent_path will be discovered by name)
-        cfg = await build_agent_config(cli_agent_name)
-        # Sanitize numeric token fields if present in model_settings
-        try:
-            import re as _re
-            if cfg.model_settings:
-                if hasattr(cfg.model_settings, 'max_tokens'):
-                    v = getattr(cfg.model_settings, 'max_tokens')
-                    m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
-                    setattr(cfg.model_settings, 'max_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
-                if hasattr(cfg.model_settings, 'max_output_tokens'):
-                    v = getattr(cfg.model_settings, 'max_output_tokens')
-                    m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
-                    setattr(cfg.model_settings, 'max_output_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
-        except Exception:
-            pass
-        
-        # Получаем инструменты от обоих серверов
-        run_context = RunContextWrapper(context=None)
-        # agent = Agent(name="test", instructions="test")
-        _tools = [WebSearchTool()]
+        cfg = await build_agent_config(agent_name)
+        tools = [WebSearchTool()]
         if cfg.vs_list:
             try:
-                _tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
+                tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
             except Exception:
                 pass
         agent = Agent(
             name=f"{cfg.name} [agent]",
             instructions=cfg.instructions,
-            # prompt=prompt_data["prompt"],
-            tools=_tools,
+            tools=tools,
             mcp_servers=[server_fs, server_seq, server_voice] + ([server_gsheets] if server_gsheets else []),
             model=cfg.model,
-            model_settings=(cfg.model_settings or ModelSettings())
+            model_settings=(cfg.model_settings or ModelSettings()),
         )
-        tools_fs = await server_fs.list_tools(run_context, agent)
-        tools_seq = await server_seq.list_tools(run_context, agent)
-        if server_gsheets:
-          tools_gsheets = await server_gsheets.list_tools(run_context, agent)
-          print("Google Sheets tools:", tools_gsheets)
 
-        # Выполняем запрос: передаём user_input как элемент истории в формате {"role": "user", "content": user_input}
+        # Expose tools from servers (side-effect logging retained)
+        run_context = RunContextWrapper(context=None)
+        try:
+            _ = await server_fs.list_tools(run_context, agent)
+            _ = await server_seq.list_tools(run_context, agent)
+            if server_gsheets:
+                tools_gsheets = await server_gsheets.list_tools(run_context, agent)
+                print("Google Sheets tools:", tools_gsheets)
+        except Exception:
+            pass
+
+        try:
+            yield agent, cfg
+        finally:
+            # Context managers will close servers automatically
+            pass
+
+
+async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
+
+    async with build_agent_by_name(cli_agent_name, samples_dir) as (agent, cfg):
+        # Выполняем запрос: передаём user_input как элемент истории в формате 
+        # {"role": "user", "content": user_input}
         # Seed history: optional initial history + current user_input
         history = list(initial_history) if initial_history else []
         history.append({"role": "user", "content": user_input or "go"})
-        # Simple loop: run pipeline, notify, then ask user to continue or exit
+        # Simple loop with max safety counter
+        max_cycles = 100
+        cycles = 0
         while True:
-            
+            cycles += 1
+            if cycles > max_cycles:
+                print("Max cycles reached; exiting loop")
+                break
             result1 = await Runner.run(
                 agent,
                 history,
@@ -1303,44 +1310,73 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
             print("Step 1 output:")
             print(step1_output)
-            title = "📰 AI News Aggregator"
-
-            # Prefer CLI-provided agent name for publication title
-            title_name = (cli_agent_name or cfg.name or "Agent")
-            # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
-            themes_url = None
-            prompt_url = None
             
-            if isinstance(step1_output, str) and len(step1_output) < 4000:
-                # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
-                await send_digest_notification(
-                    "",
-                    themes_url,
-                    prompt_url,
-                    agent_name=cfg.name,
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
-                    input_text=user_input,
-                    text=step1_output,
-                )
-            else:
-                url = await publish_results(title=title_name, content=step1_output)
-                await send_digest_notification(
-                    url,
-                    themes_url,
-                    prompt_url,
-                    agent_name=cfg.name,
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
-                    input_text=user_input,
-                )
+            await send_digest_notification(
+                agent_name=cfg.name,
+                agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
+                input_text=user_input,
+                text=step1_output,
+            )
 
             # Post-run: commit and push changes using normalized agent_name and raw user_input
             await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
-            try:
-                choice = (input("continue [1]/exit: 0 > ").strip() or "1")
-            except Exception:
-                choice = "1"
-            if choice == "0":
+            # --- Run SelfReflection agent and react to its return code ---
+            async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
+                sr_result = await Runner.run(
+                    sr_agent,
+                    history,
+                    max_turns=100,
+                )
+                # Prefer structured return code if available; else parse text
+                sr_code = getattr(sr_result, "return_code", None)
+                sr_output = getattr(sr_result, "final_output", None)
+                if not sr_code and isinstance(sr_output, str):
+                    s = sr_output.strip().upper()
+                    if s.startswith("PREV"):
+                        sr_code = "PREV"
+                    elif s.startswith("CONTINUE"):
+                        sr_code = "CONTINUE"
+
+                # Handle PREV/CONTINUE loop control
+                if sr_code == "PREV":
+                    # Do NOT add SR result to history; just push a 'go' from user and restart loop
+                    history.append({"role": "user", "content": "go"})
+                    continue
+                elif sr_code == "CONTINUE":
+                    # Keep running SelfReflection repeatedly, skipping the main agent
+                    while sr_code == "CONTINUE":
+                        cycles += 1
+                        if cycles > max_cycles:
+                            print("Max cycles reached in SelfReflection; exiting loop")
+                            sr_code = "MAX"
+                            break
+                        sr_result = await Runner.run(
+                            sr_agent,
+                            history,
+                            max_turns=100,
+                        )
+                        # Update history fully to SR's view
+                        try:
+                            history = sr_result.to_input_list()
+                        except Exception:
+                            out2 = getattr(sr_result, "final_output", None)
+                            if isinstance(out2, str) and out2:
+                                history.append({"role": "assistant", "content": out2})
+                        # Re-evaluate SR code
+                        sr_code = getattr(sr_result, "return_code", None)
+                        if not sr_code and isinstance(getattr(sr_result, "final_output", None), str):
+                            s2 = sr_result.final_output.strip().upper()
+                            if s2.startswith("PREV"):
+                                sr_code = "PREV"
+                            elif s2.startswith("CONTINUE"):
+                                sr_code = "CONTINUE"
+                        if sr_code == "PREV":
+                            history.append({"role": "user", "content": "go"})
+                            break
+
+            # Loop control based on SelfReflection return code
+            if sr_code not in ("PREV", "CONTINUE"):
                 break
 
         # qa_prompt = await load_qa_prompt()
