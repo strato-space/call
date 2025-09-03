@@ -1323,6 +1323,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
             # --- Run SelfReflection agent and react to its return code ---
             async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
+                print(f"[SR] Running SelfReflection (cycles={cycles})")
                 sr_result = await Runner.run(
                     sr_agent,
                     history,
@@ -1337,15 +1338,18 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                         sr_code = "PREV"
                     elif s.startswith("CONTINUE"):
                         sr_code = "CONTINUE"
+                print(f"[SR] Return code: {sr_code}")
 
                 # Handle PREV/CONTINUE loop control
                 if sr_code == "PREV":
                     # Do NOT add SR result to history; just push a 'go' from user and restart loop
+                    print("[SR] PREV received: appending 'go' and restarting outer loop")
                     history.append({"role": "user", "content": "go"})
                     continue
                 elif sr_code == "CONTINUE":
                     # Keep running SelfReflection repeatedly, skipping the main agent
                     while sr_code == "CONTINUE":
+                        print(f"[SR] CONTINUE loop iteration (cycles={cycles})")
                         cycles += 1
                         if cycles > max_cycles:
                             print("Max cycles reached in SelfReflection; exiting loop")
@@ -1371,7 +1375,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                                 sr_code = "PREV"
                             elif s2.startswith("CONTINUE"):
                                 sr_code = "CONTINUE"
+                        print(f"[SR] Return code after CONTINUE iteration: {sr_code}")
                         if sr_code == "PREV":
+                            print("[SR] PREV received inside CONTINUE loop: appending 'go' and breaking to outer loop")
                             history.append({"role": "user", "content": "go"})
                             break
 
