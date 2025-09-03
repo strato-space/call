@@ -592,26 +592,87 @@ async def edit_message_text(text):
         parse_mode="HTML")
 
 class MCPServerStdioHook(MCPServerStdio):
-    """Wrapper for MCPServerStdio that write logs tool calls to stdout and tg bot."""
+    """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
+
+    Each instance maintains its own editable Telegram message. On first write,
+    a new message is created; subsequent writes edit that message. The MCP name
+    is printed at the top of the message.
+    """
     from typing import Any
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-instance last message holder
+        self.__telegram_last_message: Optional[Message] = None
+        # Try to derive a readable MCP title
+        self._mcp_title: str = (
+            str(getattr(self, 'name', '') or '').strip()
+            or str(getattr(self, 'id', '') or '').strip()
+            or type(self).__name__
+        )
+
+    async def __send_message(self, text: str) -> Message:
+        """Send a new Telegram message for this MCP instance and cache it."""
+        # Decide target chat/thread: prefer the global last message context if exists,
+        # otherwise use configured TELEGRAM_CHAT_ID/TELEGRAM_THREAD_ID
+        chat_id = (telegram_last_message.chat_id if telegram_last_message else TELEGRAM_CHAT_ID)
+        # Fallback to configured thread id if no prior message
+        thread_id = (
+            telegram_last_message.message_thread_id if telegram_last_message else (TELEGRAM_THREAD_ID or None)
+        )
+        # Prefix with MCP title
+        header = f"<b>{self._mcp_title}</b>\n\n"
+        safe_text = header + (text or "")
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            text=clean_html_for_telegram(safe_text),
+            parse_mode=ParseMode.HTML,
+        )
+        self.__telegram_last_message = msg
+        return msg
+
+    async def __edit_message_text(self, text: str) -> None:
+        """Edit this instance's message; if missing, send a new one."""
+        header = f"<b>{self._mcp_title}</b>\n\n"
+        safe_text = header + (text or "")
+        if not self.__telegram_last_message:
+            await self.__send_message(safe_text)
+            return
+        await bot.edit_message_text(
+            chat_id=self.__telegram_last_message.chat_id,
+            message_id=self.__telegram_last_message.message_id,
+            text=clean_html_for_telegram(safe_text),
+            parse_mode=ParseMode.HTML,
+        )
+
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
         print(f"[MCP Hook] Parameters: {arguments}")
         parameters = arguments
 
         if tool_name != 'sequentialthinking':
-             return await super().call_tool(tool_name, parameters)
+            return await super().call_tool(tool_name, parameters)
         try:
             thought = parameters['thought']
-            if telegram_last_message:
-                bar = telegram_progress_bar(parameters['thoughtNumber'], parameters['totalThoughts'])
-                text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
-                await edit_message_text(text)
-                # Send typing action
-                await bot.send_chat_action(chat_id=telegram_last_message.chat_id,
-                                           message_thread_id=telegram_last_message.message_thread_id,
-                                           action=ChatAction.TYPING)
-                await bot.send_chat_action(chat_id=telegram_last_message.chat_id, action=ChatAction.TYPING)
+            bar = telegram_progress_bar(parameters['thoughtNumber'], parameters['totalThoughts'])
+            text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
+
+            # Ensure a message exists for this MCP instance, then update it
+            if self.__telegram_last_message is None:
+                await self.__send_message(text)
+            else:
+                await self.__edit_message_text(text)
+
+            # Send typing action on the same chat/thread when possible
+            try:
+                msg = self.__telegram_last_message
+                if msg:
+                    await bot.send_chat_action(chat_id=msg.chat_id,
+                                               message_thread_id=msg.message_thread_id,
+                                               action=ChatAction.TYPING)
+            except Exception:
+                pass
 
             result = await super().call_tool(tool_name, parameters)
             print(f"[MCP Hook] Tool {tool_name} completed successfully")
