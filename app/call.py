@@ -46,6 +46,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
+from agents.tool import FileSearchTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -714,7 +715,7 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     return result
 
 
-def _ensure_indices(repo: Path) -> None:
+def _ensure_indices(rep: Path) -> None:
     """Create minimal indices agents.yaml in AgentFab/ and agents/ if missing.
 
     Structure:
@@ -1408,15 +1409,49 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     setattr(model_settings_obj, 'max_output_tokens', _to_int_or_none(v))
         except Exception:
             pass
+
+        # If agent profile defines vector stores under `vs: [...]`, capture them and propagate
+        vs_list = None
+        try:
+            _vs_vals = None
+            # Prefer attrs merged earlier; fallback to DTO attributes if present
+            if isinstance(agent_attrs, dict) and agent_attrs.get('vs') is not None:
+                _vs_vals = agent_attrs.get('vs')
+            elif isinstance(dto, AgentDTO) and getattr(dto, 'attributes', None):
+                _vs_vals = dto.attributes.get('vs')
+            if _vs_vals is not None:
+                # Normalize to list of strings
+                if isinstance(_vs_vals, (str, bytes)):
+                    vs_list = [str(_vs_vals)]
+                elif isinstance(_vs_vals, (list, tuple, set)):
+                    vs_list = [str(x) for x in _vs_vals]
+                else:
+                    vs_list = [str(_vs_vals)]
+                # Ensure we have a ModelSettings instance to carry extra args
+                if model_settings_obj is None:
+                    model_settings_obj = ModelSettings()
+                # Merge into extra_args without clobbering existing keys
+                ea = dict(model_settings_obj.extra_args or {})
+                ea.setdefault('vs', vs_list)
+                model_settings_obj.extra_args = ea
+        except Exception:
+            # Non-fatal if vs propagation fails; continue with default settings
+            pass
         
         # Получаем инструменты от обоих серверов
         run_context = RunContextWrapper(context=None)
         # agent = Agent(name="test", instructions="test")
+        _tools = [WebSearchTool()]
+        if vs_list:
+            try:
+                _tools.append(FileSearchTool(vector_store_ids=vs_list))
+            except Exception:
+                pass
         agent = Agent(
             name=f"{agent_name} [agent]",
             instructions=agent_instructions,
             # prompt=prompt_data["prompt"],
-            tools=[WebSearchTool()],
+            tools=_tools,
             mcp_servers=[server_fs, server_seq, server_voice] + ([server_gsheets] if server_gsheets else []),
             model=model_name,
             model_settings=(model_settings_obj or ModelSettings())
@@ -1432,10 +1467,14 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         # if seed_file_list_text:
         #     _seed_history.append({"role": "user", "content": seed_file_list_text})
         _seed_history.append({"role": "user", "content": user_input or "go"})
+
+        history = _seed_history
+
+
         result1 = await Runner.run(
             agent,
-            _seed_history,
-            max_turns=50,
+            history,
+            max_turns=150,
         )
 
         history = result1.to_input_list()
@@ -1450,18 +1489,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
         themes_url = None
         prompt_url = None
-        try:
-            repo_base_url = "https://github.com/strato-space/ai/edit/main/"
-            if agent_yaml_path:
-                from pathlib import Path as _Path
-                _p = _Path(str(agent_yaml_path))
-                prompt_url = repo_base_url + urllib.parse.quote(str(_p).replace('\\', '/'), safe='/')
-                _themes = _p.parent / 'themes.md'
-                if _themes.exists():
-                    themes_url = repo_base_url + urllib.parse.quote(str(_themes).replace('\\', '/'), safe='/')
-        except Exception:
-            pass
-
+        
         if isinstance(step1_output, str) and len(step1_output) < 4000:
             # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
             await send_digest_notification(
