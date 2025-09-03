@@ -1410,7 +1410,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         except Exception:
             pass
 
-        # If agent profile defines vector stores under `vs: [...]`, capture them and propagate
+        # If agent profile defines vector stores under `vs: [...]`, capture them for FileSearchTool
         vs_list = None
         try:
             _vs_vals = None
@@ -1427,13 +1427,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     vs_list = [str(x) for x in _vs_vals]
                 else:
                     vs_list = [str(_vs_vals)]
-                # Ensure we have a ModelSettings instance to carry extra args
-                if model_settings_obj is None:
-                    model_settings_obj = ModelSettings()
-                # Merge into extra_args without clobbering existing keys
-                ea = dict(model_settings_obj.extra_args or {})
-                ea.setdefault('vs', vs_list)
-                model_settings_obj.extra_args = ea
+                # Do NOT pass `vs` via model_settings.extra_args.
+                # The OpenAI Responses API rejects unknown args (observed 'vs' TypeError).
         except Exception:
             # Non-fatal if vs propagation fails; continue with default settings
             pass
@@ -1468,52 +1463,61 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         #     _seed_history.append({"role": "user", "content": seed_file_list_text})
         _seed_history.append({"role": "user", "content": user_input or "go"})
 
+        # history = list(_seed_history)
         history = _seed_history
-
-
-        result1 = await Runner.run(
-            agent,
-            history,
-            max_turns=150,
-        )
-
-        history = result1.to_input_list()
-        step1_output = result1.final_output
-
-        print("Step 1 output:")
-        print(step1_output)
-        title = "📰 AI News Aggregator"
-
-        # Prefer CLI-provided agent name for publication title
-        title_name = (cli_agent_name or agent_name or "Agent")
-        # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
-        themes_url = None
-        prompt_url = None
-        
-        if isinstance(step1_output, str) and len(step1_output) < 4000:
-            # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
-            await send_digest_notification(
-                "",
-                themes_url,
-                prompt_url,
-                agent_name=agent_name,
-                agent_path=agent_path,
-                input_text=user_input,
-                text=step1_output,
-            )
-        else:
-            url = await publish_results(title=title_name, content=step1_output)
-            await send_digest_notification(
-                url,
-                themes_url,
-                prompt_url,
-                agent_name=agent_name,
-                agent_path=agent_path,
-                input_text=user_input,
+        # Simple loop: run pipeline, notify, then ask user to continue or exit
+        while True:
+            
+            result1 = await Runner.run(
+                agent,
+                history,
+                max_turns=150,
             )
 
-        # Post-run: commit and push changes using normalized agent_name and raw user_input
-        await post_run_git_push(agent_name=agent_name, user_input=user_input)
+            history = result1.to_input_list()
+            step1_output = result1.final_output
+
+            print("Step 1 output:")
+            print(step1_output)
+            title = "📰 AI News Aggregator"
+
+            # Prefer CLI-provided agent name for publication title
+            title_name = (cli_agent_name or agent_name or "Agent")
+            # Compute GitHub edit URLs for agent.yaml and themes.md (if present)
+            themes_url = None
+            prompt_url = None
+            
+            if isinstance(step1_output, str) and len(step1_output) < 4000:
+                # Send digest directly to Telegram as HTML (cleaning handled in telegram_send_message)
+                await send_digest_notification(
+                    "",
+                    themes_url,
+                    prompt_url,
+                    agent_name=agent_name,
+                    agent_path=agent_path,
+                    input_text=user_input,
+                    text=step1_output,
+                )
+            else:
+                url = await publish_results(title=title_name, content=step1_output)
+                await send_digest_notification(
+                    url,
+                    themes_url,
+                    prompt_url,
+                    agent_name=agent_name,
+                    agent_path=agent_path,
+                    input_text=user_input,
+                )
+
+            # Post-run: commit and push changes using normalized agent_name and raw user_input
+            await post_run_git_push(agent_name=agent_name, user_input=user_input)
+
+            try:
+                choice = (input("continue [1]/exit: 0 > ").strip() or "1")
+            except Exception:
+                choice = "1"
+            if choice == "0":
+                break
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
