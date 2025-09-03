@@ -1247,7 +1247,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool()]
+        tools = []
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
