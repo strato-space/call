@@ -657,18 +657,117 @@ def discover_prompt_repo() -> Path:
     raise FileNotFoundError("Prompt repository not found. Set PROMPT_REPO env to its path.")
 
 
+def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
+    """Load agents index file which may contain 'agents' and optional 'aliases'.
+
+    Returns a mapping from agent name and all aliases (PascalCase) to full agent.yaml Path.
+    """
+    mapping: dict[str, Path] = {}
+    try:
+        if not index_path.exists():
+            return mapping
+        data = load_yaml(index_path) or {}
+        agents_map = data.get('agents') or {}
+        # Optional explicit aliases mapping: { AgentName: [alias1, alias2, ...] }
+        aliases_map = data.get('aliases') or {}
+        if isinstance(agents_map, dict):
+            for name in agents_map.keys():
+                name_pc = to_pascal_case(str(name))
+                path = (base_dir / name_pc / 'agent.yaml')
+                if path.exists():
+                    mapping[name_pc] = path
+                # bind aliases
+                if isinstance(aliases_map, dict):
+                    for alias in (aliases_map.get(name) or aliases_map.get(name_pc) or []):
+                        alias_pc = to_pascal_case(str(alias))
+                        if alias_pc and path.exists():
+                            mapping[alias_pc] = path
+    except Exception:
+        # Non-fatal: fallback to directory scan later
+        return {}
+    return mapping
+
+
+def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
+    """Scan a directory for subfolders with agent.yaml.
+
+    Returns mapping: AgentName -> (agent_yaml_path, aliases[])
+    """
+    result: dict[str, tuple[Path, list[str]]] = {}
+    if not base_dir.exists():
+        return result
+    for child in base_dir.iterdir():
+        if not child.is_dir():
+            continue
+        ay = child / 'agent.yaml'
+        if ay.exists():
+            try:
+                y = load_yaml(ay) or {}
+                name = to_pascal_case(str(y.get('id') or y.get('name') or child.name))
+                aliases = []
+                raw_aliases = y.get('aliases') or []
+                if isinstance(raw_aliases, list):
+                    aliases = [to_pascal_case(str(a)) for a in raw_aliases if str(a).strip()]
+                result[name] = (ay, aliases)
+            except Exception:
+                result[child.name] = (ay, [])
+    return result
+
+
+def _ensure_indices(repo: Path) -> None:
+    """Create minimal indices agents.yaml in AgentFab/ and agents/ if missing.
+
+    Structure:
+      name: <string>
+      agents: { AgentName: <short description or empty> }
+      aliases: { AgentName: [Alias1, Alias2] }
+    """
+    import yaml
+    for sub in ('AgentFab', 'agents'):
+        base = repo / sub
+        index = base / 'agents.yaml'
+        if index.exists():
+            continue
+        scanned = _scan_agents_dir(base)
+        agents_map = {name: '' for name in scanned.keys()}
+        aliases_map = {name: aliases for name, (_, aliases) in scanned.items() if aliases}
+        if not agents_map and sub == 'AgentFab':
+            # Try to derive from AgentFab root agent.yaml 'agents' section
+            af = repo / 'AgentFab' / 'agent.yaml'
+            if af.exists():
+                try:
+                    data = load_yaml(af) or {}
+                    section = data.get('agents') or {}
+                    if isinstance(section, dict):
+                        for group_val in section.values():
+                            if isinstance(group_val, dict):
+                                for nm, desc in group_val.items():
+                                    agents_map[to_pascal_case(str(nm))] = str(desc or '')
+                except Exception:
+                    pass
+        content = {
+            'name': f'{sub} Agents Index',
+            'agents': agents_map,
+        }
+        if aliases_map:
+            content['aliases'] = aliases_map
+        try:
+            with open(index, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(content, f, allow_unicode=True, sort_keys=False)
+        except Exception:
+            # best-effort; ignore failures
+            pass
+
+
 def discover_agent_yaml(agent_name: str) -> Path | None:
-    """Discover agent YAML by directory name only.
+    """Discover agent YAML with index-first strategy and fallbacks.
 
-    Search order:
-    1) prompt/AgentFab/<AgentName>/agent.yaml (AgentFab takes precedence; case-insensitive dir match)
-    2) prompt/agents/<AgentName>/agent.yaml (case-insensitive dir match)
-
-    Args:
-        agent_name: Agent name (will be normalized with to_pascal_case).
-
-    Returns:
-        Path to agent.yaml file or None if not found.
+    Priority:
+    0) Special-case AgentFab -> prompt/AgentFab/agent.yaml
+    1) Index lookup in AgentFab/agents.yaml (by name or alias)
+    2) Index lookup in agents/agents.yaml (by name or alias)
+    3) Directory scan in AgentFab/<AgentName>/agent.yaml
+    4) Directory scan in agents/<AgentName>/agent.yaml
     """
     if not agent_name:
         return None
@@ -676,10 +775,29 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
 
+    # 0) Special-case: AgentFab root card
+    if query_norm.lower() == 'agentfab':
+        root_yaml = repo / 'AgentFab' / 'agent.yaml'
+        return root_yaml if root_yaml.exists() else None
+
+    # Ensure indices exist (best-effort)
+    _ensure_indices(repo)
+
+    # 1) Index lookup AgentFab
+    af_index_map = _load_agents_index(repo / 'AgentFab' / 'agents.yaml', repo / 'AgentFab')
+    if query_norm in af_index_map:
+        return af_index_map[query_norm]
+
+    # 2) Index lookup agents
+    agents_index_map = _load_agents_index(repo / 'agents' / 'agents.yaml', repo / 'agents')
+    if query_norm in agents_index_map:
+        return agents_index_map[query_norm]
+
+    # 3–4) Fallback directory scan with case-insensitive match
     def find_in_dir(base: Path) -> Path | None:
         if not base.exists():
             return None
-        # Try exact case first
+        # Try exact
         direct = base / query_norm / 'agent.yaml'
         if direct.exists():
             return direct
@@ -691,14 +809,10 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
                     return cand
         return None
 
-    # AgentFab takes precedence
     agentfab_path = find_in_dir(repo / 'AgentFab')
     if agentfab_path:
         return agentfab_path
-
-    # Fallback to prompt/agents
-    agents_path = find_in_dir(repo / 'agents')
-    return agents_path
+    return find_in_dir(repo / 'agents')
 
 
 def load_yaml(path: Path) -> dict:
