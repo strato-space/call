@@ -1262,13 +1262,6 @@ class ResponsesImageGenerationTool(FunctionTool):
     name = "image_generation_one_out"
     description = "Render a single image using Responses API image_generation. Base + refs supported."
 
-    class Args(FunctionTool.Args):
-        prompt: str
-        images: List[str]
-        size: Optional[str] = "1024x1024"
-        mask: Optional[str] = None
-        output_path: Optional[str] = None
-
     async def run(self, prompt: str, images: List[str], size: str = "1024x1024", mask: Optional[str] = None, output_path: Optional[str] = None):
         base = images[0] if images else None
         refs = images[1:] if images and len(images) > 1 else []
