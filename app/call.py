@@ -1486,7 +1486,20 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
             # Loop control based on SelfReflection return code
             if sr_code not in ("PREV", "CONTINUE"):
-                break
+                # At the end of the cycle, ask user for the next message
+                # Exit if the user types 'exit'; append to history otherwise
+                try:
+                    loop = asyncio.get_running_loop()
+                    prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
+                    user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
+                except Exception:
+                    user_next = ""
+
+                if isinstance(user_next, str) and user_next.strip().lower() == "exit":
+                    break
+                # Append user's message (default to 'go') and continue the outer loop
+                history.append({"role": "user", "content": (user_next or "go")})
+                continue
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
