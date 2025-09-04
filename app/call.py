@@ -58,7 +58,7 @@ from telegraph import Telegraph
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
-from telegram.error import TelegramError, TimedOut, NetworkError
+from telegram.error import TelegramError, TimedOut, NetworkError, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
@@ -681,6 +681,8 @@ class MCPServerStdioHook(MCPServerStdio):
         super().__init__(*args, **kwargs)
         # Per-instance last message holder
         self.__telegram_last_message: Optional[Message] = None
+        # Cache last cleaned+truncated text to avoid redundant edits
+        self.__last_tg_text: Optional[str] = None
         # Try to derive a readable MCP title
         self._mcp_title: str = (
             str(getattr(self, 'name', '') or '').strip()
@@ -700,15 +702,20 @@ class MCPServerStdioHook(MCPServerStdio):
         # Prefix with MCP title
         header = f"<b>{self._mcp_title}</b>\n\n"
         safe_text = header + (text or "")
+        # Clean and truncate to avoid Telegram 4096 limit and user's 3800 limit
+        cleaned = clean_html_for_telegram(safe_text)
+        if len(cleaned) > 3800:
+            cleaned = cleaned[:3797] + "..."
         async def _op():
             return await bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
-                text=clean_html_for_telegram(safe_text),
+                text=cleaned,
                 parse_mode=ParseMode.HTML,
             )
         msg = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         self.__telegram_last_message = msg
+        self.__last_tg_text = cleaned
         return msg
 
     async def __edit_message_text(self, text: str) -> None:
@@ -718,14 +725,28 @@ class MCPServerStdioHook(MCPServerStdio):
         if not self.__telegram_last_message:
             await self.__send_message(safe_text)
             return
+        # Clean and truncate
+        cleaned = clean_html_for_telegram(safe_text)
+        if len(cleaned) > 3800:
+            cleaned = cleaned[:3797] + "..."
+        # Skip edit if content is unchanged (prevents BadRequest: Message is not modified)
+        if self.__last_tg_text == cleaned:
+            return
         async def _op():
             return await bot.edit_message_text(
                 chat_id=self.__telegram_last_message.chat_id,
                 message_id=self.__telegram_last_message.message_id,
-                text=clean_html_for_telegram(safe_text),
+                text=cleaned,
                 parse_mode=ParseMode.HTML,
             )
-        await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        try:
+            await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+            self.__last_tg_text = cleaned
+        except BadRequest as br:
+            # Ignore 'Message is not modified' just in case race conditions occur
+            if 'Message is not modified' in str(br):
+                return
+            raise
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
