@@ -834,7 +834,7 @@ class MCPServerStdioHook(MCPServerStdio):
                 if input_text:
                     try:
                         safe_input = str(input_text)[:1000]
-                        banner_lines.append(f"input: {safe_input}")
+                        banner_lines.append(f"{safe_input}")
                     except Exception:
                         pass
                 await self.__send_message("\n".join(banner_lines))
@@ -1746,7 +1746,7 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     display_name = (agent_attrs.get("name") if agent_attrs else None) or (agent_name or "Agent")
     welcome_text = (
         f"<b>🔌 {display_name}</b>\n"
-        f"<code>input: {user_input[:3800]}</code>"
+        f"<code>{user_input[:3800]}</code>"
     )
 
     
