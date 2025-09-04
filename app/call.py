@@ -649,15 +649,6 @@ async def publish_results(title: str = "AgentName Results", content: str = None)
     print("Results published to:", url)
     return url
 
-def telegram_progress_bar(thoughtNumber, totalThoughts, bar_length=10):
-    filled = int(bar_length * thoughtNumber / totalThoughts)
-    bar = "█" * filled + "░" * (bar_length - filled)
-    percent = int(100 * thoughtNumber / totalThoughts)
-    return f"{bar} {thoughtNumber}/{totalThoughts}"
-
-    # Example usage:
-    # msg = telegram_progress_bar(7, 10)
-    # Output: "███████░░░ 7/10 (70%)"
 
 async def edit_message_text(text):
     async def _op():
@@ -689,6 +680,18 @@ class MCPServerStdioHook(MCPServerStdio):
             or str(getattr(self, 'id', '') or '').strip()
             or type(self).__name__
         )
+
+    @staticmethod
+    def _progress_bar(thoughtNumber: int, totalThoughts: int, bar_length: int = 10) -> str:
+        """Render a compact progress bar strictly for Sequential Thinking updates."""
+        try:
+            tn = max(0, int(thoughtNumber))
+            tt = max(1, int(totalThoughts))
+            filled = int(bar_length * tn / tt)
+            bar = "█" * filled + "░" * (bar_length - filled)
+            return f"{bar} {tn}/{tt}"
+        except Exception:
+            return f"{thoughtNumber}/{totalThoughts}"
 
     async def __send_message(self, text: str) -> Message:
         """Send a new Telegram message for this MCP instance and cache it."""
@@ -839,9 +842,9 @@ class MCPServerStdioHook(MCPServerStdio):
                 if tn <= 0:
                     return await super().call_tool(tool_name, arguments)
 
-            # Show progress bar only when tn > 0
-            if tn > 0 and tt > 0:
-                bar = telegram_progress_bar(tn, tt)
+            # Show progress bar only for actual progress (tn >= 1)
+            if tn >= 1 and tt >= 1:
+                bar = self._progress_bar(tn, tt)
                 text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
             else:
                 text = str(thought)
