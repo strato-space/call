@@ -113,6 +113,8 @@ def ensure_env(var: str, default: str = None) -> str:
 
 # Global variable to store the last message object
 telegram_last_message: Optional[Message] = None
+selected_chat_id: Optional[int] = None
+selected_thread_id: Optional[int] = None
 
 def get_telegram_chat_id(env_var: str, default: str = None) -> int:
     """Safely get and convert Telegram chat ID from environment."""
@@ -137,6 +139,9 @@ telegrath_token = ensure_env("TELEGRAPH_TOKEN")
 TELEGRAM_THREAD_ID = get_telegram_chat_id("TELEGRAM_THREAD_ID", "")
 TELEGRAPH_TOKEN = ensure_env("TELEGRAPH_TOKEN")
 OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
+# Initialize selected chat/thread defaults from .env
+selected_chat_id = TELEGRAM_CHAT_ID
+selected_thread_id = TELEGRAM_THREAD_ID or None
 # Global OpenAI client - will be configured with proxy in create_openai_client()
 openai_client: OpenAI = None
 
@@ -332,6 +337,7 @@ async def send_digest_notification(
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
     try:
+        # KISS: rely on globally selected_* targets updated once in main()
         message_obj = await telegram_send_message(
             text=text,
             reply_markup=reply_markup,
@@ -414,11 +420,15 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
         safe_text = clean_html_for_telegram(text or "")
         chosen_parse_mode = ParseMode.HTML
 
+    # Determine effective chat/thread with consistent fallbacks
+    # KISS: Only explicit args -> selected_* (selected_* already seeded from .env and updated once after agent load)
+    eff_chat_id = chat_id if chat_id is not None else selected_chat_id
+    eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
+
     async def _op():
         return await bot.send_message(
-            chat_id=chat_id or telegram_last_message.chat_id,
-            message_thread_id = message_thread_id or (
-            telegram_last_message.message_thread_id if telegram_last_message else None),
+            chat_id=eff_chat_id,
+            message_thread_id=eff_thread_id,
             text=safe_text,
             parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
@@ -503,6 +513,22 @@ def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
         thread_id = thread_id if thread_id is not None else _to_int(tg.get("thread_id"))
 
     return chat_id, thread_id
+
+def _merge_outputs(*outputs: dict | None) -> dict:
+    """KISS merge for output sections coming from different places.
+    Priority = leftmost. Supports nested 'tg' dict shallowly.
+    """
+    merged: dict = {}
+    for o in reversed([x for x in outputs if isinstance(x, dict)]):
+        # Merge shallow keys
+        for k, v in o.items():
+            if k == "tg" and isinstance(v, dict):
+                base = merged.get("tg", {}) if isinstance(merged.get("tg"), dict) else {}
+                base = {**v, **base}  # v has lower priority than already set keys
+                merged["tg"] = base
+            else:
+                merged.setdefault(k, v)
+    return merged
 
 def clean_html_for_telegraph(html_content: str) -> str:
     # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
@@ -725,28 +751,19 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def __send_message(self, text: str) -> Message:
         """Send a new Telegram message for this MCP instance and cache it."""
-        # Decide target chat/thread: prefer the global last message context if exists,
-        # otherwise use configured TELEGRAM_CHAT_ID/TELEGRAM_THREAD_ID
-        chat_id = (telegram_last_message.chat_id if telegram_last_message else TELEGRAM_CHAT_ID)
-        # Fallback to configured thread id if no prior message
-        thread_id = (
-            telegram_last_message.message_thread_id if telegram_last_message else (TELEGRAM_THREAD_ID or None)
-        )
-        # Prefix with MCP title
+        # Prefix with MCP title and sanitize; use common send path with consistent target selection
         header = f"<b>{self._mcp_title}</b>\n\n"
         safe_text = header + (text or "")
         # Clean and truncate to avoid Telegram 4096 limit and user's 3800 limit
         cleaned = clean_html_for_telegram(safe_text)
         if len(cleaned) > 3800:
             cleaned = cleaned[:3797] + "..."
-        async def _op():
-            return await bot.send_message(
-                chat_id=chat_id,
-                message_thread_id=thread_id,
-                text=cleaned,
-                parse_mode=ParseMode.HTML,
-            )
-        msg = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        msg = await telegram_send_message(
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+            text=cleaned,
+            reply_markup=None,
+        )
         self.__telegram_last_message = msg
         self.__last_tg_text = cleaned
         return msg
@@ -1780,60 +1797,32 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     )
 
     
-    # Prefer chat/thread from agent YAML/prompt (including output.tg.*), then attributes, then env
-    prompt_chat_id = None
-    prompt_thread_id = None
+    # KISS: Single-pass selection — merge possible outputs and extract once
     try:
-        # 0) If agent_path provided, read output directly from YAML first
-        if agent_path:
-            try:
-                _raw_yaml = load_yaml(Path(agent_path))
-                _raw_out = _raw_yaml.get("output") if isinstance(_raw_yaml, dict) else {}
-                c_id, t_id = _extract_tg_targets(_raw_out)
-                prompt_chat_id = c_id or prompt_chat_id
-                prompt_thread_id = t_id or prompt_thread_id
-            except Exception:
-                pass
-        # Prefer explicit agent_path passed to main()
-        dto = None
-        apath_obj = None
-        if agent_path:
-            apath_obj = Path(agent_path)
-            dto = AgentDTO(load_yaml(apath_obj), base_dir=apath_obj.parent)
-        else:
-            # Fallback: attempt discovery by name
-            norm = to_pascal_case(agent_attrs.get("name", "")) if agent_attrs else ""
-            apath_obj = discover_agent_yaml(norm) if norm else None
-            dto = AgentDTO(load_yaml(apath_obj), base_dir=apath_obj.parent) if apath_obj else None
-        if dto:
-            default_prompt = dto.getDefaultPrompt() or {}
-            # Read output from default prompt; if absent, fallback to dto.attributes
-            output_raw = default_prompt.get("output") if isinstance(default_prompt, dict) else None
-            if not output_raw and isinstance(dto.attributes, dict):
-                output_raw = dto.attributes.get("output")
-            c_id2, t_id2 = _extract_tg_targets(output_raw)
-            prompt_chat_id = c_id2 or prompt_chat_id
-            prompt_thread_id = t_id2 or prompt_thread_id
+        merged_output = _merge_outputs(
+            (load_yaml(Path(agent_path)).get("output") if agent_path else None),
+            (agent_attrs.get('output') if isinstance(agent_attrs, dict) else None),
+        )
+        m_chat, m_thread = _extract_tg_targets(merged_output)
+        prompt_chat_id = m_chat
+        prompt_thread_id = m_thread
     except Exception:
         pass
 
-    # Fallback: read from agent_attrs if still missing
-    if (prompt_chat_id is None or prompt_thread_id is None) and isinstance(agent_attrs, dict):
-        c_id3, t_id3 = _extract_tg_targets(agent_attrs.get("output"))
-        if prompt_chat_id is None:
-            prompt_chat_id = c_id3
-        if prompt_thread_id is None:
-            prompt_thread_id = t_id3
+    # Save globally for all subsequent messages (welcome, MCP hook, digest)
+    global selected_chat_id, selected_thread_id
+    selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
+    selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
     if not debug:
         print(f"[INFO] Agent path: {agent_path}")
-        print(f"[INFO] Welcome target: chat_id={prompt_chat_id or '(env default)'}, thread_id={prompt_thread_id or '(auto/None)'}")
+        print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
 
     if not debug:
         await send_telegram_welcome_message(
             welcome_text[:4000],
-            chat_id=prompt_chat_id,
-            message_thread_id=prompt_thread_id,
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
         )
     
     # Compute samples directory: agent directory + '/memory' if agent_path provided
@@ -1871,16 +1860,14 @@ async def republish_results() -> str:
 async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None = None, message_thread_id: int | None = None):
     # Send initial message and store its ID
     global telegram_last_message
-    # Choose chat: prefer explicit override from prompt; else fall back to env (secondary on Windows)
+    # Choose chat: prefer explicit override; else use selected_* initialized from .env and possibly overridden by agent
     if chat_id is None:
-        chat_id = TELEGRAM_SECOND_CHAT_ID if os.name == "nt" else TELEGRAM_CHAT_ID
+        chat_id = selected_chat_id or TELEGRAM_CHAT_ID
     # Send clean welcome banner without any progress bar
     telegram_last_message = await telegram_send_message(
         chat_id=chat_id,
         text=text,
-        message_thread_id=(message_thread_id if message_thread_id is not None else (
-            TELEGRAM_THREAD_ID if chat_id == TELEGRAM_CHAT_ID else None
-        ))
+        message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None))
     )
     print(
         f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
