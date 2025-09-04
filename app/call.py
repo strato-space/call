@@ -386,15 +386,41 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
 
 
 async def telegram_send_message(chat_id: int = None, text: str = None, message_thread_id: int = None, reply_markup: InlineKeyboardMarkup = None):
+    
+    def _looks_like_markdown(s: str) -> bool:
+        try:
+            t = (s or "").strip()
+            if not t:
+                return False
+            # If it contains any HTML tag, prefer HTML path
+            if "<" in t and ">" in t:
+                return False
+            # Common Markdown cues
+            md_markers = (
+                "**", "__", "* ", "- ", "\n- ", "\n* ", "[`", "[`", "](http", "`", "```", "# ", "## ", "### ", "1. ", "\n1. "
+            )
+            return any(m in t for m in md_markers)
+        except Exception:
+            return False
 
-    safe_text = clean_html_for_telegram(text or "")
+    is_md = _looks_like_markdown(text or "")
+
+    if is_md:
+        # Send as Markdown as-is; do not run HTML sanitizer
+        safe_text = text or ""
+        chosen_parse_mode = ParseMode.MARKDOWN
+    else:
+        # Default: sanitize HTML and send as HTML
+        safe_text = clean_html_for_telegram(text or "")
+        chosen_parse_mode = ParseMode.HTML
+
     async def _op():
         return await bot.send_message(
             chat_id=chat_id or telegram_last_message.chat_id,
             message_thread_id = message_thread_id or (
             telegram_last_message.message_thread_id if telegram_last_message else None),
             text=safe_text,
-            parse_mode=ParseMode.HTML,
+            parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
         )
     message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
