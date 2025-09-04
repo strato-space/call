@@ -729,6 +729,8 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
+        # Bind parent method to avoid 'super(): no arguments' inside nested closures
+        parent_call_tool = super(MCPServerStdioHook, self).call_tool
         # Try to present arguments in YAML for readability (console)
         def _to_yaml_text(obj) -> str:
             """Dump arguments to YAML with better readability:
@@ -786,7 +788,7 @@ class MCPServerStdioHook(MCPServerStdio):
                 await self.__edit_message_text(body)
             try:
                 async def _call():
-                    return await super().call_tool(tool_name, arguments)
+                    return await parent_call_tool(tool_name, arguments)
                 return await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
             except Exception as e:
                 err_text = format_exception_text(e)
@@ -838,7 +840,7 @@ class MCPServerStdioHook(MCPServerStdio):
 
             try:
                 async def _call():
-                    return await super().call_tool(tool_name, arguments)
+                    return await parent_call_tool(tool_name, arguments)
                 result = await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
                 print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 return result
@@ -1526,6 +1528,8 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         # Retry guards to prevent infinite loops on repeated MCP failures
         mcp_retry_main_done = False
         mcp_retry_sr_done = False
+        # Ensure step1_output is always defined even if we break on first error
+        step1_output = ""
         while True:
             cycles += 1
             if cycles > max_cycles:
