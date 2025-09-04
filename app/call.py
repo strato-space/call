@@ -135,6 +135,31 @@ def create_openai_client():
     agents.set_default_openai_client(client)
     return client
 
+def format_exception_json(e: Exception) -> dict:
+    """Return a compact JSON-serializable description of an exception."""
+    try:
+        import traceback
+        stack = traceback.format_exc().strip().splitlines()
+    except Exception:
+        stack = []
+    return {
+        "type": type(e).__name__,
+        "message": str(e),
+        "stack": stack[-20:],
+    }
+
+def format_exception_text(e: Exception) -> str:
+    """Human-readable single text block for console/Telegram."""
+    try:
+        import traceback
+        tb = traceback.format_exc()
+    except Exception:
+        tb = ""
+    msg = f"{type(e).__name__}: {str(e)}"
+    if tb:
+        return (msg + "\n\n" + tb).strip()
+    return msg
+
 # Initialize bot at module level
 global bot
 bot: Bot
@@ -209,7 +234,7 @@ async def send_digest_notification(
         if input_text:
             try:
                 safe_input = (input_text or "")[:3800]
-                text = text + f"\n<code>input: {safe_input}</code>"
+                text = text + f"\n<code>{safe_input}</code>"
             except Exception:
                 pass
 
@@ -704,8 +729,15 @@ class MCPServerStdioHook(MCPServerStdio):
                 await self.__send_message(body)
             else:
                 await self.__edit_message_text(body)
-
-            return await super().call_tool(tool_name, arguments)
+            try:
+                return await super().call_tool(tool_name, arguments)
+            except Exception as e:
+                err_text = format_exception_text(e)
+                try:
+                    await self.__edit_message_text(f"❌ Error in {tool_name}\n\n" + err_text)
+                except Exception:
+                    pass
+                raise
         try:
             thought = arguments['thought']
             # Determine counters safely
@@ -745,10 +777,17 @@ class MCPServerStdioHook(MCPServerStdio):
             except Exception:
                 pass
 
-            result = await super().call_tool(tool_name, arguments)
-            print(f"[MCP Hook] Tool {tool_name} completed successfully")
-
-            return result
+            try:
+                result = await super().call_tool(tool_name, arguments)
+                print(f"[MCP Hook] Tool {tool_name} completed successfully")
+                return result
+            except Exception as e:
+                err_text = format_exception_text(e)
+                try:
+                    await self.__edit_message_text(f"❌ Error in {tool_name}\n\n" + err_text)
+                except Exception:
+                    pass
+                raise
         except Exception as e:
             print(f"[MCP Hook] Error in tool {tool_name}: {str(e)}")
             raise
@@ -1428,14 +1467,21 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             if cycles > max_cycles:
                 print("Max cycles reached; exiting loop")
                 break
-            result1 = await Runner.run(
-                agent,
-                history,
-                max_turns=150,
-            )
-
-            history = result1.to_input_list()
-            step1_output = result1.final_output
+            try:
+                result1 = await Runner.run(
+                    agent,
+                    history,
+                    max_turns=150,
+                )
+                history = result1.to_input_list()
+                step1_output = result1.final_output
+            except Exception as e:
+                # Log and continue by adding error and a 'go' to history
+                err_text = format_exception_text(e)
+                print("Error during main agent run:\n" + err_text)
+                history.append({"role": "assistant", "content": f"Error: {err_text}"})
+                history.append({"role": "user", "content": "go"})
+                continue
 
             print("Step 1 output:")
             print(step1_output)
@@ -1453,11 +1499,19 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             # --- Run SelfReflection agent and react to its return code ---
             async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
                 print(f"[SR] Running SelfReflection (cycles={cycles})")
-                sr_result = await Runner.run(
-                    sr_agent,
-                    history,
-                    max_turns=100,
-                )
+                try:
+                    sr_result = await Runner.run(
+                        sr_agent,
+                        history,
+                        max_turns=100,
+                    )
+                except Exception as e:
+                    err_text = format_exception_text(e)
+                    print("Error during SelfReflection run:\n" + err_text)
+                    history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
+                    history.append({"role": "user", "content": "go"})
+                    # Skip to next outer loop iteration
+                    continue
                 # Prefer structured return code if available; else parse text
                 sr_code = getattr(sr_result, "return_code", None)
                 sr_output = getattr(sr_result, "final_output", None)
@@ -1484,11 +1538,18 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                             print("Max cycles reached in SelfReflection; exiting loop")
                             sr_code = "MAX"
                             break
-                        sr_result = await Runner.run(
-                            sr_agent,
-                            history,
-                            max_turns=100,
-                        )
+                        try:
+                            sr_result = await Runner.run(
+                                sr_agent,
+                                history,
+                                max_turns=100,
+                            )
+                        except Exception as e:
+                            err_text = format_exception_text(e)
+                            print("Error during SelfReflection CONTINUE iteration:\n" + err_text)
+                            history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
+                            history.append({"role": "user", "content": "go"})
+                            break
                         # Update history fully to SR's view
                         try:
                             history = sr_result.to_input_list()
