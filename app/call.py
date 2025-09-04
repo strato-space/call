@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type
+import base64
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import urllib.parse
@@ -161,7 +162,7 @@ def create_openai_client():
         # Separate connect/read/write timeouts to better handle slow model responses
         http_client = httpx.AsyncClient(
             proxy=proxy_url,
-            timeout=httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0),
+            timeout=httpx.Timeout(connect=45.0, read=600.0, write=240.0, pool=60.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             verify=True,
             follow_redirects=True,
@@ -172,11 +173,11 @@ def create_openai_client():
             api_key=OPENAI_API_KEY,
             http_client=http_client,
             max_retries=2,
-            timeout=300.0,
+            timeout=600.0,
         )
     else:
         # Direct connection
-        client = AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=2, timeout=300.0)
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=2, timeout=600.0)
     
     # Set as default client for agents SDK
     agents.set_default_openai_client(client)
@@ -215,9 +216,9 @@ async def init_bot():
     global bot
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
     request = HTTPXRequest(
-        connect_timeout=10.0,
-        read_timeout=30.0,
-        write_timeout=20.0,
+        connect_timeout=20.0,
+        read_timeout=120.0,
+        write_timeout=60.0,
     )
     bot = Bot(token=telegram_token, request=request)
     return bot
@@ -273,6 +274,7 @@ async def send_digest_notification(
     agent_name: str | None = None,
     agent_path: str | Path | None = None,
     input_text: str | None = None,
+    image_path: str | Path | None = None,
 ) -> Optional[Message]:
     # If content is too long for Telegram, publish and use resulting URL
     try:
@@ -337,16 +339,25 @@ async def send_digest_notification(
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
     try:
-        # KISS: rely on globally selected_* targets updated once in main()
-        message_obj = await telegram_send_message(
-            text=text,
-            reply_markup=reply_markup,
-            message_thread_id=message_thread_id)
+        # If an image is provided, send it as a photo with optional caption
+        if image_path:
+            message_obj = await telegram_send_photo(
+                image_path=image_path,
+                caption=text,
+                message_thread_id=message_thread_id,
+                reply_markup=reply_markup,
+            )
+        else:
+            # KISS: rely on globally selected_* targets updated once in main()
+            message_obj = await telegram_send_message(
+                text=text,
+                reply_markup=reply_markup,
+                message_thread_id=message_thread_id)
 
         print(f"Digest notification sent. ID: {message_obj.message_id}, Chat ID: {message_obj.chat_id}")
         return message_obj
     except Exception as e:
-        print(f"Error sending Telegram message: {e}")
+        print(f"Error sending Telegram message/photo: {e}")
         return None
 
 
@@ -433,6 +444,65 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
         )
+    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    return message
+
+
+async def telegram_send_photo(image_path: str | Path, caption: str | None = None, chat_id: int | None = None, message_thread_id: int | None = None, reply_markup: InlineKeyboardMarkup | None = None) -> Message:
+    """Send a photo to Telegram with optional caption, using global selected chat/thread.
+
+    - Applies the same HTML sanitization for captions as messages
+    - Uses async_retry for robustness
+    """
+    # Determine effective chat/thread
+    eff_chat_id = chat_id if chat_id is not None else selected_chat_id
+    eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
+
+    safe_caption = None
+    if caption:
+        # Detect markdown-like content just like telegram_send_message
+        def _looks_like_markdown(s: str) -> bool:
+            try:
+                t = (s or "").strip()
+                if not t:
+                    return False
+                if "<" in t and ">" in t:
+                    return False
+                md_markers = (
+                    "**", "__", "* ", "- ", "\n- ", "\n* ", "[`", "[`", "](http", "`", "```", "# ", "## ", "### ", "1. ", "\n1. "
+                )
+                return any(m in t for m in md_markers)
+            except Exception:
+                return False
+        if _looks_like_markdown(caption):
+            safe_caption = caption
+            parse_mode = ParseMode.MARKDOWN
+        else:
+            safe_caption = clean_html_for_telegram(caption)
+            parse_mode = ParseMode.HTML
+    else:
+        parse_mode = None
+
+    # Telegram Bot API caption length limit safety clamp (avoid BadRequest)
+    try:
+        max_caption_len = 1024
+        if safe_caption and len(safe_caption) > max_caption_len:
+            safe_caption = safe_caption[: max_caption_len - 1] + "…"
+    except Exception:
+        # Best-effort; on any error, fall back to original caption
+        pass
+
+    async def _op():
+        with open(image_path, 'rb') as f:
+            return await bot.send_photo(
+                chat_id=eff_chat_id,
+                message_thread_id=eff_thread_id,
+                photo=f,
+                caption=(safe_caption or None),
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
+
     message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     return message
 
@@ -1128,6 +1198,76 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     return find_in_dir(repo / 'agents')
 
 
+def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> Path:
+    """Resolve an output file path for an agent.
+
+    Preference:
+    - <agent_dir>/memories/<file_name> if 'memories/' exists
+    - else <agent_dir>/memory/<file_name> if 'memory/' exists
+    - else <agent_dir>/<file_name>
+    """
+    base_dir = (agent_yaml_path.parent if agent_yaml_path else Path('.')).resolve()
+    cand1 = base_dir / 'memories'
+    cand2 = base_dir / 'memory'
+    if cand1.exists() and cand1.is_dir():
+        return (cand1 / file_name).resolve()
+    if cand2.exists() and cand2.is_dir():
+        return (cand2 / file_name).resolve()
+    return (base_dir / file_name).resolve()
+
+
+async def _generate_image_and_save(prompt_text: str, output_path: Path, *, size: str = '1024x1024', model: str = 'gpt-image-1') -> Path:
+    """Generate an image using OpenAI Images API and save PNG bytes to output_path.
+
+    - Uses the global AsyncOpenAI client initialized with proxy/timeouts
+    - Retries transient failures
+    """
+    if not prompt_text or not isinstance(prompt_text, str):
+        raise ValueError("prompt_text must be a non-empty string")
+
+    # Ensure directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def _call():
+        return await openai_client.images.generate(
+            model=model,
+            prompt=prompt_text,
+            size=size,
+            quality='high',
+            n=1,
+        )
+
+    try:
+        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+    except Exception as e:
+        print(f"[Images] Generation failed: {e}")
+        raise
+
+    try:
+        data0 = (resp.data[0] if hasattr(resp, 'data') and resp.data else None)
+        img_b64 = None
+        if data0 and hasattr(data0, 'b64_json') and data0.b64_json:
+            img_b64 = data0.b64_json
+        elif data0 and hasattr(data0, 'url') and data0.url:
+            # Fallback: fetch URL
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+                r = await client.get(data0.url)
+                r.raise_for_status()
+                content = r.content
+                with open(output_path, 'wb') as f:
+                    f.write(content)
+                return output_path
+        if not img_b64:
+            raise RuntimeError("OpenAI Images response missing b64_json and url")
+        img_bytes = base64.b64decode(img_b64)
+        with open(output_path, 'wb') as f:
+            f.write(img_bytes)
+        return output_path
+    except Exception as e:
+        print(f"[Images] Save failed: {e}")
+        raise
+
+
 def load_yaml(path: Path) -> dict:
     """Simple YAML loader."""
     import yaml
@@ -1539,7 +1679,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
     ) as server_fs, MCPServerStdioHook(
             params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
             name="seq",
-            client_session_timeout_seconds=60
+            client_session_timeout_seconds=180
     ) as server_seq:
         print("[MCP] Voice server disabled (package '@modelcontextprotocol/server-realtime-api-voice' not available)")
         # Optionally enable Google Sheets server (kept disabled by default)
@@ -1630,15 +1770,44 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             print("Step 1 output:")
             print(step1_output)
             
-            await send_digest_notification(
-                agent_name=cfg.name,
-                agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
-                input_text=user_input,
-                text=step1_output,
-            )
+            # Detect whether this is the UralImg agent and generate the image if requested
+            img_path_for_notify: Path | None = None
+            try:
+                # Identify agent folder and output filename from files_contract.outputs
+                resolved_yaml_path: Path | None = (cfg.agent_yaml_path if cfg.agent_yaml_path else (Path(agent_path) if agent_path else None))
+                agent_yaml_data = load_yaml(resolved_yaml_path) if resolved_yaml_path and resolved_yaml_path.exists() else {}
+                outputs_section = ((agent_yaml_data.get('files_contract') or {}).get('outputs') or [])
+                out_name = None
+                if isinstance(outputs_section, list) and outputs_section:
+                    # Take the first file as the primary image output
+                    out_name = str(outputs_section[0]).strip()
+                # Heuristic: only attempt generation if output filename looks like an image
+                should_generate = bool(out_name and out_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')))
+                if should_generate and step1_output:
+                    img_path_for_notify = _resolve_output_file_path(resolved_yaml_path, out_name)
+                    print(f"[Images] Generating image to: {img_path_for_notify}")
+                    try:
+                        await _generate_image_and_save(step1_output, img_path_for_notify)
+                    except Exception as e:
+                        # Log and continue without image
+                        print(f"[Images] Error generating image: {e}")
+                        img_path_for_notify = None
+            except Exception as e:
+                print(f"[Images] Skipping image generation due to error: {e}")
 
-            # Post-run: commit and push changes using normalized agent_name and raw user_input
-            await post_run_git_push(agent_name=cfg.name, user_input=user_input)
+            # Send Telegram digest notification only outside of debug mode
+            if not debug:
+                await send_digest_notification(
+                    agent_name=cfg.name,
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
+                    input_text=user_input,
+                    text=step1_output,
+                    image_path=(str(img_path_for_notify) if img_path_for_notify and img_path_for_notify.exists() else None),
+                )
+
+            # Post-run: commit and push changes only outside of debug mode
+            if not debug:
+                await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
             # Only run SelfReflection when the original agent is AgentFab
             is_agentfab = isinstance(cfg.name, str) and cfg.name.strip().lower() == "agentfab"
