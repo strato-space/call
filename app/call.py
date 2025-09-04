@@ -1590,6 +1590,12 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             # Post-run: commit and push changes using normalized agent_name and raw user_input
             await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
+            # Only run SelfReflection when the original agent is AgentFab
+            is_agentfab = isinstance(cfg.name, str) and cfg.name.strip().lower() == "agentfab"
+            if not is_agentfab:
+                # For non-AgentFab agents, finish after the first main run
+                break
+
             # --- Run SelfReflection agent and react to its return code ---
             async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
                 print(f"[SR] Running SelfReflection (cycles={cycles})")
