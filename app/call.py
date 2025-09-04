@@ -651,17 +651,43 @@ class MCPServerStdioHook(MCPServerStdio):
         print(f"[MCP Hook] Calling tool: {tool_name}")
         # Try to present arguments in YAML for readability (console)
         def _to_yaml_text(obj) -> str:
+            """Dump arguments to YAML with better readability:
+            - Convert literal "\\n" sequences inside strings to real newlines
+            - Use YAML block style (|) for multiline strings
+            """
+            def _deep_unescape(o):
+                if isinstance(o, str):
+                    # Only basic escapes to improve readability
+                    return o.replace("\\n", "\n").replace("\\t", "\t")
+                if isinstance(o, list):
+                    return [_deep_unescape(i) for i in o]
+                if isinstance(o, dict):
+                    return {k: _deep_unescape(v) for k, v in o.items()}
+                return o
+
+            class _BlockStrDumper(yaml.SafeDumper):
+                pass
+
+            def str_representer(dumper, data):
+                style = '|' if ('\n' in data) else None
+                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
+
+            _BlockStrDumper.add_representer(str, str_representer)
+
             try:
-                return yaml.safe_dump(obj or {}, allow_unicode=True, sort_keys=False, default_flow_style=False)
+                prepared = _deep_unescape(obj or {})
+                return yaml.dump(prepared, Dumper=_BlockStrDumper, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
             except Exception:
                 try:
                     # JSON roundtrip with default=str to sanitize non-serializable objects
                     json_text = json.dumps(obj or {}, ensure_ascii=False, indent=2, default=str)
-                    return yaml.safe_dump(json.loads(json_text), allow_unicode=True, sort_keys=False, default_flow_style=False)
+                    prepared = _deep_unescape(json.loads(json_text))
+                    return yaml.dump(prepared, Dumper=_BlockStrDumper, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
                 except Exception:
-                    # Last resort: pretty JSON string
+                    # Last resort: pretty JSON string (also unescape newlines)
                     try:
-                        return json.dumps(obj or {}, ensure_ascii=False, indent=2, default=str)
+                        s = json.dumps(obj or {}, ensure_ascii=False, indent=2, default=str)
+                        return s.replace("\\n", "\n").replace("\\t", "\t")
                     except Exception:
                         return str(obj)
 
