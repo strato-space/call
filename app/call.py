@@ -152,22 +152,26 @@ def create_openai_client():
         # For agents SDK, we need to configure the underlying httpx client properly
         import httpx
         
-        # Create httpx client with proxy
+        # Create httpx client with proxy and generous timeouts
+        # Separate connect/read/write timeouts to better handle slow model responses
         http_client = httpx.AsyncClient(
             proxy=proxy_url,
-            timeout=httpx.Timeout(60.0),  # Longer timeout for proxy connections
-            verify=True,  # Keep SSL verification
-            follow_redirects=True
+            timeout=httpx.Timeout(connect=30.0, read=300.0, write=120.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            verify=True,
+            follow_redirects=True,
         )
         
-        # Create AsyncOpenAI client with proxied httpx client
+        # Create AsyncOpenAI client with proxied httpx client and small retry budget
         client = AsyncOpenAI(
             api_key=OPENAI_API_KEY,
-            http_client=http_client
+            http_client=http_client,
+            max_retries=2,
+            timeout=300.0,
         )
     else:
         # Direct connection
-        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=2, timeout=300.0)
     
     # Set as default client for agents SDK
     agents.set_default_openai_client(client)
