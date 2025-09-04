@@ -62,7 +62,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
-from agents.tool import FileSearchTool, Tool
+from agents.tool import FileSearchTool, FunctionTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -1248,7 +1248,7 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-class ImageGenerationTool(Tool):
+class ResponsesImageGenerationTool(FunctionTool):
     """
     Use Responses API `image_generation` to produce exactly one image.
     Args:
@@ -1262,7 +1262,7 @@ class ImageGenerationTool(Tool):
     name = "image_generation_one_out"
     description = "Render a single image using Responses API image_generation. Base + refs supported."
 
-    class Args(Tool.Args):
+    class Args(FunctionTool.Args):
         prompt: str
         images: List[str]
         size: Optional[str] = "1024x1024"
@@ -1716,7 +1716,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool(), ImageGenerationTool()]
+        tools = [WebSearchTool(), ResponsesImageGenerationTool()]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
