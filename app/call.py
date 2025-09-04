@@ -1,9 +1,9 @@
 import os
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List, Callable, Awaitable, Type
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, ExitStack
 from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
@@ -21,9 +21,21 @@ except ImportError:
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
     from agent_utils import extract_agent_attributes, get_agent_instructions
-from pathlib import Path
 import shutil
-from bs4 import BeautifulSoup      # use stdlib 'html.parser' to avoid extra deps
+
+# Import HTML/Telegram/Telegraph utilities from utils with script fallback
+try:
+    from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+    from .utils.telegram_text import telegram_truncate_html_safe, telegram_truncate_markdown_safe
+    from .utils.telegraph_utils import publish_results, create_telegrath_account
+except ImportError:
+    # Fallback for when running as a plain script
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
+    from html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+    from telegram_text import telegram_truncate_html_safe, telegram_truncate_markdown_safe
+    from telegraph_utils import publish_results, create_telegrath_account
 
 
 from mcp.types import CallToolResult
@@ -50,12 +62,12 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
-from agents.tool import FileSearchTool
+from agents.tool import FileSearchTool, Tool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
-from telegraph import Telegraph
+ # Telegraph usage is handled via utils.telegraph_utils
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
@@ -541,6 +553,139 @@ logging.getLogger("openai").setLevel(logging.DEBUG)
 
 default_samples_dir = str(Path(__file__).resolve().parents[2])
 
+# --- Shared helpers (Responses-only mode) ---
+def _is_url(s: str) -> bool:
+    try:
+        return isinstance(s, str) and s.strip().lower().startswith(("http://", "https://"))
+    except Exception:
+        return False
+
+def _as_input_image(src: Union[str, Path, bytes], stack: ExitStack):
+    """
+    Build a Responses `input_image` content part:
+      - URL -> {"type":"input_image","image_url": "..."}
+      - Local path/bytes -> {"type":"input_image","image_data": "<b64>", "mime_type":"image/png"}
+    """
+    if src is None:
+        return None
+    if isinstance(src, (str, Path)):
+        p = str(src)
+        if _is_url(p):
+            return {"type": "input_image", "image_url": p}
+        data = Path(p).read_bytes()
+        return {"type": "input_image", "image_data": base64.b64encode(data).decode("ascii"), "mime_type": "image/png"}
+    if isinstance(src, (bytes, bytearray)):
+        return {"type": "input_image", "image_data": base64.b64encode(bytes(src)).decode("ascii"), "mime_type": "image/png"}
+    return None
+
+async def _responses_image_one_out(
+    *,
+    prompt_text: str,
+    output_path: Path,
+    base_image: Optional[Union[str, Path, bytes]] = None,
+    ref_images: Optional[List[Union[str, Path, bytes]]] = None,
+    mask: Optional[Union[str, Path, bytes]] = None,
+    size: str = "1024x1024",
+    model: str = "gpt-4o",
+):
+    """
+    Pure Responses API call using the built-in `image_generation` tool.
+    Saves exactly one image to output_path.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as stack:
+        content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt_text + f"\n\n[SIZE={size}]"}]
+        if base_image:
+            part = _as_input_image(base_image, stack)
+            if part:
+                content.append(part)
+        for r in (ref_images or []):
+            p = _as_input_image(r, stack)
+            if p:
+                content.append(p)
+        if mask:
+            m = _as_input_image(mask, stack)
+            if m:
+                content.append({"type": "input_text", "text": "[MASK BELOW – transparent = editable]"})
+                content.append(m)
+
+        system = (
+            "You are a precise image editor.\n"
+            "- Use the `image_generation` tool exactly once.\n"
+            "- If an input image is included, treat it as the BASE; others are STYLE/POSE refs.\n"
+            "- Produce exactly ONE final image at the requested size.\n"
+            "- Return only the image (no prose).\n"
+        )
+        tools: List[Dict[str, Any]] = [{"type": "image_generation"}]
+        mcp_fs_url = os.getenv("MCP_FS_URL")
+        if mcp_fs_url:
+            tools.append({
+                "type": "mcp",
+                "server_url": mcp_fs_url,
+                "server_label": "fs",
+                "allowed_tools": ["read_resource", "list_directory"],
+                "require_approval": "never",
+            })
+
+        async def _call():
+            return await openai_client.responses.create(
+                model=model,
+                instructions=system,
+                tools=tools,
+                input=[{"role": "user", "content": content}],
+            )
+
+        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+
+        # Extract a single image from Responses output
+        def _extract_image_b64(r):
+            for msg in getattr(r, "output", []) or []:
+                for part in getattr(msg, "content", []) or []:
+                    t = getattr(part, "type", None) or getattr(part, "kind", None)
+                    if t in ("image", "output_image"):
+                        b64 = getattr(part, "image_base64", None) or getattr(part, "b64_json", None)
+                        url = getattr(part, "image_url", None) or getattr(part, "url", None)
+                        return (b64, url)
+            return (None, None)
+
+        b64, url = _extract_image_b64(resp)
+        if not b64 and url:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+                rr = await client.get(url)
+                rr.raise_for_status()
+                output_path.write_bytes(rr.content)
+                return output_path
+        if not b64:
+            raise RuntimeError("Responses image not found (no b64/url).")
+        output_path.write_bytes(base64.b64decode(b64))
+        return output_path
+
+def _parse_image_job_from_llm(text: str) -> Optional[dict]:
+    """
+    Expected JSON edit job if the agent doesn't call a tool:
+      {"prompt": "...", "base_image": "<url-or-path>", "ref_images": ["..."], "size": "1024x1024", "mask": "<optional>"}
+    """
+    try:
+        if not text or not isinstance(text, str):
+            return None
+        s = text.strip()
+        # Try to find a JSON object in the text
+        start = s.find('{')
+        end = s.rfind('}')
+        if start == -1 or end == -1 or end <= start:
+            return None
+        obj = json.loads(s[start:end + 1])
+        if not isinstance(obj, dict):
+            return None
+        if "prompt" in obj and ("base_image" in obj or "ref_images" in obj):
+            # normalize fields
+            if obj.get("ref_images") is None:
+                obj["ref_images"] = []
+            return obj
+        return None
+    except Exception:
+        return None
+
 def _flatten_output_section(output_val) -> dict:
     """Normalize 'output' which may be a list of single-key maps into a flat dict.
     Example YAML:
@@ -630,329 +775,20 @@ def _merge_outputs(*outputs: dict | None) -> dict:
                 merged.setdefault(k, v)
     return merged
 
-def clean_html_for_telegraph(html_content: str) -> str:
-    # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
-    # Note: Telegraph rejects many tags (e.g., h1/h2, hr, html/body/head, small, etc.)
-    soup = BeautifulSoup(html_content, "html.parser")
+ # moved to utils.html_sanitizer: clean_html_for_telegraph
 
-    # 1) Drop document-level wrappers early
-    for tag in soup.find_all(["html", "head", "body"]):
-        tag.unwrap()
+ # moved to utils.html_sanitizer: clean_html_for_telegram
 
-    # 2) Normalize headings (h1–h6) to <p><strong>…</strong></p>
-    for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
-        for h in list(soup.find_all(level)):
-            new_p = soup.new_tag("p")
-            strong = soup.new_tag("strong")
-            strong.string = h.get_text(strip=False)
-            new_p.append(strong)
-            h.replace_with(new_p)
+ # moved to utils.telegram_text: telegram_truncate_html_safe
+# moved to utils.telegram_text: telegram_truncate_markdown_safe
 
-    # 3) Replace <hr> with line breaks
-    for hr in list(soup.find_all("hr")):
-        br1 = soup.new_tag("br")
-        br2 = soup.new_tag("br")
-        hr.replace_with(br1)
-        br1.insert_after(br2)
-
-    # 4) Unwrap tags we explicitly don't want to keep as elements
-    for t in list(soup.find_all(["small", "div", "span", "section", "article", "header", "footer", "nav"])):
-        t.unwrap()
-
-    # 5) Whitelist allowed tags; unwrap everything else while preserving text
-    allowed_tags = {
-        "p", "a", "em", "strong", "ul", "ol", "li",
-        "br", "img", "figure", "figcaption", "pre", "code", "blockquote"
-    }
-    for tag in list(soup.find_all(True)):
-        if tag.name not in allowed_tags:
-            tag.unwrap()
-
-    # 6) Strip disallowed attributes; keep only minimal safe attrs
-    for tag in soup.find_all(True):
-        # remove style/class/id and any other attrs by default
-        allowed_attrs = {}
-        if tag.name == "a":
-            # Telegraph allows href (absolute URLs preferred)
-            if tag.has_attr("href"):
-                allowed_attrs["href"] = tag["href"]
-        elif tag.name == "img":
-            if tag.has_attr("src"):
-                allowed_attrs["src"] = tag["src"]
-            if tag.has_attr("alt"):
-                allowed_attrs["alt"] = tag["alt"]
-        # assign filtered attrs
-        tag.attrs = allowed_attrs
-
-    # 7) Final string without newlines; ensure non-empty content
-    cleaned = str(soup).replace('\n', '')
-    if not soup.get_text(strip=True):
-        raise ValueError("Cleaned HTML has no text content!")
-    return cleaned.strip()
-
-def clean_html_for_telegram(html_content: str) -> str:
-    """Sanitize HTML for Telegram parse_mode=HTML.
-
-    Telegram supports a limited subset of tags. This function:
-    - Converts <ul>/<ol>/<li> into plain-text bullet or numbered lines.
-    - Unwraps unsupported tags while preserving text.
-    - Strips disallowed attributes, keeping only href on <a>.
-    """
-    from bs4 import BeautifulSoup
-
-    if not isinstance(html_content, str):
-        return ""
-
-    soup = BeautifulSoup(html_content, "html.parser")
-
-    # Convert lists to plain text lines
-    for ul in list(soup.find_all("ul")):
-        lines = []
-        for li in ul.find_all("li", recursive=False):
-            txt = li.get_text(" ", strip=True)
-            if txt:
-                lines.append(f"• {txt}")
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ul.replace_with(new_p)
-
-    for ol in list(soup.find_all("ol")):
-        lines = []
-        idx = 1
-        for li in ol.find_all("li", recursive=False):
-            txt = li.get_text(" ", strip=True)
-            if txt:
-                lines.append(f"{idx}. {txt}")
-                idx += 1
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ol.replace_with(new_p)
-
-    # Allowed tags for Telegram HTML
-    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
-
-    # Unwrap unsupported tags
-    for tag in list(soup.find_all(True)):
-        if tag.name not in allowed_tags:
-            tag.unwrap()
-
-    # Strip attributes, keep only href for <a>
-    for tag in soup.find_all(True):
-        allowed_attrs = {}
-        if tag.name == "a" and tag.has_attr("href"):
-            allowed_attrs["href"] = tag["href"]
-        tag.attrs = allowed_attrs
-
-    cleaned = str(soup)
-    
-    # Fix self-closing tags that Telegram doesn't like
-    import re
-    # Convert <br/> to <br> and other self-closing tags
-    cleaned = re.sub(r'<(\w+)/>', r'<\1>', cleaned)
-    # Remove any remaining XML-style self-closing tags
-    cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
-    
-    # Telegram is sensitive to stray newlines before/after code/pre; basic trim
-    return cleaned.strip()
-
-def telegram_truncate_html_safe(html: str, max_len: int) -> str:
-    """Truncate a sanitized HTML string to <= max_len characters while preserving validity.
-
-    Assumes the input is already sanitized for Telegram by clean_html_for_telegram().
-    - Avoids cutting inside a tag or HTML entity
-    - Ensures all opened tags are closed
-    - Removes trailing partial tag fragments like '<tagnam'
-    """
-    try:
-        if not isinstance(html, str):
-            return ""
-        if len(html) <= max_len:
-            return html
-
-        import re
-
-        def strip_partial_tail(s: str) -> str:
-            # Remove any partial tag at the end
-            s = re.sub(r"<[^>]*$", "", s)
-            # Remove any partial HTML entity at the end (e.g., '&amp')
-            s = re.sub(r"&[^;\s]{0,10}$", "", s)
-            return s
-
-        # Start with a hard cut (reserve one char for ellipsis)
-        s = html[: max_len - 1] + "…"
-        s = strip_partial_tail(s)
-
-        # Compute stack of still-open tags in s
-        tag_re = re.compile(r"</?([a-zA-Z0-9]+)(?:\s[^>]*)?>")
-        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
-        stack: list[str] = []
-        for m in tag_re.finditer(s):
-            tag = m.group(1).lower()
-            if tag not in allowed:
-                continue
-            full = m.group(0)
-            if full.startswith("</"):
-                # closing: pop if present
-                if stack and stack[-1] == tag:
-                    stack.pop()
-                else:
-                    # Try to remove matching earlier open elsewhere
-                    if tag in stack:
-                        idx = len(stack) - 1 - stack[::-1].index(tag)
-                        stack.pop(idx)
-            else:
-                # opening; treat <br> as self-contained
-                if tag != "br":
-                    stack.append(tag)
-
-        def closers_for_stack(stk: list[str]) -> str:
-            return "".join(f"</{t}>" for t in reversed(stk))
-
-        # Ensure closers fit within max_len; if not, shorten s and recompute
-        attempts = 0
-        while attempts < 5:
-            closers = closers_for_stack(stack)
-            if len(s) + len(closers) <= max_len:
-                s = s + closers
-                return s
-            # Need to make room: shorten s
-            over = (len(s) + len(closers)) - max_len
-            # Remove 'over' chars plus some buffer from end, then tidy tail and recompute stack
-            cut_by = max(over + 1, 8)
-            s = s[: max(0, len(s) - cut_by)]
-            s = strip_partial_tail(s)
-            # Recompute stack
-            stack.clear()
-            for m in tag_re.finditer(s):
-                tag = m.group(1).lower()
-                if tag not in allowed:
-                    continue
-                full = m.group(0)
-                if full.startswith("</"):
-                    if stack and stack[-1] == tag:
-                        stack.pop()
-                    else:
-                        if tag in stack:
-                            idx = len(stack) - 1 - stack[::-1].index(tag)
-                            stack.pop(idx)
-                else:
-                    if tag != "br":
-                        stack.append(tag)
-            attempts += 1
-
-        # Fallback: last resort hard trim to max_len without closers (should be rare)
-        return (s[:max_len]).rstrip()
-    except Exception:
-        # On any failure, return a simple hard-clamped string
-        return (str(html)[: max_len]).rstrip()
-
-def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
-    """Truncate Markdown safely for Telegram parse_mode=MARKDOWN.
-
-    - Avoid cutting inside a triple code fence; ensure it's closed if opened
-    - Remove trailing unmatched '[' or '(' typical for links
-    - Keep within max_len (including any appended fences)
-    """
-    try:
-        if not isinstance(md, str):
-            return ""
-        if len(md) <= max_len:
-            return md
-
-        import re
-
-        # Initial cut with ellipsis
-        s = md[: max_len - 1] + "…"
-
-        # Remove trailing partial HTML-like fragment (e.g., '<tagnam') since Markdown may include raw HTML
-        s = re.sub(r"<[^>]*$", "", s)
-
-        # Balance Markdown links: cut off trailing unmatched '[' or '('
-        last_open_sq = s.rfind('[')
-        last_close_sq = s.rfind(']')
-        if last_open_sq > last_close_sq:
-            s = s[:last_open_sq]
-
-        last_open_par = s.rfind('(')
-        last_close_par = s.rfind(')')
-        # Likely part of a link if last ']' is before '('
-        if last_open_par > last_close_par and s.rfind(']') < last_open_par:
-            s = s[:last_open_par]
-
-        # Ensure triple backtick fences are balanced
-        fence_count = len(re.findall(r"```", s))
-        if fence_count % 2 == 1:
-            fence = "```"
-            # Try to append closing fence if there's room
-            if len(s) + len(fence) <= max_len:
-                s += fence
-            else:
-                # Make room by trimming and then append
-                s = s[: max_len - len(fence)]
-                # Remove any trailing partial code block language identifier chunk
-                s = re.sub(r"`+$", "", s)
-                s += fence
-
-        # Optionally, mitigate trailing single backticks
-        backticks = s.count('`') - 3 * (len(re.findall(r"```", s)))
-        if backticks % 2 == 1:
-            # Remove a trailing '`' if present
-            if s.endswith('`'):
-                s = s[:-1]
-
-        return s
-    except Exception:
-        return (str(md)[: max_len]).rstrip()
-
-def minify_html_func(html_string: str) -> str:
-    """Sanitize and lightly minify HTML without external minifiers.
-
-    Steps:
-    - Whitelist sanitizer via clean_html_for_telegraph()
-    - Strip HTML comments
-    - Collapse inter-tag whitespace (">   <" -> "><")
-    - Trim leading/trailing whitespace
-    """
-    import re
-
-    cleaned = clean_html_for_telegraph(html_string)
-    # Remove HTML comments
-    s = re.sub(r"<!--.*?-->", "", cleaned, flags=re.DOTALL)
-    # Collapse inter-tag whitespace only (preserves spacing inside text nodes)
-    s = re.sub(r">\s+<", "><", s)
-    return s.strip()
+ # moved to utils.html_sanitizer: minify_html_func
 
 
-async def create_telegrath_account():
-
-    telegraph = Telegraph(TELEGRAPH_TOKEN)
-
-    acc = telegraph.create_account(short_name='strato.space', author_name='AI Agent @ strato.space',
-                                   author_url='https://linkedin.com/in/iqdoctor')
-    token = acc.get('access_token')
-    print(f"Telegraph access_token: {token}")
+ # moved to utils.telegraph_utils: create_telegrath_account
 
 
-async def publish_results(title: str = "AgentName Results", content: str = None) -> str:
-    """Publish aggregation results on Telegra.ph."""
-
-    telegraph = Telegraph(TELEGRAPH_TOKEN)
-
-    clear_context = minify_html_func(content)
-    # Save clear_context to call/logs/y.html
-    # todo: use [MCP Hook] Parameters: {'path': '/home/strato-space/prompt/agents/AiNewsAggr/memory/ai-news-aggr'}
-    # with open('call/logs/y.html', 'w', encoding='utf-8') as f:
-    #    f.write(clear_context)
-    # Build dynamic title: if caller passed an agent name, append ' Results' unless already present
-    page_title = (f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results"))
-    response = telegraph.create_page(
-        title=page_title,
-        html_content=clear_context,
-    )
-
-    url = f"https://telegra.ph/{response['path']}"
-    print("Results published to:", url)
-    return url
+ # moved to utils.telegraph_utils: publish_results
 
 
 async def edit_message_text(text):
@@ -1225,6 +1061,21 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
     Returns a mapping from agent name and all aliases (PascalCase) to full agent.yaml Path.
     """
     mapping: dict[str, Path] = {}
+
+    def _resolve_dir_case(parent: Path, name: str) -> Path:
+        """Return a child path using the on-disk directory name casing if present.
+
+        Performs a case-insensitive match among `parent` entries and returns the
+        actual directory Path so that `Path(...).parent.name` reflects real casing.
+        """
+        try:
+            target_lower = str(name).lower()
+            for entry in parent.iterdir():
+                if entry.is_dir() and entry.name.lower() == target_lower:
+                    return entry
+        except Exception:
+            pass
+        return parent / name
     try:
         if not index_path.exists():
             return mapping
@@ -1235,7 +1086,9 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
         if isinstance(agents_map, dict):
             for name in agents_map.keys():
                 name_pc = to_pascal_case(str(name))
-                path = (base_dir / name_pc / 'agent.yaml')
+                # resolve to actual directory casing if present
+                agent_dir = _resolve_dir_case(base_dir, name_pc)
+                path = (agent_dir / 'agent.yaml')
                 if path.exists():
                     mapping[name_pc] = path
                 # bind aliases
@@ -1395,56 +1248,48 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-async def _generate_image_and_save(prompt_text: str, output_path: Path, *, size: str = '1024x1024', model: str = 'gpt-image-1') -> Path:
-    """Generate an image using OpenAI Images API and save PNG bytes to output_path.
-
-    - Uses the global AsyncOpenAI client initialized with proxy/timeouts
-    - Retries transient failures
+class ImageGenerationTool(Tool):
     """
-    if not prompt_text or not isinstance(prompt_text, str):
-        raise ValueError("prompt_text must be a non-empty string")
+    Use Responses API `image_generation` to produce exactly one image.
+    Args:
+      - prompt: text
+      - images: list[str] (images[0] = base; others = refs)
+      - size: "1024x1024" (default)
+      - mask: optional path/url
+      - output_path: optional file path to save
+    Returns: {"b64_png": "...", "saved_path": "<path|None>", "size": "..."}
+    """
+    name = "image_generation_one_out"
+    description = "Render a single image using Responses API image_generation. Base + refs supported."
 
-    # Ensure directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    class Args(Tool.Args):
+        prompt: str
+        images: List[str]
+        size: Optional[str] = "1024x1024"
+        mask: Optional[str] = None
+        output_path: Optional[str] = None
 
-    async def _call():
-        return await openai_client.images.generate(
-            model=model,
-            prompt=prompt_text,
-            size=size,
-            quality='high',
-            n=1,
+    async def run(self, prompt: str, images: List[str], size: str = "1024x1024", mask: Optional[str] = None, output_path: Optional[str] = None):
+        base = images[0] if images else None
+        refs = images[1:] if images and len(images) > 1 else []
+        if output_path:
+            out = Path(output_path)
+            await _responses_image_one_out(
+                prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=out
+            )
+            b64 = base64.b64encode(out.read_bytes()).decode("ascii")
+            return {"b64_png": b64, "saved_path": str(out), "size": size}
+        # in-memory only
+        tmp = Path(os.path.join("/tmp", f"resp_one_out_{os.getpid()}.png"))
+        await _responses_image_one_out(
+            prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp
         )
-
-    try:
-        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
-    except Exception as e:
-        print(f"[Images] Generation failed: {e}")
-        raise
-
-    try:
-        data0 = (resp.data[0] if hasattr(resp, 'data') and resp.data else None)
-        img_b64 = None
-        if data0 and hasattr(data0, 'b64_json') and data0.b64_json:
-            img_b64 = data0.b64_json
-        elif data0 and hasattr(data0, 'url') and data0.url:
-            # Fallback: fetch URL
-            async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
-                r = await client.get(data0.url)
-                r.raise_for_status()
-                content = r.content
-                with open(output_path, 'wb') as f:
-                    f.write(content)
-                return output_path
-        if not img_b64:
-            raise RuntimeError("OpenAI Images response missing b64_json and url")
-        img_bytes = base64.b64decode(img_b64)
-        with open(output_path, 'wb') as f:
-            f.write(img_bytes)
-        return output_path
-    except Exception as e:
-        print(f"[Images] Save failed: {e}")
-        raise
+        b64 = base64.b64encode(tmp.read_bytes()).decode("ascii")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {"b64_png": b64, "saved_path": None, "size": size}
 
 
 def load_yaml(path: Path) -> dict:
@@ -1871,7 +1716,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool()]
+        tools = [WebSearchTool(), ImageGenerationTool()]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
@@ -1949,7 +1794,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             print("Step 1 output:")
             print(step1_output)
             
-            # Detect whether this is the UralImg agent and generate the image if requested
+            # Detect whether an image output is requested and generate it via Responses API
             img_path_for_notify: Path | None = None
             try:
                 # Identify agent folder and output filename from files_contract.outputs
@@ -1964,15 +1809,32 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 should_generate = bool(out_name and out_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')))
                 if should_generate and step1_output:
                     img_path_for_notify = _resolve_output_file_path(resolved_yaml_path, out_name)
-                    print(f"[Images] Generating image to: {img_path_for_notify}")
+                    print(f"[Responses] Output file planned: {img_path_for_notify}")
                     try:
-                        await _generate_image_and_save(step1_output, img_path_for_notify)
+                        # Prefer JSON job (base + refs); else prompt-only generation fallback
+                        job = _parse_image_job_from_llm(step1_output)
+                        if job:
+                            print("[Responses] Detected JSON image-edit job (base + refs).")
+                            await _responses_image_one_out(
+                                prompt_text=job["prompt"],
+                                base_image=job.get("base_image"),
+                                ref_images=job.get("ref_images") or [],
+                                mask=job.get("mask"),
+                                size=job.get("size") or "1024x1024",
+                                output_path=img_path_for_notify,
+                            )
+                        else:
+                            print("[Responses] No JSON job; using prompt-only generation.")
+                            await _responses_image_one_out(
+                                prompt_text=step1_output,
+                                output_path=img_path_for_notify,
+                            )
                     except Exception as e:
                         # Log and continue without image
-                        print(f"[Images] Error generating image: {e}")
+                        print(f"[Responses] Error creating image: {e}")
                         img_path_for_notify = None
             except Exception as e:
-                print(f"[Images] Skipping image generation due to error: {e}")
+                print(f"[Responses] Skipping image generation due to error: {e}")
 
             # Send Telegram digest notification only outside of debug mode
             if not debug:
