@@ -156,7 +156,7 @@ def create_openai_client():
         # Separate connect/read/write timeouts to better handle slow model responses
         http_client = httpx.AsyncClient(
             proxy=proxy_url,
-            timeout=httpx.Timeout(connect=30.0, read=300.0, write=120.0),
+            timeout=httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             verify=True,
             follow_redirects=True,
