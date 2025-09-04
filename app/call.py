@@ -209,7 +209,6 @@ async def init_bot():
         connect_timeout=10.0,
         read_timeout=30.0,
         write_timeout=20.0,
-        pool_size=20,
     )
     bot = Bot(token=telegram_token, request=request)
     return bot
