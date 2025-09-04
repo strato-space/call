@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Type
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import urllib.parse
@@ -58,10 +58,48 @@ from telegraph import Telegraph
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
+from telegram.error import TelegramError, TimedOut, NetworkError
+from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=str(_env_file))
+
+async def async_retry(
+    op: Callable[[], Awaitable[Any]],
+    *,
+    retries: int = 2,
+    base_delay: float = 0.5,
+    jitter: float = 0.1,
+    retry_on: tuple[Type[BaseException], ...] = (Exception,),
+) -> Any:
+    """Retry an async operation with exponential backoff and jitter.
+
+    Args:
+        op: coroutine factory with no args that returns the awaited operation.
+        retries: number of retries (not counting the first attempt).
+        base_delay: initial delay before first retry.
+        jitter: random jitter added/subtracted to delay.
+        retry_on: exception classes to trigger a retry.
+    """
+    import random
+    attempt = 0
+    while True:
+        try:
+            return await op()
+        except retry_on as e:
+            if attempt >= retries:
+                raise
+            delay = base_delay * (2 ** attempt)
+            # Apply jitter within ±jitter seconds
+            if jitter:
+                delay = max(0.0, delay + random.uniform(-jitter, jitter))
+            try:
+                await asyncio.sleep(delay)
+            except Exception:
+                # If sleep fails for some reason, proceed immediately
+                pass
+            attempt += 1
 
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
@@ -166,7 +204,14 @@ bot: Bot
 
 async def init_bot():
     global bot
-    bot = Bot(token=telegram_token)
+    # Configure PTB to use HTTPX with tuned timeouts and connection pool
+    request = HTTPXRequest(
+        connect_timeout=10.0,
+        read_timeout=30.0,
+        write_timeout=20.0,
+        pool_size=20,
+    )
+    bot = Bot(token=telegram_token, request=request)
     return bot
 
 async def init_openai_client():
@@ -194,13 +239,16 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
     try:
         # Sanitize for Telegram HTML to avoid unsupported tags (e.g., ul/li)
         safe_text = clean_html_for_telegram(text) if parse_mode == ParseMode.HTML else (text or "")
-        message = await bot.send_message(
-            chat_id=chat_id or telegram_last_message.chat_id,
-            text=safe_text,
-            parse_mode=parse_mode,
-            message_thread_id=message_thread_id or telegram_last_message.message_thread_id or None,
-        )
-        
+
+        async def _op():
+            return await bot.send_message(
+                chat_id=chat_id or telegram_last_message.chat_id,
+                text=safe_text,
+                parse_mode=parse_mode,
+                message_thread_id=message_thread_id or telegram_last_message.message_thread_id or None,
+            )
+
+        message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         telegram_last_message = message
         print(f"Message sent. ID: {message.message_id}, Chat ID: {message.chat_id}, Thread ID: {message.message_thread_id}")
         return message
@@ -337,14 +385,16 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
 async def telegram_send_message(chat_id: int = None, text: str = None, message_thread_id: int = None, reply_markup: InlineKeyboardMarkup = None):
 
     safe_text = clean_html_for_telegram(text or "")
-    message = await bot.send_message(
-        chat_id=chat_id or telegram_last_message.chat_id,
-        message_thread_id = message_thread_id or (
-        telegram_last_message.message_thread_id if telegram_last_message else None),
-        text=safe_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
-    )
+    async def _op():
+        return await bot.send_message(
+            chat_id=chat_id or telegram_last_message.chat_id,
+            message_thread_id = message_thread_id or (
+            telegram_last_message.message_thread_id if telegram_last_message else None),
+            text=safe_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
+        )
+    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     return message
 
 
@@ -611,11 +661,13 @@ def telegram_progress_bar(thoughtNumber, totalThoughts, bar_length=10):
     # Output: "███████░░░ 7/10 (70%)"
 
 async def edit_message_text(text):
-    await bot.edit_message_text(
-        chat_id=telegram_last_message.chat_id,
-        message_id=telegram_last_message.message_id,
-        text=text,
-        parse_mode="HTML")
+    async def _op():
+        return await bot.edit_message_text(
+            chat_id=telegram_last_message.chat_id,
+            message_id=telegram_last_message.message_id,
+            text=text,
+            parse_mode="HTML")
+    await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
 
 class MCPServerStdioHook(MCPServerStdio):
     """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
@@ -649,12 +701,14 @@ class MCPServerStdioHook(MCPServerStdio):
         # Prefix with MCP title
         header = f"<b>{self._mcp_title}</b>\n\n"
         safe_text = header + (text or "")
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            text=clean_html_for_telegram(safe_text),
-            parse_mode=ParseMode.HTML,
-        )
+        async def _op():
+            return await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=clean_html_for_telegram(safe_text),
+                parse_mode=ParseMode.HTML,
+            )
+        msg = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         self.__telegram_last_message = msg
         return msg
 
@@ -665,12 +719,14 @@ class MCPServerStdioHook(MCPServerStdio):
         if not self.__telegram_last_message:
             await self.__send_message(safe_text)
             return
-        await bot.edit_message_text(
-            chat_id=self.__telegram_last_message.chat_id,
-            message_id=self.__telegram_last_message.message_id,
-            text=clean_html_for_telegram(safe_text),
-            parse_mode=ParseMode.HTML,
-        )
+        async def _op():
+            return await bot.edit_message_text(
+                chat_id=self.__telegram_last_message.chat_id,
+                message_id=self.__telegram_last_message.message_id,
+                text=clean_html_for_telegram(safe_text),
+                parse_mode=ParseMode.HTML,
+            )
+        await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         print(f"[MCP Hook] Calling tool: {tool_name}")
@@ -730,7 +786,9 @@ class MCPServerStdioHook(MCPServerStdio):
             else:
                 await self.__edit_message_text(body)
             try:
-                return await super().call_tool(tool_name, arguments)
+                async def _call():
+                    return await super().call_tool(tool_name, arguments)
+                return await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
             except Exception as e:
                 err_text = format_exception_text(e)
                 try:
@@ -771,14 +829,18 @@ class MCPServerStdioHook(MCPServerStdio):
             try:
                 msg = self.__telegram_last_message
                 if msg:
-                    await bot.send_chat_action(chat_id=msg.chat_id,
-                                               message_thread_id=msg.message_thread_id,
-                                               action=ChatAction.TYPING)
+                    async def _op():
+                        return await bot.send_chat_action(chat_id=msg.chat_id,
+                                                           message_thread_id=msg.message_thread_id,
+                                                           action=ChatAction.TYPING)
+                    await async_retry(_op, retries=1, base_delay=0.5, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
             except Exception:
                 pass
 
             try:
-                result = await super().call_tool(tool_name, arguments)
+                async def _call():
+                    return await super().call_tool(tool_name, arguments)
+                result = await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
                 print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 return result
             except Exception as e:
@@ -1462,6 +1524,9 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
         # Simple loop with max safety counter
         max_cycles = 100
         cycles = 0
+        # Retry guards to prevent infinite loops on repeated MCP failures
+        mcp_retry_main_done = False
+        mcp_retry_sr_done = False
         while True:
             cycles += 1
             if cycles > max_cycles:
@@ -1480,8 +1545,13 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 err_text = format_exception_text(e)
                 print("Error during main agent run:\n" + err_text)
                 history.append({"role": "assistant", "content": f"Error: {err_text}"})
-                history.append({"role": "user", "content": "go"})
-                continue
+                is_mcp = "Error invoking MCP tool" in str(e)
+                if is_mcp and not mcp_retry_main_done:
+                    mcp_retry_main_done = True
+                    history.append({"role": "user", "content": "go"})
+                    continue
+                # Do not auto-retry more than once; break the loop and return
+                break
 
             print("Step 1 output:")
             print(step1_output)
@@ -1509,12 +1579,17 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     err_text = format_exception_text(e)
                     print("Error during SelfReflection run:\n" + err_text)
                     history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                    history.append({"role": "user", "content": "go"})
-                    # Skip to next outer loop iteration
-                    continue
+                    is_mcp = "Error invoking MCP tool" in str(e)
+                    if is_mcp and not mcp_retry_sr_done:
+                        mcp_retry_sr_done = True
+                        history.append({"role": "user", "content": "go"})
+                        # Skip to next outer loop iteration
+                        continue
+                    # Give up on SR this cycle; proceed to loop control (will likely break below)
+                    sr_result = None
                 # Prefer structured return code if available; else parse text
-                sr_code = getattr(sr_result, "return_code", None)
-                sr_output = getattr(sr_result, "final_output", None)
+                sr_code = getattr(sr_result, "return_code", None) if sr_result else None
+                sr_output = getattr(sr_result, "final_output", None) if sr_result else None
                 if not sr_code and isinstance(sr_output, str):
                     s = sr_output.strip().upper()
                     if s.startswith("PREV"):
@@ -1522,6 +1597,13 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                     elif s.startswith("CONTINUE"):
                         sr_code = "CONTINUE"
                 print(f"[SR] Return code: {sr_code}")
+                # If SelfReflection produced any text, echo to console and Telegram
+                if isinstance(sr_output, str) and sr_output.strip():
+                    print("[SR] Output:\n" + sr_output)
+                    try:
+                        await telegram_send_message(text=f"<b>SelfReflection</b>\n{sr_output}")
+                    except Exception:
+                        pass
 
                 # Handle PREV/CONTINUE loop control
                 if sr_code == "PREV":
@@ -1548,7 +1630,11 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                             err_text = format_exception_text(e)
                             print("Error during SelfReflection CONTINUE iteration:\n" + err_text)
                             history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                            history.append({"role": "user", "content": "go"})
+                            is_mcp = "Error invoking MCP tool" in str(e)
+                            if is_mcp and not mcp_retry_sr_done:
+                                mcp_retry_sr_done = True
+                                history.append({"role": "user", "content": "go"})
+                                continue
                             break
                         # Update history fully to SR's view
                         try:
@@ -1565,6 +1651,14 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                                 sr_code = "PREV"
                             elif s2.startswith("CONTINUE"):
                                 sr_code = "CONTINUE"
+                        # Echo SR output for CONTINUE iterations as well
+                        out_text = getattr(sr_result, "final_output", None)
+                        if isinstance(out_text, str) and out_text.strip():
+                            print("[SR] Output:\n" + out_text)
+                            try:
+                                await telegram_send_message(text=f"<b>SelfReflection</b>\n{out_text}")
+                            except Exception:
+                                pass
                         print(f"[SR] Return code after CONTINUE iteration: {sr_code}")
                         if sr_code == "PREV":
                             print("[SR] PREV received inside CONTINUE loop: appending 'go' and breaking to outer loop")
