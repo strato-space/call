@@ -1844,11 +1844,10 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
     # Choose chat: prefer explicit override from prompt; else fall back to env (secondary on Windows)
     if chat_id is None:
         chat_id = TELEGRAM_SECOND_CHAT_ID if os.name == "nt" else TELEGRAM_CHAT_ID
-    thinking_message = f'💭Thinking: {telegram_progress_bar(0,10)}'
-
+    # Send clean welcome banner without any progress bar
     telegram_last_message = await telegram_send_message(
         chat_id=chat_id,
-        text=thinking_message + '\n\n' + text + '\n\n' + thinking_message,
+        text=text,
         message_thread_id=(message_thread_id if message_thread_id is not None else (
             TELEGRAM_THREAD_ID if chat_id == TELEGRAM_CHAT_ID else None
         ))
