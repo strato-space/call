@@ -26,7 +26,12 @@ import shutil
 # Import HTML/Telegram/Telegraph utilities from utils with script fallback
 try:
     from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from .utils.telegram_text import telegram_truncate_html_safe, telegram_truncate_markdown_safe
+    from .utils.telegram_text import (
+        telegram_truncate_html_safe,
+        telegram_truncate_markdown_safe,
+        telegram_prepare_html,
+        telegram_prepare_markdown,
+    )
     from .utils.telegraph_utils import publish_results, create_telegrath_account
 except ImportError:
     # Fallback for when running as a plain script
@@ -34,7 +39,12 @@ except ImportError:
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
     from html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from telegram_text import telegram_truncate_html_safe, telegram_truncate_markdown_safe
+    from telegram_text import (
+        telegram_truncate_html_safe,
+        telegram_truncate_markdown_safe,
+        telegram_prepare_html,
+        telegram_prepare_markdown,
+    )
     from telegraph_utils import publish_results, create_telegrath_account
 
 
@@ -441,31 +451,21 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
         except Exception:
             return False
 
+    # Choose parse mode, then prepare safely using centralized helpers
     is_md = _looks_like_markdown(text or "")
-
-    if is_md:
-        # Send as Markdown as-is; do not run HTML sanitizer
-        safe_text = text or ""
-        chosen_parse_mode = ParseMode.MARKDOWN
-    else:
-        # Default: sanitize HTML and send as HTML
-        safe_text = clean_html_for_telegram(text or "")
-        chosen_parse_mode = ParseMode.HTML
-
-    # Enforce Telegram limits with parse-mode-aware, safe truncation
     try:
-        MAX_MSG_LEN = 4096
-        if chosen_parse_mode == ParseMode.HTML:
-            safe_text = telegram_truncate_html_safe(safe_text, MAX_MSG_LEN)
-        elif chosen_parse_mode == ParseMode.MARKDOWN:
-            safe_text = telegram_truncate_markdown_safe(safe_text, MAX_MSG_LEN)
+        if is_md:
+            safe_text, chosen_mode = telegram_prepare_markdown(text or "", 4000, version="v2")
+            chosen_parse_mode = ParseMode.MARKDOWN_V2 if chosen_mode == "MarkdownV2" else ParseMode.MARKDOWN
         else:
-            # Fallback: plain clamp
-            if len(safe_text) > MAX_MSG_LEN:
-                safe_text = safe_text[: MAX_MSG_LEN - 1] + "…"
+            safe_text, chosen_mode = telegram_prepare_html(text or "", 4000)
+            chosen_parse_mode = ParseMode.HTML if chosen_mode == "HTML" else None
     except Exception:
-        # Best-effort; on any error, fall back to original text
-        pass
+        # Plain fallback on any preparation error
+        safe_text = (text or "")
+        if len(safe_text) > 4096:
+            safe_text = safe_text[: 4095] + "…"
+        chosen_parse_mode = None
 
     # Determine effective chat/thread with consistent fallbacks
     # KISS: Only explicit args -> selected_* (selected_* already seeded from .env and updated once after agent load)
@@ -480,7 +480,26 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
         )
-    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    try:
+        message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        # Fallback to plain text if Telegram can't parse entities
+        emsg = str(e).lower()
+        if "can't parse entities" in emsg or "parse entities" in emsg or "entity" in emsg:
+            plain = (text or "")
+            if len(plain) > 4096:
+                plain = plain[: 4095] + "…"
+            def _op_plain():
+                return bot.send_message(
+                    chat_id=eff_chat_id,
+                    message_thread_id=eff_thread_id,
+                    text=plain,
+                    parse_mode=None,
+                    reply_markup=reply_markup,
+                )
+            message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        else:
+            raise
     return message
 
 
@@ -496,31 +515,20 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 
     safe_caption = None
     if caption:
-        # Detect markdown-like content just like telegram_send_message
-        def _looks_like_markdown(s: str) -> bool:
-            try:
-                t = (s or "").strip()
-                if not t:
-                    return False
-                # Strong signal: fenced code blocks -> Markdown
-                if "```" in t:
-                    return True
-                md_markers = (
-                    "**", "__", "* ", "- ", "\n- ", "\n* ", "[`", "[`", "](http", "`", "```", "# ", "## ", "### ", "1. ", "\n1. "
-                )
-                if any(m in t for m in md_markers):
-                    return True
-                if "<" in t and ">" in t:
-                    return False
-                return False
-            except Exception:
-                return False
-        if _looks_like_markdown(caption):
-            safe_caption = caption
-            parse_mode = ParseMode.MARKDOWN
-        else:
-            safe_caption = clean_html_for_telegram(caption)
-            parse_mode = ParseMode.HTML
+        # Prepare caption via centralized helpers
+        try:
+            cap_is_md = "```" in caption or any(m in (caption or "") for m in ("**", "__", "# ", "1. "))
+            if cap_is_md:
+                safe_caption, cmode = telegram_prepare_markdown(caption or "", 1024, version="v2")
+                parse_mode = ParseMode.MARKDOWN_V2 if cmode == "MarkdownV2" else ParseMode.MARKDOWN
+            else:
+                safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
+                parse_mode = ParseMode.HTML if cmode == "HTML" else None
+        except Exception:
+            safe_caption = (caption or "")
+            if len(safe_caption) > 1024:
+                safe_caption = safe_caption[: 1023] + "…"
+            parse_mode = None
     else:
         parse_mode = None
 
