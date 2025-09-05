@@ -37,7 +37,11 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
-from call.app.utils.telegram_text import telegram_truncate_html_safe
+from call.app.utils.telegram_text import (
+    telegram_truncate_html_safe,
+    telegram_prepare_html,
+    telegram_prepare_markdown,
+)
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -190,24 +194,23 @@ class Messenger:
             prepared_text = text or ""
             use_parse_mode = parse_mode
 
-            if parse_mode in (ParseMode.HTML, "HTML"):
-                try:
-                    # Escape everything first
-                    escaped = py_html.escape(prepared_text, quote=False)
-                    # Re-enable minimal controlled tags that we emit ourselves
-                    escaped = (
-                        escaped.replace("&lt;b&gt;", "<b>")
-                               .replace("&lt;/b&gt;", "</b>")
-                               .replace("&lt;br&gt;", "<br>")
-                               .replace("&lt;br/&gt;", "<br/>")
-                    )
-                    # Safe truncate
-                    prepared_text = telegram_truncate_html_safe(escaped, 4000)
-                    use_parse_mode = ParseMode.HTML
-                except Exception:
-                    # If anything goes wrong, fallback to plain
+            try:
+                if parse_mode in (ParseMode.HTML, "HTML"):
+                    prepared_text, pm = telegram_prepare_html(prepared_text, 4000)
+                    use_parse_mode = pm
+                elif parse_mode in (ParseMode.MARKDOWN, "Markdown", "MarkdownV2"):
+                    # Default to MarkdownV2 escaping
+                    prepared_text, pm = telegram_prepare_markdown(prepared_text, 4000, version="v2")
+                    use_parse_mode = pm
+                else:
+                    # Plain text path; enforce limit
+                    if len(prepared_text) > 4096:
+                        prepared_text = prepared_text[:4095] + "…"
                     use_parse_mode = None
-                    prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
+            except Exception:
+                # If anything goes wrong, fallback to plain
+                use_parse_mode = None
+                prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
 
             async def _send(pt: str, pmode: Optional[str]):
                 if self.update.message:

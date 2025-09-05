@@ -5,6 +5,8 @@ import re
 __all__ = [
     "telegram_truncate_html_safe",
     "telegram_truncate_markdown_safe",
+    "telegram_prepare_html",
+    "telegram_prepare_markdown",
 ]
 
 
@@ -159,3 +161,74 @@ def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
         return s
     except Exception:
         return (str(md)[: max_len]).rstrip()
+
+
+# --- Centralized builders -----------------------------------------------------
+
+_MDV2_SPECIAL = r"_[]()~`>#+-=|{}.!*"
+
+
+def _escape_markdown_v2(text: str) -> str:
+    s = text or ""
+    # Escape all special characters for MarkdownV2
+    for ch in _MDV2_SPECIAL:
+        s = s.replace(ch, f"\\{ch}")
+    return s
+
+
+def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2") -> tuple[str, str]:
+    """Return (text, parse_mode) for safe Markdown send.
+
+    - version: "v2" or "v1". Defaults to v2 escaping.
+    - Ensures we don't exceed max_len and attempts to balance common constructs.
+    """
+    try:
+        if version.lower() == "v2":
+            escaped = _escape_markdown_v2(md or "")
+            safe = telegram_truncate_markdown_safe(escaped, max_len)
+            return safe, "MarkdownV2"
+        else:
+            # Basic Markdown (legacy) — rely on truncation only
+            safe = telegram_truncate_markdown_safe(md or "", max_len)
+            return safe, "Markdown"
+    except Exception:
+        # Fallback: plain text under limit
+        s = (str(md) or "")
+        if len(s) > max_len:
+            s = s[: max_len - 1] + "…"
+        return s, None
+
+
+def _sanitize_html_minimal(text: str) -> str:
+    """Escape everything then restore minimal safe tags we may intentionally add.
+
+    Restores: <b>, </b>, <br>, <br/>
+    Extend as needed.
+    """
+    s = text or ""
+    s = re.sub(r"<[^>]*$", "", s)  # cut any trailing partial tag from input
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # restore minimal controlled tags
+    s = (
+        s.replace("&lt;b&gt;", "<b>")
+         .replace("&lt;/b&gt;", "</b>")
+         .replace("&lt;br&gt;", "<br>")
+         .replace("&lt;br/&gt;", "<br/>")
+    )
+    return s
+
+
+def telegram_prepare_html(html: str, max_len: int = 4000) -> tuple[str, str]:
+    """Return (text, parse_mode) prepared for Telegram HTML parse mode.
+
+    - Sanitizes to minimal safe subset and truncates without breaking entities/tags.
+    """
+    try:
+        sanitized = _sanitize_html_minimal(html or "")
+        safe = telegram_truncate_html_safe(sanitized, max_len)
+        return safe, "HTML"
+    except Exception:
+        s = (str(html) or "")
+        if len(s) > max_len:
+            s = s[: max_len - 1] + "…"
+        return s, None
