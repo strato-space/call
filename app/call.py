@@ -2108,28 +2108,27 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
 
 
 if __name__ == "__main__":
-    # Legacy entrypoint stub that delegates to the unified CLI.
-    # It preserves backwards-compatibility for old invocations:
-    #   python -m call.app.call <AgentName> [<input>]
-    # maps to:
-    #   python -m call.cli.main call <AgentName> [<input>]
+    # Entrypoint policy:
+    # - If --cli flag is present: delegate to call.cli.main AFTER removing the flag
+    # - Otherwise, run local async main() with legacy args: <AgentName> [<input>]
     import sys
-    from call.cli.main import main as cli_main
+    import asyncio as _asyncio
 
     args = sys.argv[1:]
-    # No args -> fall through to CLI (will show help)
-    if not args:
+
+    if "--cli" in args:
+        # Strip the flag and forward to CLI
+        args_wo = [a for a in args if a != "--cli"]
+        from call.cli.main import main as cli_main
+        sys.argv = [sys.argv[0]] + args_wo
         sys.exit(cli_main())
 
-    # If already using CLI subcommands, pass through unchanged
-    if args[0] in ("list", "call"):
-        sys.argv = [sys.argv[0]] + args
-        sys.exit(cli_main())
+    # No --cli: run our own async main()
+    # Accept legacy invocation: python -m call.app.call <AgentName> [<input>]
+    agent_name = ""
+    user_input = ""
+    if args:
+        agent_name = args[0]
+        user_input = " ".join(args[1:]) if len(args) > 1 else ""
 
-    # Legacy form: treat first token as agent name and the rest as input text
-    agent_name = args[0]
-    input_text = " ".join(args[1:]) if len(args) > 1 else ""
-    sys.argv = [sys.argv[0], "call", agent_name]
-    if input_text:
-        sys.argv.append(input_text)
-    sys.exit(cli_main())
+    _asyncio.run(main(agent_name=agent_name, user_input=user_input))
