@@ -76,7 +76,7 @@ from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=str(_env_file))
+load_dotenv(dotenv_path=str(_env_file), override=True)
 
 async def async_retry(
     op: Callable[[], Awaitable[Any]],
@@ -227,6 +227,10 @@ bot: Bot
 async def init_bot():
     global bot
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
+    # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
+    import os as _os
+    _os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
+    _os.environ.setdefault("no_proxy", "api.telegram.org,*.telegram.org")
     request = HTTPXRequest(
         connect_timeout=20.0,
         read_timeout=120.0,
@@ -1032,7 +1036,13 @@ def to_pascal_case(name: str) -> str:
                 token = ''
     if token:
         parts.append(token)
-    return ''.join(p.capitalize() for p in parts)
+    # Preserve existing internal capitalization within tokens.
+    # Only uppercase the first character of each token; do not lowercase the remainder.
+    def _cap_preserve(t: str) -> str:
+        if not t:
+            return ''
+        return t[:1].upper() + t[1:]
+    return ''.join(_cap_preserve(p) for p in parts)
 
 
 def discover_prompt_repo() -> Path:
@@ -2098,69 +2108,28 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
 
 
 if __name__ == "__main__":
-    import argparse
+    # Legacy entrypoint stub that delegates to the unified CLI.
+    # It preserves backwards-compatibility for old invocations:
+    #   python -m call.app.call <AgentName> [<input>]
+    # maps to:
+    #   python -m call.cli.main call <AgentName> [<input>]
     import sys
-    from pathlib import Path
+    from call.cli.main import main as cli_main
 
-    parser = argparse.ArgumentParser(
-        description='call — Call subsystem CLI: invoke agent by name with input',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''Examples:
-  pwsh -c "python app/call.py DiscoveryAgent 'Summarize today news about Apple'"
-  python app/call.py UxManager "Analyze this dialog: <text>"
-  '''
-    )
+    args = sys.argv[1:]
+    # No args -> fall through to CLI (will show help)
+    if not args:
+        sys.exit(cli_main())
 
-    parser.add_argument('agent', type=str, help='AgentName (case-insensitive, normalized to PascalCase)')
-    parser.add_argument('input', type=str, nargs='?', default='', help='Input payload text')
-    parser.add_argument('--agent-profile', type=str, help='Path to agent profile (optional)', default=os.getenv('AI_AGENT_PROFILE'))
-    parser.add_argument('--debug', action='store_true', help='Enable debug prints and stop after AgentDTO load')
-    parser.add_argument('--echo', action='store_true', help='Echo agent and input as JSON, then exit')
+    # If already using CLI subcommands, pass through unchanged
+    if args[0] in ("list", "call"):
+        sys.argv = [sys.argv[0]] + args
+        sys.exit(cli_main())
 
-    args = parser.parse_args()
-
-    # Preserve user-provided case; only strip leading '@' and whitespace
-    raw_agent = (args.agent or "").strip()
-    if raw_agent.startswith('@'):
-        raw_agent = raw_agent[1:]
-    agent_name = raw_agent
-    user_input = args.input or ''
-
-    
-
-    # Try discover agent YAML by normalized name
-    yaml_path = discover_agent_yaml(agent_name)
-    agent_path = args.agent_profile
-    if not agent_path and yaml_path:
-        agent_path = str(yaml_path)
-
-    # Echo mode: print structured agent/input and exit without running pipeline
-    if args.echo:
-        try:
-            print(json.dumps({"module": "call.app.call", "name": agent_name, "input": user_input, "echo": True, "agent_path": agent_path, "debug": args.debug}, ensure_ascii=False))
-            sys.stdout.write('\n')
-            sys.stdout.flush()
-        except Exception:
-            print(f"{agent_name}\t{user_input}")
-        sys.exit(0)
-
-    try:
-        # Pass discovered/explicit agent profile into pipeline
-        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug, agent_name=agent_name))
-    except KeyboardInterrupt:
-        print("\nOperation cancelled by user")
-        sys.exit(1)
-    except Exception as e:
-        try:
-            err = {
-                "module": "call.app.call",
-                "ok": False,
-                "error": format_exception_json(e),
-            }
-            print(json.dumps(err, ensure_ascii=False))
-            sys.stderr.flush()
-            sys.stdout.flush()
-        except Exception:
-            # Absolute fallback
-            print(f"{{\"ok\": false, \"error\": {{\"type\": \"{type(e).__name__}\", \"message\": \"{str(e)}\"}}}}")
-        sys.exit(1)
+    # Legacy form: treat first token as agent name and the rest as input text
+    agent_name = args[0]
+    input_text = " ".join(args[1:]) if len(args) > 1 else ""
+    sys.argv = [sys.argv[0], "call", agent_name]
+    if input_text:
+        sys.argv.append(input_text)
+    sys.exit(cli_main())
