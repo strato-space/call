@@ -55,7 +55,29 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
-from telegraph import Telegraph
+# Import HTML/Telegram/Telegraph utilities from utils with script fallback
+try:
+    from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+    from .utils.telegram_text import (
+        telegram_truncate_html_safe,
+        telegram_truncate_markdown_safe,
+        telegram_prepare_html,
+        telegram_prepare_markdown,
+    )
+    from .utils.telegraph_utils import publish_results, create_telegrath_account
+except ImportError:
+    # Fallback for when running as a plain script
+    import sys as _sys
+    import os as _os
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), 'utils'))
+    from html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+    from telegram_text import (
+        telegram_truncate_html_safe,
+        telegram_truncate_markdown_safe,
+        telegram_prepare_html,
+        telegram_prepare_markdown,
+    )
+    from telegraph_utils import publish_results, create_telegrath_account
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
@@ -409,6 +431,9 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             t = (s or "").strip()
             if not t:
                 return False
+            # Prefer HTML if explicit tags are present
+            if "<" in t and ">" in t:
+                return False
             # Strong signal: fenced code blocks -> Markdown
             if "```" in t:
                 return True
@@ -418,38 +443,25 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             )
             if any(m in t for m in md_markers):
                 return True
-            # As a last check, if explicit HTML tags detected, prefer HTML path
-            if "<" in t and ">" in t:
-                return False
             return False
         except Exception:
             return False
 
+    # Choose parse mode, then prepare safely using centralized helpers
     is_md = _looks_like_markdown(text or "")
-
-    if is_md:
-        # Send as Markdown as-is; do not run HTML sanitizer
-        safe_text = text or ""
-        chosen_parse_mode = ParseMode.MARKDOWN
-    else:
-        # Default: sanitize HTML and send as HTML
-        safe_text = clean_html_for_telegram(text or "")
-        chosen_parse_mode = ParseMode.HTML
-
-    # Enforce Telegram limits with parse-mode-aware, safe truncation
     try:
-        MAX_MSG_LEN = 4096
-        if chosen_parse_mode == ParseMode.HTML:
-            safe_text = telegram_truncate_html_safe(safe_text, MAX_MSG_LEN)
-        elif chosen_parse_mode == ParseMode.MARKDOWN:
-            safe_text = telegram_truncate_markdown_safe(safe_text, MAX_MSG_LEN)
+        if is_md:
+            safe_text, chosen_mode = telegram_prepare_markdown(text or "", 4000, version="v2")
+            chosen_parse_mode = ParseMode.MARKDOWN_V2 if chosen_mode == "MarkdownV2" else ParseMode.MARKDOWN
         else:
-            # Fallback: plain clamp
-            if len(safe_text) > MAX_MSG_LEN:
-                safe_text = safe_text[: MAX_MSG_LEN - 1] + "…"
+            safe_text, chosen_mode = telegram_prepare_html(text or "", 4000)
+            chosen_parse_mode = ParseMode.HTML if chosen_mode == "HTML" else None
     except Exception:
-        # Best-effort; on any error, fall back to original text
-        pass
+        # Plain fallback on any preparation error
+        safe_text = (text or "")
+        if len(safe_text) > 4096:
+            safe_text = safe_text[: 4095] + "…"
+        chosen_parse_mode = None
 
     # Determine effective chat/thread with consistent fallbacks
     # KISS: Only explicit args -> selected_* (selected_* already seeded from .env and updated once after agent load)
@@ -464,7 +476,26 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
         )
-    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    try:
+        message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        # Fallback to plain text if Telegram can't parse entities
+        emsg = str(e).lower()
+        if "can't parse entities" in emsg or "parse entities" in emsg or "entity" in emsg:
+            plain = (text or "")
+            if len(plain) > 4096:
+                plain = plain[: 4095] + "…"
+            def _op_plain():
+                return bot.send_message(
+                    chat_id=eff_chat_id,
+                    message_thread_id=eff_thread_id,
+                    text=plain,
+                    parse_mode=None,
+                    reply_markup=reply_markup,
+                )
+            message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        else:
+            raise
     return message
 
 
@@ -480,31 +511,20 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 
     safe_caption = None
     if caption:
-        # Detect markdown-like content just like telegram_send_message
-        def _looks_like_markdown(s: str) -> bool:
-            try:
-                t = (s or "").strip()
-                if not t:
-                    return False
-                # Strong signal: fenced code blocks -> Markdown
-                if "```" in t:
-                    return True
-                md_markers = (
-                    "**", "__", "* ", "- ", "\n- ", "\n* ", "[`", "[`", "](http", "`", "```", "# ", "## ", "### ", "1. ", "\n1. "
-                )
-                if any(m in t for m in md_markers):
-                    return True
-                if "<" in t and ">" in t:
-                    return False
-                return False
-            except Exception:
-                return False
-        if _looks_like_markdown(caption):
-            safe_caption = caption
-            parse_mode = ParseMode.MARKDOWN
-        else:
-            safe_caption = clean_html_for_telegram(caption)
-            parse_mode = ParseMode.HTML
+        # Prepare caption via centralized helpers
+        try:
+            cap_is_md = "```" in caption or any(m in (caption or "") for m in ("**", "__", "# ", "1. "))
+            if cap_is_md:
+                safe_caption, cmode = telegram_prepare_markdown(caption or "", 1024, version="v2")
+                parse_mode = ParseMode.MARKDOWN_V2 if cmode == "MarkdownV2" else ParseMode.MARKDOWN
+            else:
+                safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
+                parse_mode = ParseMode.HTML if cmode == "HTML" else None
+        except Exception:
+            safe_caption = (caption or "")
+            if len(safe_caption) > 1024:
+                safe_caption = safe_caption[: 1023] + "…"
+            parse_mode = None
     else:
         parse_mode = None
 
@@ -630,329 +650,9 @@ def _merge_outputs(*outputs: dict | None) -> dict:
                 merged.setdefault(k, v)
     return merged
 
-def clean_html_for_telegraph(html_content: str) -> str:
-    # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
-    # Note: Telegraph rejects many tags (e.g., h1/h2, hr, html/body/head, small, etc.)
-    soup = BeautifulSoup(html_content, "html.parser")
+# use imported telegram_truncate_markdown_safe from utils.telegram_text
 
-    # 1) Drop document-level wrappers early
-    for tag in soup.find_all(["html", "head", "body"]):
-        tag.unwrap()
-
-    # 2) Normalize headings (h1–h6) to <p><strong>…</strong></p>
-    for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
-        for h in list(soup.find_all(level)):
-            new_p = soup.new_tag("p")
-            strong = soup.new_tag("strong")
-            strong.string = h.get_text(strip=False)
-            new_p.append(strong)
-            h.replace_with(new_p)
-
-    # 3) Replace <hr> with line breaks
-    for hr in list(soup.find_all("hr")):
-        br1 = soup.new_tag("br")
-        br2 = soup.new_tag("br")
-        hr.replace_with(br1)
-        br1.insert_after(br2)
-
-    # 4) Unwrap tags we explicitly don't want to keep as elements
-    for t in list(soup.find_all(["small", "div", "span", "section", "article", "header", "footer", "nav"])):
-        t.unwrap()
-
-    # 5) Whitelist allowed tags; unwrap everything else while preserving text
-    allowed_tags = {
-        "p", "a", "em", "strong", "ul", "ol", "li",
-        "br", "img", "figure", "figcaption", "pre", "code", "blockquote"
-    }
-    for tag in list(soup.find_all(True)):
-        if tag.name not in allowed_tags:
-            tag.unwrap()
-
-    # 6) Strip disallowed attributes; keep only minimal safe attrs
-    for tag in soup.find_all(True):
-        # remove style/class/id and any other attrs by default
-        allowed_attrs = {}
-        if tag.name == "a":
-            # Telegraph allows href (absolute URLs preferred)
-            if tag.has_attr("href"):
-                allowed_attrs["href"] = tag["href"]
-        elif tag.name == "img":
-            if tag.has_attr("src"):
-                allowed_attrs["src"] = tag["src"]
-            if tag.has_attr("alt"):
-                allowed_attrs["alt"] = tag["alt"]
-        # assign filtered attrs
-        tag.attrs = allowed_attrs
-
-    # 7) Final string without newlines; ensure non-empty content
-    cleaned = str(soup).replace('\n', '')
-    if not soup.get_text(strip=True):
-        raise ValueError("Cleaned HTML has no text content!")
-    return cleaned.strip()
-
-def clean_html_for_telegram(html_content: str) -> str:
-    """Sanitize HTML for Telegram parse_mode=HTML.
-
-    Telegram supports a limited subset of tags. This function:
-    - Converts <ul>/<ol>/<li> into plain-text bullet or numbered lines.
-    - Unwraps unsupported tags while preserving text.
-    - Strips disallowed attributes, keeping only href on <a>.
-    """
-    from bs4 import BeautifulSoup
-
-    if not isinstance(html_content, str):
-        return ""
-
-    soup = BeautifulSoup(html_content, "html.parser")
-
-    # Convert lists to plain text lines
-    for ul in list(soup.find_all("ul")):
-        lines = []
-        for li in ul.find_all("li", recursive=False):
-            txt = li.get_text(" ", strip=True)
-            if txt:
-                lines.append(f"• {txt}")
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ul.replace_with(new_p)
-
-    for ol in list(soup.find_all("ol")):
-        lines = []
-        idx = 1
-        for li in ol.find_all("li", recursive=False):
-            txt = li.get_text(" ", strip=True)
-            if txt:
-                lines.append(f"{idx}. {txt}")
-                idx += 1
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ol.replace_with(new_p)
-
-    # Allowed tags for Telegram HTML
-    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
-
-    # Unwrap unsupported tags
-    for tag in list(soup.find_all(True)):
-        if tag.name not in allowed_tags:
-            tag.unwrap()
-
-    # Strip attributes, keep only href for <a>
-    for tag in soup.find_all(True):
-        allowed_attrs = {}
-        if tag.name == "a" and tag.has_attr("href"):
-            allowed_attrs["href"] = tag["href"]
-        tag.attrs = allowed_attrs
-
-    cleaned = str(soup)
-    
-    # Fix self-closing tags that Telegram doesn't like
-    import re
-    # Convert <br/> to <br> and other self-closing tags
-    cleaned = re.sub(r'<(\w+)/>', r'<\1>', cleaned)
-    # Remove any remaining XML-style self-closing tags
-    cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
-    
-    # Telegram is sensitive to stray newlines before/after code/pre; basic trim
-    return cleaned.strip()
-
-def telegram_truncate_html_safe(html: str, max_len: int) -> str:
-    """Truncate a sanitized HTML string to <= max_len characters while preserving validity.
-
-    Assumes the input is already sanitized for Telegram by clean_html_for_telegram().
-    - Avoids cutting inside a tag or HTML entity
-    - Ensures all opened tags are closed
-    - Removes trailing partial tag fragments like '<tagnam'
-    """
-    try:
-        if not isinstance(html, str):
-            return ""
-        if len(html) <= max_len:
-            return html
-
-        import re
-
-        def strip_partial_tail(s: str) -> str:
-            # Remove any partial tag at the end
-            s = re.sub(r"<[^>]*$", "", s)
-            # Remove any partial HTML entity at the end (e.g., '&amp')
-            s = re.sub(r"&[^;\s]{0,10}$", "", s)
-            return s
-
-        # Start with a hard cut (reserve one char for ellipsis)
-        s = html[: max_len - 1] + "…"
-        s = strip_partial_tail(s)
-
-        # Compute stack of still-open tags in s
-        tag_re = re.compile(r"</?([a-zA-Z0-9]+)(?:\s[^>]*)?>")
-        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
-        stack: list[str] = []
-        for m in tag_re.finditer(s):
-            tag = m.group(1).lower()
-            if tag not in allowed:
-                continue
-            full = m.group(0)
-            if full.startswith("</"):
-                # closing: pop if present
-                if stack and stack[-1] == tag:
-                    stack.pop()
-                else:
-                    # Try to remove matching earlier open elsewhere
-                    if tag in stack:
-                        idx = len(stack) - 1 - stack[::-1].index(tag)
-                        stack.pop(idx)
-            else:
-                # opening; treat <br> as self-contained
-                if tag != "br":
-                    stack.append(tag)
-
-        def closers_for_stack(stk: list[str]) -> str:
-            return "".join(f"</{t}>" for t in reversed(stk))
-
-        # Ensure closers fit within max_len; if not, shorten s and recompute
-        attempts = 0
-        while attempts < 5:
-            closers = closers_for_stack(stack)
-            if len(s) + len(closers) <= max_len:
-                s = s + closers
-                return s
-            # Need to make room: shorten s
-            over = (len(s) + len(closers)) - max_len
-            # Remove 'over' chars plus some buffer from end, then tidy tail and recompute stack
-            cut_by = max(over + 1, 8)
-            s = s[: max(0, len(s) - cut_by)]
-            s = strip_partial_tail(s)
-            # Recompute stack
-            stack.clear()
-            for m in tag_re.finditer(s):
-                tag = m.group(1).lower()
-                if tag not in allowed:
-                    continue
-                full = m.group(0)
-                if full.startswith("</"):
-                    if stack and stack[-1] == tag:
-                        stack.pop()
-                    else:
-                        if tag in stack:
-                            idx = len(stack) - 1 - stack[::-1].index(tag)
-                            stack.pop(idx)
-                else:
-                    if tag != "br":
-                        stack.append(tag)
-            attempts += 1
-
-        # Fallback: last resort hard trim to max_len without closers (should be rare)
-        return (s[:max_len]).rstrip()
-    except Exception:
-        # On any failure, return a simple hard-clamped string
-        return (str(html)[: max_len]).rstrip()
-
-def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
-    """Truncate Markdown safely for Telegram parse_mode=MARKDOWN.
-
-    - Avoid cutting inside a triple code fence; ensure it's closed if opened
-    - Remove trailing unmatched '[' or '(' typical for links
-    - Keep within max_len (including any appended fences)
-    """
-    try:
-        if not isinstance(md, str):
-            return ""
-        if len(md) <= max_len:
-            return md
-
-        import re
-
-        # Initial cut with ellipsis
-        s = md[: max_len - 1] + "…"
-
-        # Remove trailing partial HTML-like fragment (e.g., '<tagnam') since Markdown may include raw HTML
-        s = re.sub(r"<[^>]*$", "", s)
-
-        # Balance Markdown links: cut off trailing unmatched '[' or '('
-        last_open_sq = s.rfind('[')
-        last_close_sq = s.rfind(']')
-        if last_open_sq > last_close_sq:
-            s = s[:last_open_sq]
-
-        last_open_par = s.rfind('(')
-        last_close_par = s.rfind(')')
-        # Likely part of a link if last ']' is before '('
-        if last_open_par > last_close_par and s.rfind(']') < last_open_par:
-            s = s[:last_open_par]
-
-        # Ensure triple backtick fences are balanced
-        fence_count = len(re.findall(r"```", s))
-        if fence_count % 2 == 1:
-            fence = "```"
-            # Try to append closing fence if there's room
-            if len(s) + len(fence) <= max_len:
-                s += fence
-            else:
-                # Make room by trimming and then append
-                s = s[: max_len - len(fence)]
-                # Remove any trailing partial code block language identifier chunk
-                s = re.sub(r"`+$", "", s)
-                s += fence
-
-        # Optionally, mitigate trailing single backticks
-        backticks = s.count('`') - 3 * (len(re.findall(r"```", s)))
-        if backticks % 2 == 1:
-            # Remove a trailing '`' if present
-            if s.endswith('`'):
-                s = s[:-1]
-
-        return s
-    except Exception:
-        return (str(md)[: max_len]).rstrip()
-
-def minify_html_func(html_string: str) -> str:
-    """Sanitize and lightly minify HTML without external minifiers.
-
-    Steps:
-    - Whitelist sanitizer via clean_html_for_telegraph()
-    - Strip HTML comments
-    - Collapse inter-tag whitespace (">   <" -> "><")
-    - Trim leading/trailing whitespace
-    """
-    import re
-
-    cleaned = clean_html_for_telegraph(html_string)
-    # Remove HTML comments
-    s = re.sub(r"<!--.*?-->", "", cleaned, flags=re.DOTALL)
-    # Collapse inter-tag whitespace only (preserves spacing inside text nodes)
-    s = re.sub(r">\s+<", "><", s)
-    return s.strip()
-
-
-async def create_telegrath_account():
-
-    telegraph = Telegraph(TELEGRAPH_TOKEN)
-
-    acc = telegraph.create_account(short_name='strato.space', author_name='AI Agent @ strato.space',
-                                   author_url='https://linkedin.com/in/iqdoctor')
-    token = acc.get('access_token')
-    print(f"Telegraph access_token: {token}")
-
-
-async def publish_results(title: str = "AgentName Results", content: str = None) -> str:
-    """Publish aggregation results on Telegra.ph."""
-
-    telegraph = Telegraph(TELEGRAPH_TOKEN)
-
-    clear_context = minify_html_func(content)
-    # Save clear_context to call/logs/y.html
-    # todo: use [MCP Hook] Parameters: {'path': '/home/strato-space/prompt/agents/AiNewsAggr/memory/ai-news-aggr'}
-    # with open('call/logs/y.html', 'w', encoding='utf-8') as f:
-    #    f.write(clear_context)
-    # Build dynamic title: if caller passed an agent name, append ' Results' unless already present
-    page_title = (f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results"))
-    response = telegraph.create_page(
-        title=page_title,
-        html_content=clear_context,
-    )
-
-    url = f"https://telegra.ph/{response['path']}"
-    print("Results published to:", url)
-    return url
+# minify_html_func, create_telegrath_account, and publish_results are now imported from utils
 
 
 async def edit_message_text(text):
