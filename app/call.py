@@ -88,6 +88,9 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=str(_env_file), override=True)
 
+# Module-level debug flag (can be overridden by main(debug=True))
+DEBUG = str(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes", "on")
+
 async def async_retry(
     op: Callable[[], Awaitable[Any]],
     *,
@@ -2025,6 +2028,10 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 async def main(agent_path: str = None, user_input: str = "", debug: bool = False, agent_name: str = ""):
     # Initialize OpenAI client with proper proxy configuration
     await init_openai_client()
+    # Allow caller to force debug prints
+    global DEBUG
+    if debug:
+        DEBUG = True
     
     # When debugging, avoid external side effects like Telegram messages
     if not debug:
