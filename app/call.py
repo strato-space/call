@@ -2009,7 +2009,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 if is_tty:
                     try:
                         loop = asyncio.get_running_loop()
-                        prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
+                        prompt_text = "Enter next user message (or 'exit' to finish, empty => 'go'): "
                         user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
                     except Exception:
                         user_next = ""
