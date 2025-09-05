@@ -62,7 +62,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
-from agents.tool import FileSearchTool, Tool
+from agents.tool import FileSearchTool, FunctionTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -1248,30 +1248,21 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-class ImageGenerationTool(Tool):
+def make_responses_image_generation_tool() -> FunctionTool:
     """
-    Use Responses API `image_generation` to produce exactly one image.
-    Args:
-      - prompt: text
-      - images: list[str] (images[0] = base; others = refs)
-      - size: "1024x1024" (default)
-      - mask: optional path/url
-      - output_path: optional file path to save
-    Returns: {"b64_png": "...", "saved_path": "<path|None>", "size": "..."}
+    Factory: returns a FunctionTool that calls Responses API `image_generation`
+    to produce exactly one image.
     """
-    name = "image_generation_one_out"
-    description = "Render a single image using Responses API image_generation. Base + refs supported."
+    async def on_invoke_tool(params: Dict[str, Any]) -> Dict[str, Any]:
+        prompt: str = params.get("prompt", "")
+        images: List[str] = params.get("images", []) or []
+        size: str = params.get("size", "1024x1024")
+        mask: Optional[str] = params.get("mask")
+        output_path: Optional[str] = params.get("output_path")
 
-    class Args(Tool.Args):
-        prompt: str
-        images: List[str]
-        size: Optional[str] = "1024x1024"
-        mask: Optional[str] = None
-        output_path: Optional[str] = None
-
-    async def run(self, prompt: str, images: List[str], size: str = "1024x1024", mask: Optional[str] = None, output_path: Optional[str] = None):
         base = images[0] if images else None
-        refs = images[1:] if images and len(images) > 1 else []
+        refs = images[1:] if len(images) > 1 else []
+
         if output_path:
             out = Path(output_path)
             await _responses_image_one_out(
@@ -1279,17 +1270,42 @@ class ImageGenerationTool(Tool):
             )
             b64 = base64.b64encode(out.read_bytes()).decode("ascii")
             return {"b64_png": b64, "saved_path": str(out), "size": size}
-        # in-memory only
-        tmp = Path(os.path.join("/tmp", f"resp_one_out_{os.getpid()}.png"))
-        await _responses_image_one_out(
-            prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp
-        )
-        b64 = base64.b64encode(tmp.read_bytes()).decode("ascii")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return {"b64_png": b64, "saved_path": None, "size": size}
+        else:
+            # in-memory only using a temp-like file in /tmp
+            tmp = Path(os.path.join("/tmp", f"resp_one_out_{os.getpid()}.png"))
+            await _responses_image_one_out(
+                prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp
+            )
+            b64 = base64.b64encode(tmp.read_bytes()).decode("ascii")
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return {"b64_png": b64, "saved_path": None, "size": size}
+
+    params_schema = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "Text prompt for image generation/editing"},
+            "images": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of image paths/URLs. images[0]=base image; images[1..]=reference images"
+            },
+            "size": {"type": "string", "default": "1024x1024"},
+            "mask": {"type": ["string", "null"], "description": "Optional mask path/URL"},
+            "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"}
+        },
+        "required": ["prompt", "images"],
+        "additionalProperties": False
+    }
+
+    return FunctionTool(
+        name="image_generation_one_out",
+        description="Render a single image using Responses API image_generation. Base + refs supported.",
+        params_json_schema=params_schema,
+        on_invoke_tool=on_invoke_tool,
+    )
 
 
 def load_yaml(path: Path) -> dict:
@@ -1716,7 +1732,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool(), ImageGenerationTool()]
+        tools = [WebSearchTool(), make_responses_image_generation_tool()]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
