@@ -1,9 +1,9 @@
 import os
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Type
 import base64
-from contextlib import asynccontextmanager, ExitStack
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
@@ -21,31 +21,9 @@ except ImportError:
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
     from agent_utils import extract_agent_attributes, get_agent_instructions
+from pathlib import Path
 import shutil
-
-# Import HTML/Telegram/Telegraph utilities from utils with script fallback
-try:
-    from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from .utils.telegram_text import (
-        telegram_truncate_html_safe,
-        telegram_truncate_markdown_safe,
-        telegram_prepare_html,
-        telegram_prepare_markdown,
-    )
-    from .utils.telegraph_utils import publish_results, create_telegrath_account
-except ImportError:
-    # Fallback for when running as a plain script
-    import sys
-    import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
-    from html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from telegram_text import (
-        telegram_truncate_html_safe,
-        telegram_truncate_markdown_safe,
-        telegram_prepare_html,
-        telegram_prepare_markdown,
-    )
-    from telegraph_utils import publish_results, create_telegrath_account
+from bs4 import BeautifulSoup      # use stdlib 'html.parser' to avoid extra deps
 
 
 from mcp.types import CallToolResult
@@ -72,12 +50,12 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
-from agents.tool import FileSearchTool, FunctionTool
+from agents.tool import FileSearchTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
- # Telegraph usage is handled via utils.telegraph_utils
+from telegraph import Telegraph
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
@@ -86,10 +64,7 @@ from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=str(_env_file), override=True)
-
-# Module-level debug flag (can be overridden by main(debug=True))
-DEBUG = str(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes", "on")
+load_dotenv(dotenv_path=str(_env_file))
 
 async def async_retry(
     op: Callable[[], Awaitable[Any]],
@@ -240,10 +215,6 @@ bot: Bot
 async def init_bot():
     global bot
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
-    # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
-    import os as _os
-    _os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
-    _os.environ.setdefault("no_proxy", "api.telegram.org,*.telegram.org")
     request = HTTPXRequest(
         connect_timeout=20.0,
         read_timeout=120.0,
@@ -438,10 +409,6 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             t = (s or "").strip()
             if not t:
                 return False
-            # Prefer HTML if explicit tags are present
-            # This prevents strings like "<b>…</b>" from being treated as Markdown
-            if "<" in t and ">" in t:
-                return False
             # Strong signal: fenced code blocks -> Markdown
             if "```" in t:
                 return True
@@ -451,25 +418,38 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             )
             if any(m in t for m in md_markers):
                 return True
+            # As a last check, if explicit HTML tags detected, prefer HTML path
+            if "<" in t and ">" in t:
+                return False
             return False
         except Exception:
             return False
 
-    # Choose parse mode, then prepare safely using centralized helpers
     is_md = _looks_like_markdown(text or "")
+
+    if is_md:
+        # Send as Markdown as-is; do not run HTML sanitizer
+        safe_text = text or ""
+        chosen_parse_mode = ParseMode.MARKDOWN
+    else:
+        # Default: sanitize HTML and send as HTML
+        safe_text = clean_html_for_telegram(text or "")
+        chosen_parse_mode = ParseMode.HTML
+
+    # Enforce Telegram limits with parse-mode-aware, safe truncation
     try:
-        if is_md:
-            safe_text, chosen_mode = telegram_prepare_markdown(text or "", 4000, version="v2")
-            chosen_parse_mode = ParseMode.MARKDOWN_V2 if chosen_mode == "MarkdownV2" else ParseMode.MARKDOWN
+        MAX_MSG_LEN = 4096
+        if chosen_parse_mode == ParseMode.HTML:
+            safe_text = telegram_truncate_html_safe(safe_text, MAX_MSG_LEN)
+        elif chosen_parse_mode == ParseMode.MARKDOWN:
+            safe_text = telegram_truncate_markdown_safe(safe_text, MAX_MSG_LEN)
         else:
-            safe_text, chosen_mode = telegram_prepare_html(text or "", 4000)
-            chosen_parse_mode = ParseMode.HTML if chosen_mode == "HTML" else None
+            # Fallback: plain clamp
+            if len(safe_text) > MAX_MSG_LEN:
+                safe_text = safe_text[: MAX_MSG_LEN - 1] + "…"
     except Exception:
-        # Plain fallback on any preparation error
-        safe_text = (text or "")
-        if len(safe_text) > 4096:
-            safe_text = safe_text[: 4095] + "…"
-        chosen_parse_mode = None
+        # Best-effort; on any error, fall back to original text
+        pass
 
     # Determine effective chat/thread with consistent fallbacks
     # KISS: Only explicit args -> selected_* (selected_* already seeded from .env and updated once after agent load)
@@ -484,30 +464,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             parse_mode=chosen_parse_mode,
             reply_markup=reply_markup
         )
-    try:
-        if DEBUG:
-            print(f"[TG] send_message parse_mode={chosen_parse_mode}")
-        message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-    except BadRequest as e:
-        # Fallback to plain text if Telegram can't parse entities
-        emsg = str(e).lower()
-        if "can't parse entities" in emsg or "parse entities" in emsg or "entity" in emsg:
-            plain = (text or "")
-            if len(plain) > 4096:
-                plain = plain[: 4095] + "…"
-            def _op_plain():
-                return bot.send_message(
-                    chat_id=eff_chat_id,
-                    message_thread_id=eff_thread_id,
-                    text=plain,
-                    parse_mode=None,
-                    reply_markup=reply_markup,
-                )
-            if DEBUG:
-                print("[TG] BadRequest parse error, retrying as plain text")
-            message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-        else:
-            raise
+    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     return message
 
 
@@ -523,20 +480,31 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 
     safe_caption = None
     if caption:
-        # Prepare caption via centralized helpers
-        try:
-            cap_is_md = "```" in caption or any(m in (caption or "") for m in ("**", "__", "# ", "1. "))
-            if cap_is_md:
-                safe_caption, cmode = telegram_prepare_markdown(caption or "", 1024, version="v2")
-                parse_mode = ParseMode.MARKDOWN_V2 if cmode == "MarkdownV2" else ParseMode.MARKDOWN
-            else:
-                safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
-                parse_mode = ParseMode.HTML if cmode == "HTML" else None
-        except Exception:
-            safe_caption = (caption or "")
-            if len(safe_caption) > 1024:
-                safe_caption = safe_caption[: 1023] + "…"
-            parse_mode = None
+        # Detect markdown-like content just like telegram_send_message
+        def _looks_like_markdown(s: str) -> bool:
+            try:
+                t = (s or "").strip()
+                if not t:
+                    return False
+                # Strong signal: fenced code blocks -> Markdown
+                if "```" in t:
+                    return True
+                md_markers = (
+                    "**", "__", "* ", "- ", "\n- ", "\n* ", "[`", "[`", "](http", "`", "```", "# ", "## ", "### ", "1. ", "\n1. "
+                )
+                if any(m in t for m in md_markers):
+                    return True
+                if "<" in t and ">" in t:
+                    return False
+                return False
+            except Exception:
+                return False
+        if _looks_like_markdown(caption):
+            safe_caption = caption
+            parse_mode = ParseMode.MARKDOWN
+        else:
+            safe_caption = clean_html_for_telegram(caption)
+            parse_mode = ParseMode.HTML
     else:
         parse_mode = None
 
@@ -572,139 +540,6 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 logging.getLogger("openai").setLevel(logging.DEBUG)
 
 default_samples_dir = str(Path(__file__).resolve().parents[2])
-
-# --- Shared helpers (Responses-only mode) ---
-def _is_url(s: str) -> bool:
-    try:
-        return isinstance(s, str) and s.strip().lower().startswith(("http://", "https://"))
-    except Exception:
-        return False
-
-def _as_input_image(src: Union[str, Path, bytes], stack: ExitStack):
-    """
-    Build a Responses `input_image` content part:
-      - URL -> {"type":"input_image","image_url": "..."}
-      - Local path/bytes -> {"type":"input_image","image_data": "<b64>", "mime_type":"image/png"}
-    """
-    if src is None:
-        return None
-    if isinstance(src, (str, Path)):
-        p = str(src)
-        if _is_url(p):
-            return {"type": "input_image", "image_url": p}
-        data = Path(p).read_bytes()
-        return {"type": "input_image", "image_data": base64.b64encode(data).decode("ascii"), "mime_type": "image/png"}
-    if isinstance(src, (bytes, bytearray)):
-        return {"type": "input_image", "image_data": base64.b64encode(bytes(src)).decode("ascii"), "mime_type": "image/png"}
-    return None
-
-async def _responses_image_one_out(
-    *,
-    prompt_text: str,
-    output_path: Path,
-    base_image: Optional[Union[str, Path, bytes]] = None,
-    ref_images: Optional[List[Union[str, Path, bytes]]] = None,
-    mask: Optional[Union[str, Path, bytes]] = None,
-    size: str = "1024x1024",
-    model: str = "gpt-4o",
-):
-    """
-    Pure Responses API call using the built-in `image_generation` tool.
-    Saves exactly one image to output_path.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with ExitStack() as stack:
-        content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt_text + f"\n\n[SIZE={size}]"}]
-        if base_image:
-            part = _as_input_image(base_image, stack)
-            if part:
-                content.append(part)
-        for r in (ref_images or []):
-            p = _as_input_image(r, stack)
-            if p:
-                content.append(p)
-        if mask:
-            m = _as_input_image(mask, stack)
-            if m:
-                content.append({"type": "input_text", "text": "[MASK BELOW – transparent = editable]"})
-                content.append(m)
-
-        system = (
-            "You are a precise image editor.\n"
-            "- Use the `image_generation` tool exactly once.\n"
-            "- If an input image is included, treat it as the BASE; others are STYLE/POSE refs.\n"
-            "- Produce exactly ONE final image at the requested size.\n"
-            "- Return only the image (no prose).\n"
-        )
-        tools: List[Dict[str, Any]] = [{"type": "image_generation"}]
-        mcp_fs_url = os.getenv("MCP_FS_URL")
-        if mcp_fs_url:
-            tools.append({
-                "type": "mcp",
-                "server_url": mcp_fs_url,
-                "server_label": "fs",
-                "allowed_tools": ["read_resource", "list_directory"],
-                "require_approval": "never",
-            })
-
-        async def _call():
-            return await openai_client.responses.create(
-                model=model,
-                instructions=system,
-                tools=tools,
-                input=[{"role": "user", "content": content}],
-            )
-
-        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
-
-        # Extract a single image from Responses output
-        def _extract_image_b64(r):
-            for msg in getattr(r, "output", []) or []:
-                for part in getattr(msg, "content", []) or []:
-                    t = getattr(part, "type", None) or getattr(part, "kind", None)
-                    if t in ("image", "output_image"):
-                        b64 = getattr(part, "image_base64", None) or getattr(part, "b64_json", None)
-                        url = getattr(part, "image_url", None) or getattr(part, "url", None)
-                        return (b64, url)
-            return (None, None)
-
-        b64, url = _extract_image_b64(resp)
-        if not b64 and url:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
-                rr = await client.get(url)
-                rr.raise_for_status()
-                output_path.write_bytes(rr.content)
-                return output_path
-        if not b64:
-            raise RuntimeError("Responses image not found (no b64/url).")
-        output_path.write_bytes(base64.b64decode(b64))
-        return output_path
-
-def _parse_image_job_from_llm(text: str) -> Optional[dict]:
-    """
-    Expected JSON edit job if the agent doesn't call a tool:
-      {"prompt": "...", "base_image": "<url-or-path>", "ref_images": ["..."], "size": "1024x1024", "mask": "<optional>"}
-    """
-    try:
-        if not text or not isinstance(text, str):
-            return None
-        s = text.strip()
-        # Try to find a JSON object in the text
-        start = s.find('{')
-        end = s.rfind('}')
-        if start == -1 or end == -1 or end <= start:
-            return None
-        obj = json.loads(s[start:end + 1])
-        if not isinstance(obj, dict):
-            return None
-        if "prompt" in obj and ("base_image" in obj or "ref_images" in obj):
-            # normalize fields
-            if obj.get("ref_images") is None:
-                obj["ref_images"] = []
-            return obj
-        return None
-    except Exception:
-        return None
 
 def _flatten_output_section(output_val) -> dict:
     """Normalize 'output' which may be a list of single-key maps into a flat dict.
@@ -795,20 +630,329 @@ def _merge_outputs(*outputs: dict | None) -> dict:
                 merged.setdefault(k, v)
     return merged
 
- # moved to utils.html_sanitizer: clean_html_for_telegraph
+def clean_html_for_telegraph(html_content: str) -> str:
+    # Parse with stdlib html.parser and sanitize to Telegraph-allowed subset
+    # Note: Telegraph rejects many tags (e.g., h1/h2, hr, html/body/head, small, etc.)
+    soup = BeautifulSoup(html_content, "html.parser")
 
- # moved to utils.html_sanitizer: clean_html_for_telegram
+    # 1) Drop document-level wrappers early
+    for tag in soup.find_all(["html", "head", "body"]):
+        tag.unwrap()
 
- # moved to utils.telegram_text: telegram_truncate_html_safe
-# moved to utils.telegram_text: telegram_truncate_markdown_safe
+    # 2) Normalize headings (h1–h6) to <p><strong>…</strong></p>
+    for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        for h in list(soup.find_all(level)):
+            new_p = soup.new_tag("p")
+            strong = soup.new_tag("strong")
+            strong.string = h.get_text(strip=False)
+            new_p.append(strong)
+            h.replace_with(new_p)
 
- # moved to utils.html_sanitizer: minify_html_func
+    # 3) Replace <hr> with line breaks
+    for hr in list(soup.find_all("hr")):
+        br1 = soup.new_tag("br")
+        br2 = soup.new_tag("br")
+        hr.replace_with(br1)
+        br1.insert_after(br2)
+
+    # 4) Unwrap tags we explicitly don't want to keep as elements
+    for t in list(soup.find_all(["small", "div", "span", "section", "article", "header", "footer", "nav"])):
+        t.unwrap()
+
+    # 5) Whitelist allowed tags; unwrap everything else while preserving text
+    allowed_tags = {
+        "p", "a", "em", "strong", "ul", "ol", "li",
+        "br", "img", "figure", "figcaption", "pre", "code", "blockquote"
+    }
+    for tag in list(soup.find_all(True)):
+        if tag.name not in allowed_tags:
+            tag.unwrap()
+
+    # 6) Strip disallowed attributes; keep only minimal safe attrs
+    for tag in soup.find_all(True):
+        # remove style/class/id and any other attrs by default
+        allowed_attrs = {}
+        if tag.name == "a":
+            # Telegraph allows href (absolute URLs preferred)
+            if tag.has_attr("href"):
+                allowed_attrs["href"] = tag["href"]
+        elif tag.name == "img":
+            if tag.has_attr("src"):
+                allowed_attrs["src"] = tag["src"]
+            if tag.has_attr("alt"):
+                allowed_attrs["alt"] = tag["alt"]
+        # assign filtered attrs
+        tag.attrs = allowed_attrs
+
+    # 7) Final string without newlines; ensure non-empty content
+    cleaned = str(soup).replace('\n', '')
+    if not soup.get_text(strip=True):
+        raise ValueError("Cleaned HTML has no text content!")
+    return cleaned.strip()
+
+def clean_html_for_telegram(html_content: str) -> str:
+    """Sanitize HTML for Telegram parse_mode=HTML.
+
+    Telegram supports a limited subset of tags. This function:
+    - Converts <ul>/<ol>/<li> into plain-text bullet or numbered lines.
+    - Unwraps unsupported tags while preserving text.
+    - Strips disallowed attributes, keeping only href on <a>.
+    """
+    from bs4 import BeautifulSoup
+
+    if not isinstance(html_content, str):
+        return ""
+
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    # Convert lists to plain text lines
+    for ul in list(soup.find_all("ul")):
+        lines = []
+        for li in ul.find_all("li", recursive=False):
+            txt = li.get_text(" ", strip=True)
+            if txt:
+                lines.append(f"• {txt}")
+        new_p = soup.new_tag("p")
+        new_p.string = "\n".join(lines) if lines else ""
+        ul.replace_with(new_p)
+
+    for ol in list(soup.find_all("ol")):
+        lines = []
+        idx = 1
+        for li in ol.find_all("li", recursive=False):
+            txt = li.get_text(" ", strip=True)
+            if txt:
+                lines.append(f"{idx}. {txt}")
+                idx += 1
+        new_p = soup.new_tag("p")
+        new_p.string = "\n".join(lines) if lines else ""
+        ol.replace_with(new_p)
+
+    # Allowed tags for Telegram HTML
+    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
+
+    # Unwrap unsupported tags
+    for tag in list(soup.find_all(True)):
+        if tag.name not in allowed_tags:
+            tag.unwrap()
+
+    # Strip attributes, keep only href for <a>
+    for tag in soup.find_all(True):
+        allowed_attrs = {}
+        if tag.name == "a" and tag.has_attr("href"):
+            allowed_attrs["href"] = tag["href"]
+        tag.attrs = allowed_attrs
+
+    cleaned = str(soup)
+    
+    # Fix self-closing tags that Telegram doesn't like
+    import re
+    # Convert <br/> to <br> and other self-closing tags
+    cleaned = re.sub(r'<(\w+)/>', r'<\1>', cleaned)
+    # Remove any remaining XML-style self-closing tags
+    cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
+    
+    # Telegram is sensitive to stray newlines before/after code/pre; basic trim
+    return cleaned.strip()
+
+def telegram_truncate_html_safe(html: str, max_len: int) -> str:
+    """Truncate a sanitized HTML string to <= max_len characters while preserving validity.
+
+    Assumes the input is already sanitized for Telegram by clean_html_for_telegram().
+    - Avoids cutting inside a tag or HTML entity
+    - Ensures all opened tags are closed
+    - Removes trailing partial tag fragments like '<tagnam'
+    """
+    try:
+        if not isinstance(html, str):
+            return ""
+        if len(html) <= max_len:
+            return html
+
+        import re
+
+        def strip_partial_tail(s: str) -> str:
+            # Remove any partial tag at the end
+            s = re.sub(r"<[^>]*$", "", s)
+            # Remove any partial HTML entity at the end (e.g., '&amp')
+            s = re.sub(r"&[^;\s]{0,10}$", "", s)
+            return s
+
+        # Start with a hard cut (reserve one char for ellipsis)
+        s = html[: max_len - 1] + "…"
+        s = strip_partial_tail(s)
+
+        # Compute stack of still-open tags in s
+        tag_re = re.compile(r"</?([a-zA-Z0-9]+)(?:\s[^>]*)?>")
+        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
+        stack: list[str] = []
+        for m in tag_re.finditer(s):
+            tag = m.group(1).lower()
+            if tag not in allowed:
+                continue
+            full = m.group(0)
+            if full.startswith("</"):
+                # closing: pop if present
+                if stack and stack[-1] == tag:
+                    stack.pop()
+                else:
+                    # Try to remove matching earlier open elsewhere
+                    if tag in stack:
+                        idx = len(stack) - 1 - stack[::-1].index(tag)
+                        stack.pop(idx)
+            else:
+                # opening; treat <br> as self-contained
+                if tag != "br":
+                    stack.append(tag)
+
+        def closers_for_stack(stk: list[str]) -> str:
+            return "".join(f"</{t}>" for t in reversed(stk))
+
+        # Ensure closers fit within max_len; if not, shorten s and recompute
+        attempts = 0
+        while attempts < 5:
+            closers = closers_for_stack(stack)
+            if len(s) + len(closers) <= max_len:
+                s = s + closers
+                return s
+            # Need to make room: shorten s
+            over = (len(s) + len(closers)) - max_len
+            # Remove 'over' chars plus some buffer from end, then tidy tail and recompute stack
+            cut_by = max(over + 1, 8)
+            s = s[: max(0, len(s) - cut_by)]
+            s = strip_partial_tail(s)
+            # Recompute stack
+            stack.clear()
+            for m in tag_re.finditer(s):
+                tag = m.group(1).lower()
+                if tag not in allowed:
+                    continue
+                full = m.group(0)
+                if full.startswith("</"):
+                    if stack and stack[-1] == tag:
+                        stack.pop()
+                    else:
+                        if tag in stack:
+                            idx = len(stack) - 1 - stack[::-1].index(tag)
+                            stack.pop(idx)
+                else:
+                    if tag != "br":
+                        stack.append(tag)
+            attempts += 1
+
+        # Fallback: last resort hard trim to max_len without closers (should be rare)
+        return (s[:max_len]).rstrip()
+    except Exception:
+        # On any failure, return a simple hard-clamped string
+        return (str(html)[: max_len]).rstrip()
+
+def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
+    """Truncate Markdown safely for Telegram parse_mode=MARKDOWN.
+
+    - Avoid cutting inside a triple code fence; ensure it's closed if opened
+    - Remove trailing unmatched '[' or '(' typical for links
+    - Keep within max_len (including any appended fences)
+    """
+    try:
+        if not isinstance(md, str):
+            return ""
+        if len(md) <= max_len:
+            return md
+
+        import re
+
+        # Initial cut with ellipsis
+        s = md[: max_len - 1] + "…"
+
+        # Remove trailing partial HTML-like fragment (e.g., '<tagnam') since Markdown may include raw HTML
+        s = re.sub(r"<[^>]*$", "", s)
+
+        # Balance Markdown links: cut off trailing unmatched '[' or '('
+        last_open_sq = s.rfind('[')
+        last_close_sq = s.rfind(']')
+        if last_open_sq > last_close_sq:
+            s = s[:last_open_sq]
+
+        last_open_par = s.rfind('(')
+        last_close_par = s.rfind(')')
+        # Likely part of a link if last ']' is before '('
+        if last_open_par > last_close_par and s.rfind(']') < last_open_par:
+            s = s[:last_open_par]
+
+        # Ensure triple backtick fences are balanced
+        fence_count = len(re.findall(r"```", s))
+        if fence_count % 2 == 1:
+            fence = "```"
+            # Try to append closing fence if there's room
+            if len(s) + len(fence) <= max_len:
+                s += fence
+            else:
+                # Make room by trimming and then append
+                s = s[: max_len - len(fence)]
+                # Remove any trailing partial code block language identifier chunk
+                s = re.sub(r"`+$", "", s)
+                s += fence
+
+        # Optionally, mitigate trailing single backticks
+        backticks = s.count('`') - 3 * (len(re.findall(r"```", s)))
+        if backticks % 2 == 1:
+            # Remove a trailing '`' if present
+            if s.endswith('`'):
+                s = s[:-1]
+
+        return s
+    except Exception:
+        return (str(md)[: max_len]).rstrip()
+
+def minify_html_func(html_string: str) -> str:
+    """Sanitize and lightly minify HTML without external minifiers.
+
+    Steps:
+    - Whitelist sanitizer via clean_html_for_telegraph()
+    - Strip HTML comments
+    - Collapse inter-tag whitespace (">   <" -> "><")
+    - Trim leading/trailing whitespace
+    """
+    import re
+
+    cleaned = clean_html_for_telegraph(html_string)
+    # Remove HTML comments
+    s = re.sub(r"<!--.*?-->", "", cleaned, flags=re.DOTALL)
+    # Collapse inter-tag whitespace only (preserves spacing inside text nodes)
+    s = re.sub(r">\s+<", "><", s)
+    return s.strip()
 
 
- # moved to utils.telegraph_utils: create_telegrath_account
+async def create_telegrath_account():
+
+    telegraph = Telegraph(TELEGRAPH_TOKEN)
+
+    acc = telegraph.create_account(short_name='strato.space', author_name='AI Agent @ strato.space',
+                                   author_url='https://linkedin.com/in/iqdoctor')
+    token = acc.get('access_token')
+    print(f"Telegraph access_token: {token}")
 
 
- # moved to utils.telegraph_utils: publish_results
+async def publish_results(title: str = "AgentName Results", content: str = None) -> str:
+    """Publish aggregation results on Telegra.ph."""
+
+    telegraph = Telegraph(TELEGRAPH_TOKEN)
+
+    clear_context = minify_html_func(content)
+    # Save clear_context to call/logs/y.html
+    # todo: use [MCP Hook] Parameters: {'path': '/home/strato-space/prompt/agents/AiNewsAggr/memory/ai-news-aggr'}
+    # with open('call/logs/y.html', 'w', encoding='utf-8') as f:
+    #    f.write(clear_context)
+    # Build dynamic title: if caller passed an agent name, append ' Results' unless already present
+    page_title = (f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results"))
+    response = telegraph.create_page(
+        title=page_title,
+        html_content=clear_context,
+    )
+
+    url = f"https://telegra.ph/{response['path']}"
+    print("Results published to:", url)
+    return url
 
 
 async def edit_message_text(text):
@@ -1052,13 +1196,7 @@ def to_pascal_case(name: str) -> str:
                 token = ''
     if token:
         parts.append(token)
-    # Preserve existing internal capitalization within tokens.
-    # Only uppercase the first character of each token; do not lowercase the remainder.
-    def _cap_preserve(t: str) -> str:
-        if not t:
-            return ''
-        return t[:1].upper() + t[1:]
-    return ''.join(_cap_preserve(p) for p in parts)
+    return ''.join(p.capitalize() for p in parts)
 
 
 def discover_prompt_repo() -> Path:
@@ -1087,21 +1225,6 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
     Returns a mapping from agent name and all aliases (PascalCase) to full agent.yaml Path.
     """
     mapping: dict[str, Path] = {}
-
-    def _resolve_dir_case(parent: Path, name: str) -> Path:
-        """Return a child path using the on-disk directory name casing if present.
-
-        Performs a case-insensitive match among `parent` entries and returns the
-        actual directory Path so that `Path(...).parent.name` reflects real casing.
-        """
-        try:
-            target_lower = str(name).lower()
-            for entry in parent.iterdir():
-                if entry.is_dir() and entry.name.lower() == target_lower:
-                    return entry
-        except Exception:
-            pass
-        return parent / name
     try:
         if not index_path.exists():
             return mapping
@@ -1112,9 +1235,7 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
         if isinstance(agents_map, dict):
             for name in agents_map.keys():
                 name_pc = to_pascal_case(str(name))
-                # resolve to actual directory casing if present
-                agent_dir = _resolve_dir_case(base_dir, name_pc)
-                path = (agent_dir / 'agent.yaml')
+                path = (base_dir / name_pc / 'agent.yaml')
                 if path.exists():
                     mapping[name_pc] = path
                 # bind aliases
@@ -1274,62 +1395,56 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-def make_responses_image_generation_tool() -> FunctionTool:
+async def _generate_image_and_save(prompt_text: str, output_path: Path, *, size: str = '1024x1024', model: str = 'gpt-image-1') -> Path:
+    """Generate an image using OpenAI Images API and save PNG bytes to output_path.
+
+    - Uses the global AsyncOpenAI client initialized with proxy/timeouts
+    - Retries transient failures
     """
-    Factory: returns a FunctionTool that calls Responses API `image_generation`
-    to produce exactly one image.
-    """
-    async def on_invoke_tool(params: Dict[str, Any]) -> Dict[str, Any]:
-        prompt: str = params.get("prompt", "")
-        images: List[str] = params.get("images", []) or []
-        size: str = params.get("size", "1024x1024")
-        mask: Optional[str] = params.get("mask")
-        output_path: Optional[str] = params.get("output_path")
+    if not prompt_text or not isinstance(prompt_text, str):
+        raise ValueError("prompt_text must be a non-empty string")
 
-        base = images[0] if images else None
-        refs = images[1:] if len(images) > 1 else []
+    # Ensure directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if output_path:
-            out = Path(output_path)
-            await _responses_image_one_out(
-                prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=out
-            )
-            b64 = base64.b64encode(out.read_bytes()).decode("ascii")
-            return {"b64_png": b64, "saved_path": str(out), "size": size}
-        else:
-            with ExitStack() as stack:
-                tmp = stack.enter_context(tempfile.NamedTemporaryFile(suffix=".png", delete=False))
-                tmp_path = Path(tmp.name)
-                stack.callback(lambda: tmp_path.exists() and tmp_path.unlink(missing_ok=True))
-                await _responses_image_one_out(
-                    prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp_path
-                )
-                b64 = base64.b64encode(tmp_path.read_bytes()).decode("ascii")
-                return {"b64_png": b64, "saved_path": None, "size": size}
+    async def _call():
+        return await openai_client.images.generate(
+            model=model,
+            prompt=prompt_text,
+            size=size,
+            quality='high',
+            n=1,
+        )
 
-    params_schema = {
-        "type": "object",
-        "properties": {
-            "prompt": {"type": "string", "description": "Text prompt for image generation/editing"},
-            "images": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of image paths/URLs. images[0]=base image; images[1..]=reference images"
-            },
-            "size": {"type": "string", "default": "1024x1024"},
-            "mask": {"type": ["string", "null"], "description": "Optional mask path/URL"},
-            "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"}
-        },
-        "required": ["prompt", "images"],
-        "additionalProperties": False
-    }
+    try:
+        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+    except Exception as e:
+        print(f"[Images] Generation failed: {e}")
+        raise
 
-    return FunctionTool(
-        name="image_generation_one_out",
-        description="Render a single image using Responses API image_generation. Base + refs supported.",
-        params_json_schema=params_schema,
-        on_invoke_tool=on_invoke_tool,
-    )
+    try:
+        data0 = (resp.data[0] if hasattr(resp, 'data') and resp.data else None)
+        img_b64 = None
+        if data0 and hasattr(data0, 'b64_json') and data0.b64_json:
+            img_b64 = data0.b64_json
+        elif data0 and hasattr(data0, 'url') and data0.url:
+            # Fallback: fetch URL
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+                r = await client.get(data0.url)
+                r.raise_for_status()
+                content = r.content
+                with open(output_path, 'wb') as f:
+                    f.write(content)
+                return output_path
+        if not img_b64:
+            raise RuntimeError("OpenAI Images response missing b64_json and url")
+        img_bytes = base64.b64decode(img_b64)
+        with open(output_path, 'wb') as f:
+            f.write(img_bytes)
+        return output_path
+    except Exception as e:
+        print(f"[Images] Save failed: {e}")
+        raise
 
 
 def load_yaml(path: Path) -> dict:
@@ -1756,7 +1871,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool(), make_responses_image_generation_tool()]
+        tools = [WebSearchTool()]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
@@ -1834,7 +1949,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
             print("Step 1 output:")
             print(step1_output)
             
-            # Detect whether an image output is requested and generate it via Responses API
+            # Detect whether this is the UralImg agent and generate the image if requested
             img_path_for_notify: Path | None = None
             try:
                 # Identify agent folder and output filename from files_contract.outputs
@@ -1849,32 +1964,15 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 should_generate = bool(out_name and out_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')))
                 if should_generate and step1_output:
                     img_path_for_notify = _resolve_output_file_path(resolved_yaml_path, out_name)
-                    print(f"[Responses] Output file planned: {img_path_for_notify}")
+                    print(f"[Images] Generating image to: {img_path_for_notify}")
                     try:
-                        # Prefer JSON job (base + refs); else prompt-only generation fallback
-                        job = _parse_image_job_from_llm(step1_output)
-                        if job:
-                            print("[Responses] Detected JSON image-edit job (base + refs).")
-                            await _responses_image_one_out(
-                                prompt_text=job["prompt"],
-                                base_image=job.get("base_image"),
-                                ref_images=job.get("ref_images") or [],
-                                mask=job.get("mask"),
-                                size=job.get("size") or "1024x1024",
-                                output_path=img_path_for_notify,
-                            )
-                        else:
-                            print("[Responses] No JSON job; using prompt-only generation.")
-                            await _responses_image_one_out(
-                                prompt_text=step1_output,
-                                output_path=img_path_for_notify,
-                            )
+                        await _generate_image_and_save(step1_output, img_path_for_notify)
                     except Exception as e:
                         # Log and continue without image
-                        print(f"[Responses] Error creating image: {e}")
+                        print(f"[Images] Error generating image: {e}")
                         img_path_for_notify = None
             except Exception as e:
-                print(f"[Responses] Skipping image generation due to error: {e}")
+                print(f"[Images] Skipping image generation due to error: {e}")
 
             # Send Telegram digest notification only outside of debug mode
             if not debug:
@@ -1891,10 +1989,7 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
             # Only run SelfReflection when the original agent is AgentFab
-            # Consider both the resolved config name and the CLI-invoked name (may include leading '@')
-            invoked_name = (cli_agent_name or "").strip().lstrip("@").lower()
-            cfg_name_norm = (cfg.name or "").strip().lstrip("@").lower() if isinstance(cfg.name, str) else ""
-            is_agentfab = (cfg_name_norm == "agentfab") or (invoked_name == "agentfab")
+            is_agentfab = isinstance(cfg.name, str) and cfg.name.strip().lower() == "agentfab"
             if not is_agentfab:
                 # For non-AgentFab agents, finish after the first main run
                 break
@@ -2000,28 +2095,20 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
             # Loop control based on SelfReflection return code
             if sr_code not in ("PREV", "CONTINUE"):
-                # At the end of the cycle, ask user for the next message only in interactive shells
-                import sys as _sys
+                # At the end of the cycle, ask user for the next message
+                # Exit if the user types 'exit'; append to history otherwise
                 try:
-                    is_tty = hasattr(_sys, "stdin") and _sys.stdin and _sys.stdin.isatty()
+                    loop = asyncio.get_running_loop()
+                    prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
+                    user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
                 except Exception:
-                    is_tty = False
-                if is_tty:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
-                        user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
-                    except Exception:
-                        user_next = ""
+                    user_next = ""
 
-                    if isinstance(user_next, str) and user_next.strip().lower() == "exit":
-                        break
-                    # Append user's message (default to 'go') and continue the outer loop
-                    history.append({"role": "user", "content": (user_next or "go")})
-                    continue
-                else:
-                    print("[INFO] Non-interactive shell detected; skipping CLI prompt and finishing.")
+                if isinstance(user_next, str) and user_next.strip().lower() == "exit":
                     break
+                # Append user's message (default to 'go') and continue the outer loop
+                history.append({"role": "user", "content": (user_next or "go")})
+                continue
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
@@ -2040,10 +2127,6 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 async def main(agent_path: str = None, user_input: str = "", debug: bool = False, agent_name: str = ""):
     # Initialize OpenAI client with proper proxy configuration
     await init_openai_client()
-    # Allow caller to force debug prints
-    global DEBUG
-    if debug:
-        DEBUG = True
     
     # When debugging, avoid external side effects like Telegram messages
     if not debug:
@@ -2056,13 +2139,10 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     
     # Prepare the welcome message: show agent name and input
     display_name = (agent_attrs.get("name") if agent_attrs else None) or (agent_name or "Agent")
-    # Use <pre><code> for multi-line; <code> for single-line
-    msg_input = user_input or ""
-    if "\n" in msg_input:
-        code_block = f"<pre>{msg_input[:3600]}</pre>"
-    else:
-        code_block = f"<code>{msg_input[:3800]}</code>"
-    welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
+    welcome_text = (
+        f"<b>🔌 {display_name}</b>\n"
+        f"<code>{user_input[:3800]}</code>"
+    )
 
     
     # KISS: Single-pass selection — merge possible outputs and extract once
@@ -2142,52 +2222,69 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
 
 
 if __name__ == "__main__":
-    # Entrypoint policy:
-    # - If --cli flag is present: delegate to call.cli.main AFTER removing the flag
-    # - Otherwise, run local async main() with legacy args: <AgentName> [<input>]
+    import argparse
     import sys
-    import asyncio as _asyncio
+    from pathlib import Path
 
-    args = sys.argv[1:]
+    parser = argparse.ArgumentParser(
+        description='call — Call subsystem CLI: invoke agent by name with input',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Examples:
+  pwsh -c "python app/call.py DiscoveryAgent 'Summarize today news about Apple'"
+  python app/call.py UxManager "Analyze this dialog: <text>"
+  '''
+    )
 
-    # Fast-path: --echo prints parsed legacy args as JSON and exits
-    if "--echo" in args:
-        import json as _json
-        # Remove known flags but DO NOT change order of the remaining args
-        known_flags = {"--echo", "--cli"}
-        args_wo_flags = [a for a in args if a not in known_flags]
-        agent_name_echo = args_wo_flags[0] if args_wo_flags else ""
-        user_input_echo = " ".join(args_wo_flags[1:]) if len(args_wo_flags) > 1 else ""
-        # Try to discover the agent YAML path
+    parser.add_argument('agent', type=str, help='AgentName (case-insensitive, normalized to PascalCase)')
+    parser.add_argument('input', type=str, nargs='?', default='', help='Input payload text')
+    parser.add_argument('--agent-profile', type=str, help='Path to agent profile (optional)', default=os.getenv('AI_AGENT_PROFILE'))
+    parser.add_argument('--debug', action='store_true', help='Enable debug prints and stop after AgentDTO load')
+    parser.add_argument('--echo', action='store_true', help='Echo agent and input as JSON, then exit')
+
+    args = parser.parse_args()
+
+    # Preserve user-provided case; only strip leading '@' and whitespace
+    raw_agent = (args.agent or "").strip()
+    if raw_agent.startswith('@'):
+        raw_agent = raw_agent[1:]
+    agent_name = raw_agent
+    user_input = args.input or ''
+
+    
+
+    # Try discover agent YAML by normalized name
+    yaml_path = discover_agent_yaml(agent_name)
+    agent_path = args.agent_profile
+    if not agent_path and yaml_path:
+        agent_path = str(yaml_path)
+
+    # Echo mode: print structured agent/input and exit without running pipeline
+    if args.echo:
         try:
-            agent_yaml_path = discover_agent_yaml(agent_name_echo) if agent_name_echo else None
-            agent_yaml_str = str(agent_yaml_path) if agent_yaml_path else None
+            print(json.dumps({"module": "call.app.call", "name": agent_name, "input": user_input, "echo": True, "agent_path": agent_path, "debug": args.debug}, ensure_ascii=False))
+            sys.stdout.write('\n')
+            sys.stdout.flush()
         except Exception:
-            agent_yaml_str = None
-        payload = {
-            "AgentName": agent_name_echo,
-            "Input": user_input_echo,
-            "ArgsNoFlags": args_wo_flags,
-            "AllArgs": args,
-            "AgentPath": agent_yaml_str,
-            "Note": "Echo mode – no run performed"
-        }
-        print(_json.dumps(payload, ensure_ascii=False))
+            print(f"{agent_name}\t{user_input}")
         sys.exit(0)
 
-    if "--cli" in args:
-        # Strip the flag and forward to CLI
-        args_wo = [a for a in args if a != "--cli"]
-        from call.cli.main import main as cli_main
-        sys.argv = [sys.argv[0]] + args_wo
-        sys.exit(cli_main())
-
-    # No --cli: run our own async main()
-    # Accept legacy invocation: python -m call.app.call <AgentName> [<input>]
-    agent_name = ""
-    user_input = ""
-    if args:
-        agent_name = args[0]
-        user_input = " ".join(args[1:]) if len(args) > 1 else ""
-
-    _asyncio.run(main(agent_name=agent_name, user_input=user_input))
+    try:
+        # Pass discovered/explicit agent profile into pipeline
+        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug, agent_name=agent_name))
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user")
+        sys.exit(1)
+    except Exception as e:
+        try:
+            err = {
+                "module": "call.app.call",
+                "ok": False,
+                "error": format_exception_json(e),
+            }
+            print(json.dumps(err, ensure_ascii=False))
+            sys.stderr.flush()
+            sys.stdout.flush()
+        except Exception:
+            # Absolute fallback
+            print(f"{{\"ok\": false, \"error\": {{\"type\": \"{type(e).__name__}\", \"message\": \"{str(e)}\"}}}}")
+        sys.exit(1)
