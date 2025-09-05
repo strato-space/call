@@ -2150,6 +2150,31 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
 
+    # Fast-path: --echo prints parsed legacy args as JSON and exits
+    if "--echo" in args:
+        import json as _json
+        # Remove known flags but DO NOT change order of the remaining args
+        known_flags = {"--echo", "--cli"}
+        args_wo_flags = [a for a in args if a not in known_flags]
+        agent_name_echo = args_wo_flags[0] if args_wo_flags else ""
+        user_input_echo = " ".join(args_wo_flags[1:]) if len(args_wo_flags) > 1 else ""
+        # Try to discover the agent YAML path
+        try:
+            agent_yaml_path = discover_agent_yaml(agent_name_echo) if agent_name_echo else None
+            agent_yaml_str = str(agent_yaml_path) if agent_yaml_path else None
+        except Exception:
+            agent_yaml_str = None
+        payload = {
+            "AgentName": agent_name_echo,
+            "Input": user_input_echo,
+            "ArgsNoFlags": args_wo_flags,
+            "AllArgs": args,
+            "AgentPath": agent_yaml_str,
+            "Note": "Echo mode – no run performed"
+        }
+        print(_json.dumps(payload, ensure_ascii=False))
+        sys.exit(0)
+
     if "--cli" in args:
         # Strip the flag and forward to CLI
         args_wo = [a for a in args if a != "--cli"]
