@@ -481,6 +481,8 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             reply_markup=reply_markup
         )
     try:
+        if DEBUG:
+            print(f"[TG] send_message parse_mode={chosen_parse_mode}")
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     except BadRequest as e:
         # Fallback to plain text if Telegram can't parse entities
@@ -497,6 +499,8 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
                     parse_mode=None,
                     reply_markup=reply_markup,
                 )
+            if DEBUG:
+                print("[TG] BadRequest parse error, retrying as plain text")
             message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         else:
             raise
@@ -2033,10 +2037,13 @@ async def main(agent_path: str = None, user_input: str = "", debug: bool = False
     
     # Prepare the welcome message: show agent name and input
     display_name = (agent_attrs.get("name") if agent_attrs else None) or (agent_name or "Agent")
-    welcome_text = (
-        f"<b>🔌 {display_name}</b>\n"
-        f"<code>{user_input[:3800]}</code>"
-    )
+    # Use <pre><code> for multi-line; <code> for single-line
+    msg_input = user_input or ""
+    if "\n" in msg_input:
+        code_block = f"<pre>{msg_input[:3600]}</pre>"
+    else:
+        code_block = f"<code>{msg_input[:3800]}</code>"
+    welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
 
     
     # KISS: Single-pass selection — merge possible outputs and extract once

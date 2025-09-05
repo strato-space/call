@@ -214,6 +214,10 @@ def _sanitize_html_minimal(text: str) -> str:
          .replace("&lt;/b&gt;", "</b>")
          .replace("&lt;br&gt;", "<br>")
          .replace("&lt;br/&gt;", "<br/>")
+         .replace("&lt;code&gt;", "<code>")
+         .replace("&lt;/code&gt;", "</code>")
+         .replace("&lt;pre&gt;", "<pre>")
+         .replace("&lt;/pre&gt;", "</pre>")
     )
     return s
 
