@@ -438,6 +438,10 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             t = (s or "").strip()
             if not t:
                 return False
+            # Prefer HTML if explicit tags are present
+            # This prevents strings like "<b>…</b>" from being treated as Markdown
+            if "<" in t and ">" in t:
+                return False
             # Strong signal: fenced code blocks -> Markdown
             if "```" in t:
                 return True
@@ -447,9 +451,6 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             )
             if any(m in t for m in md_markers):
                 return True
-            # As a last check, if explicit HTML tags detected, prefer HTML path
-            if "<" in t and ">" in t:
-                return False
             return False
         except Exception:
             return False
