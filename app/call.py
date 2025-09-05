@@ -1890,7 +1890,10 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
             # Only run SelfReflection when the original agent is AgentFab
-            is_agentfab = isinstance(cfg.name, str) and cfg.name.strip().lower() == "agentfab"
+            # Consider both the resolved config name and the CLI-invoked name (may include leading '@')
+            invoked_name = (cli_agent_name or "").strip().lstrip("@").lower()
+            cfg_name_norm = (cfg.name or "").strip().lstrip("@").lower() if isinstance(cfg.name, str) else ""
+            is_agentfab = (cfg_name_norm == "agentfab") or (invoked_name == "agentfab")
             if not is_agentfab:
                 # For non-AgentFab agents, finish after the first main run
                 break
@@ -1996,20 +1999,28 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
             # Loop control based on SelfReflection return code
             if sr_code not in ("PREV", "CONTINUE"):
-                # At the end of the cycle, ask user for the next message
-                # Exit if the user types 'exit'; append to history otherwise
+                # At the end of the cycle, ask user for the next message only in interactive shells
+                import sys as _sys
                 try:
-                    loop = asyncio.get_running_loop()
-                    prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
-                    user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
+                    is_tty = hasattr(_sys, "stdin") and _sys.stdin and _sys.stdin.isatty()
                 except Exception:
-                    user_next = ""
+                    is_tty = False
+                if is_tty:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        prompt_text = "Enter next message (or 'exit' to finish, empty => 'go'): "
+                        user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
+                    except Exception:
+                        user_next = ""
 
-                if isinstance(user_next, str) and user_next.strip().lower() == "exit":
+                    if isinstance(user_next, str) and user_next.strip().lower() == "exit":
+                        break
+                    # Append user's message (default to 'go') and continue the outer loop
+                    history.append({"role": "user", "content": (user_next or "go")})
+                    continue
+                else:
+                    print("[INFO] Non-interactive shell detected; skipping CLI prompt and finishing.")
                     break
-                # Append user's message (default to 'go') and continue the outer loop
-                history.append({"role": "user", "content": (user_next or "go")})
-                continue
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
