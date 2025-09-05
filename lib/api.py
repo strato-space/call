@@ -196,9 +196,11 @@ def _read_indices() -> Dict[str, Dict[str, str]]:
                         out[to_pascal_case(child.name)] = str(y)
         return out
 
+    canon_af: Dict[str, str] = scan_canon(repo / 'AgentFab')
+    canon_ag: Dict[str, str] = scan_canon(repo / 'agents')
     canon: Dict[str, str] = {}
-    canon.update(scan_canon(repo / 'AgentFab'))
-    canon.update(scan_canon(repo / 'agents'))
+    canon.update(canon_af)
+    canon.update(canon_ag)
 
     # Merge maps for quick lookup
     # Merge and normalize all paths to strings for consistent comparisons/JSON
@@ -214,41 +216,57 @@ def _read_indices() -> Dict[str, Dict[str, str]]:
         else:
             aliases_map[k] = v
 
-    return {"agents": agents_map, "aliases": aliases_map}
+    return {"agents": agents_map, "aliases": aliases_map, "agents_af": canon_af, "agents_ag": canon_ag}
 
 
-def list(query: Optional[str] = None, include_aliases: bool = False) -> List[Dict[str, Any]]:
+def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped: bool = False) -> List[Dict[str, Any]] | Dict[str, List[Dict[str, Any]]]:
     """
-    Return list of available agents, with optional query filtering and alias inclusion.
-    Each item is a dict: {"name": str, "path": str, "aliases": [str, ...]}.
+    Return list of available agents.
+
+    When grouped is False (default): returns a flat list of items, each a dict
+    {"name": str, "path": str, "aliases": [str, ...]}.
+
+    When grouped is True: returns a dict with two lists keyed by registry roots:
+      {"AgentFab": [...], "agents": [...]} using the same item shape.
     """
     data = _read_indices()
     agents_map = data.get("agents", {})
     aliases_map = data.get("aliases", {})
+    agents_af = data.get("agents_af", {})
+    agents_ag = data.get("agents_ag", {})
 
     # Build reverse alias listing per canonical name
     alias_by_agent: Dict[str, List[str]] = {k: [] for k in agents_map.keys()}
     for alias, path in aliases_map.items():
         path_s = str(path)
-        # Attempt to map alias to a canonical agent by matching path
         for name, apath in agents_map.items():
             if str(apath) == path_s:
                 alias_by_agent[name].append(alias)
                 break
 
-    items: List[Dict[str, Any]] = []
     def match(s: str) -> bool:
         if not query:
             return True
         q = query.lower()
         return q in s.lower()
 
-    for name, path in sorted(agents_map.items()):
-        if not match(name) and not match(path):
-            continue
-        entry: Dict[str, Any] = {"name": name, "path": str(path)}
-        if include_aliases:
-            entry["aliases"] = sorted(alias_by_agent.get(name, []))
-        items.append(entry)
+    def build_items(src: Dict[str, str]) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for name, path in sorted(src.items()):
+            if not match(name) and not match(path):
+                continue
+            entry: Dict[str, Any] = {"name": name, "path": str(path)}
+            if include_aliases:
+                entry["aliases"] = sorted(alias_by_agent.get(name, []))
+            items.append(entry)
+        return items
 
-    return items
+    if grouped:
+        return {
+            "AgentFab": build_items(agents_af),
+            "agents": build_items(agents_ag),
+        }
+
+    # Default flat mode combines both groups
+    flat_source: Dict[str, str] = {**agents_af, **agents_ag}
+    return build_items(flat_source)

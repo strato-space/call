@@ -277,25 +277,30 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Run list via library API (no direct OpenAI calls here)
     try:
         log.debug("handle_list: query=%r include_aliases=%s", query, include_aliases)
-        items = call_api.list(query=query, include_aliases=include_aliases)
-        if not items:
+        groups = call_api.list(query=query, include_aliases=include_aliases, grouped=True)
+        # groups is a dict: {"AgentFab": [...], "agents": [...]}
+        if not isinstance(groups, dict) or (not groups.get("AgentFab") and not groups.get("agents")):
             await m.reply("No agents found")
             return
-        # Format: each line starts with @Name, no bold/markup
-        lines = []
-        seen = set()
-        for it in items[:200]:  # safety cap
-            name = (it.get("name") or "").strip()
-            if name and name not in seen:
-                lines.append(f"@{name}")
-                seen.add(name)
-            if include_aliases:
-                for al in (it.get("aliases") or []):
-                    al = (al or "").strip()
-                    if al and al not in seen:
-                        # Indent aliases with two spaces before '@'
-                        lines.append(f"  @{al}")
-                        seen.add(al)
+        lines: list[str] = []
+        def emit_group(title: str, items: list[dict]):
+            if not items:
+                return
+            lines.append(f"{title}")
+            seen: set[str] = set()
+            for it in items[:200]:  # safety cap per group
+                name = (it.get("name") or "").strip()
+                if name and name not in seen:
+                    lines.append(f"@{name}")
+                    seen.add(name)
+                if include_aliases:
+                    for al in (it.get("aliases") or []):
+                        al = (al or "").strip()
+                        if al and al not in seen:
+                            lines.append(f"  @{al}")
+                            seen.add(al)
+        emit_group("AgentFab", groups.get("AgentFab") or [])
+        emit_group("agents", groups.get("agents") or [])
         await m.reply("\n".join(lines), parse_mode=None)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}")

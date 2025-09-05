@@ -218,10 +218,24 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
 
-    # 0) Special-case: AgentFab root card
-    if query_norm.lower() == 'agentfab':
-        root_yaml = repo / 'AgentFab' / 'agent.yaml'
-        return root_yaml if root_yaml.exists() else None
+    # 0) Special-case: AgentFab root card and its aliases listed in AgentFab/agent.yaml
+    root_yaml = repo / 'AgentFab' / 'agent.yaml'
+    if root_yaml.exists():
+        if query_norm.lower() == 'agentfab':
+            return root_yaml
+        # Consider aliases from root card, e.g., "Agent Fab", "Factory", and custom entries like "AgentFabBot"
+        try:
+            data = load_yaml(root_yaml) or {}
+            root_aliases = data.get('aliases') or []
+            # Normalize and compare
+            for al in root_aliases:
+                if to_pascal_case(str(al)) == query_norm:
+                    return root_yaml
+            # Also accept a few common derived handles
+            if query_norm in {to_pascal_case('Agent Fab'), to_pascal_case('Factory'), to_pascal_case('AgentFabBot')}:
+                return root_yaml
+        except Exception:
+            pass
 
     # Ensure indices exist (best-effort)
     _ensure_indices(repo)
