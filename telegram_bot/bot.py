@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass
 import logging
 from typing import Callable, Awaitable, Optional
+import re
+import html as py_html
 import argparse
 import json
 import sys
@@ -22,6 +24,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -34,6 +37,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
+from call.app.utils.telegram_text import telegram_truncate_html_safe
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -171,10 +175,75 @@ class Messenger:
     update: Update
 
     async def reply(self, text: str, *, parse_mode: Optional[str] = ParseMode.HTML) -> None:
-        if self.update.message:
-            await self.update.message.reply_text(text=text, parse_mode=parse_mode)
-        elif self.update.effective_chat:
-            await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=text, parse_mode=parse_mode)
+        """Reply with sanitized text, safe truncation, retries, and fallback to plain text.
+
+        - If parse_mode == HTML: escape everything, then allow minimal tags we control (<b>, <br>)
+        - Truncate safely to avoid entity/tag cut (<= 4000 chars for safety)
+        - Retry on TimedOut with exponential backoff
+        - Fallback to plain text on BadRequest entity parse errors
+        """
+        # Small semaphore to avoid exhausting HTTPX connection pool under bursts
+        if not hasattr(self.context.application, "_send_semaphore"):
+            self.context.application._send_semaphore = asyncio.Semaphore(5)
+
+        async with self.context.application._send_semaphore:
+            prepared_text = text or ""
+            use_parse_mode = parse_mode
+
+            if parse_mode in (ParseMode.HTML, "HTML"):
+                try:
+                    # Escape everything first
+                    escaped = py_html.escape(prepared_text, quote=False)
+                    # Re-enable minimal controlled tags that we emit ourselves
+                    escaped = (
+                        escaped.replace("&lt;b&gt;", "<b>")
+                               .replace("&lt;/b&gt;", "</b>")
+                               .replace("&lt;br&gt;", "<br>")
+                               .replace("&lt;br/&gt;", "<br/>")
+                    )
+                    # Safe truncate
+                    prepared_text = telegram_truncate_html_safe(escaped, 4000)
+                    use_parse_mode = ParseMode.HTML
+                except Exception:
+                    # If anything goes wrong, fallback to plain
+                    use_parse_mode = None
+                    prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
+
+            async def _send(pt: str, pmode: Optional[str]):
+                if self.update.message:
+                    return await self.update.message.reply_text(text=pt, parse_mode=pmode)
+                elif self.update.effective_chat:
+                    return await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
+
+            # Retry loop for transient timeouts
+            for attempt in range(3):
+                try:
+                    await _send(prepared_text, use_parse_mode)
+                    return
+                except BadRequest as e:
+                    # Fallback to plain text if Telegram can't parse entities
+                    msg = str(e).lower()
+                    if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
+                        plain = re.sub(r"<[^>]+>", "", prepared_text)
+                        if len(plain) > 4096:
+                            plain = plain[:4095] + "…"
+                        await _send(plain, None)
+                        return
+                    raise
+                except TimedOut:
+                    if attempt == 2:
+                        break
+                    await asyncio.sleep(1 * (2 ** attempt))
+                except Exception:
+                    # Last-resort fallback to plain
+                    plain = re.sub(r"<[^>]+>", "", prepared_text)
+                    if len(plain) > 4096:
+                        plain = plain[:4095] + "…"
+                    await _send(plain, None)
+                    return
+            # If retries exhausted due to TimedOut, send minimal plain notification
+            fallback = "Service temporarily unavailable. Please try again later."
+            await _send(fallback, None)
 
 
 # Authorization decorator
@@ -459,6 +528,8 @@ def main() -> None:
         connect_timeout=20.0,
         read_timeout=120.0,
         write_timeout=60.0,
+        pool_timeout=30.0,
+        get_updates_timeout=30.0,
     )
 
     app = (
