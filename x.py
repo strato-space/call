@@ -62,7 +62,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool
-from agents.tool import FileSearchTool, Tool
+from agents.tool import FileSearchTool, FunctionTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -76,7 +76,7 @@ from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=str(_env_file))
+load_dotenv(dotenv_path=str(_env_file), override=True)
 
 async def async_retry(
     op: Callable[[], Awaitable[Any]],
@@ -227,6 +227,10 @@ bot: Bot
 async def init_bot():
     global bot
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
+    # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
+    import os as _os
+    _os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
+    _os.environ.setdefault("no_proxy", "api.telegram.org,*.telegram.org")
     request = HTTPXRequest(
         connect_timeout=20.0,
         read_timeout=120.0,
@@ -1032,7 +1036,13 @@ def to_pascal_case(name: str) -> str:
                 token = ''
     if token:
         parts.append(token)
-    return ''.join(p.capitalize() for p in parts)
+    # Preserve existing internal capitalization within tokens.
+    # Only uppercase the first character of each token; do not lowercase the remainder.
+    def _cap_preserve(t: str) -> str:
+        if not t:
+            return ''
+        return t[:1].upper() + t[1:]
+    return ''.join(_cap_preserve(p) for p in parts)
 
 
 def discover_prompt_repo() -> Path:
@@ -1248,30 +1258,21 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-class ImageGenerationTool(Tool):
+def make_responses_image_generation_tool() -> FunctionTool:
     """
-    Use Responses API `image_generation` to produce exactly one image.
-    Args:
-      - prompt: text
-      - images: list[str] (images[0] = base; others = refs)
-      - size: "1024x1024" (default)
-      - mask: optional path/url
-      - output_path: optional file path to save
-    Returns: {"b64_png": "...", "saved_path": "<path|None>", "size": "..."}
+    Factory: returns a FunctionTool that calls Responses API `image_generation`
+    to produce exactly one image.
     """
-    name = "image_generation_one_out"
-    description = "Render a single image using Responses API image_generation. Base + refs supported."
+    async def on_invoke_tool(params: Dict[str, Any]) -> Dict[str, Any]:
+        prompt: str = params.get("prompt", "")
+        images: List[str] = params.get("images", []) or []
+        size: str = params.get("size", "1024x1024")
+        mask: Optional[str] = params.get("mask")
+        output_path: Optional[str] = params.get("output_path")
 
-    class Args(Tool.Args):
-        prompt: str
-        images: List[str]
-        size: Optional[str] = "1024x1024"
-        mask: Optional[str] = None
-        output_path: Optional[str] = None
-
-    async def run(self, prompt: str, images: List[str], size: str = "1024x1024", mask: Optional[str] = None, output_path: Optional[str] = None):
         base = images[0] if images else None
-        refs = images[1:] if images and len(images) > 1 else []
+        refs = images[1:] if len(images) > 1 else []
+
         if output_path:
             out = Path(output_path)
             await _responses_image_one_out(
@@ -1279,17 +1280,40 @@ class ImageGenerationTool(Tool):
             )
             b64 = base64.b64encode(out.read_bytes()).decode("ascii")
             return {"b64_png": b64, "saved_path": str(out), "size": size}
-        # in-memory only
-        tmp = Path(os.path.join("/tmp", f"resp_one_out_{os.getpid()}.png"))
-        await _responses_image_one_out(
-            prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp
-        )
-        b64 = base64.b64encode(tmp.read_bytes()).decode("ascii")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return {"b64_png": b64, "saved_path": None, "size": size}
+        else:
+            with ExitStack() as stack:
+                tmp = stack.enter_context(tempfile.NamedTemporaryFile(suffix=".png", delete=False))
+                tmp_path = Path(tmp.name)
+                stack.callback(lambda: tmp_path.exists() and tmp_path.unlink(missing_ok=True))
+                await _responses_image_one_out(
+                    prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp_path
+                )
+                b64 = base64.b64encode(tmp_path.read_bytes()).decode("ascii")
+                return {"b64_png": b64, "saved_path": None, "size": size}
+
+    params_schema = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "Text prompt for image generation/editing"},
+            "images": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of image paths/URLs. images[0]=base image; images[1..]=reference images"
+            },
+            "size": {"type": "string", "default": "1024x1024"},
+            "mask": {"type": ["string", "null"], "description": "Optional mask path/URL"},
+            "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"}
+        },
+        "required": ["prompt", "images"],
+        "additionalProperties": False
+    }
+
+    return FunctionTool(
+        name="image_generation_one_out",
+        description="Render a single image using Responses API image_generation. Base + refs supported.",
+        params_json_schema=params_schema,
+        on_invoke_tool=on_invoke_tool,
+    )
 
 
 def load_yaml(path: Path) -> dict:
@@ -1716,7 +1740,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         # ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool(), ImageGenerationTool()]
+        tools = [WebSearchTool(), make_responses_image_generation_tool()]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
@@ -2084,69 +2108,28 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
 
 
 if __name__ == "__main__":
-    import argparse
+    # Legacy entrypoint stub that delegates to the unified CLI.
+    # It preserves backwards-compatibility for old invocations:
+    #   python -m call.app.call <AgentName> [<input>]
+    # maps to:
+    #   python -m call.cli.main call <AgentName> [<input>]
     import sys
-    from pathlib import Path
+    from call.cli.main import main as cli_main
 
-    parser = argparse.ArgumentParser(
-        description='call — Call subsystem CLI: invoke agent by name with input',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''Examples:
-  pwsh -c "python app/call.py DiscoveryAgent 'Summarize today news about Apple'"
-  python app/call.py UxManager "Analyze this dialog: <text>"
-  '''
-    )
+    args = sys.argv[1:]
+    # No args -> fall through to CLI (will show help)
+    if not args:
+        sys.exit(cli_main())
 
-    parser.add_argument('agent', type=str, help='AgentName (case-insensitive, normalized to PascalCase)')
-    parser.add_argument('input', type=str, nargs='?', default='', help='Input payload text')
-    parser.add_argument('--agent-profile', type=str, help='Path to agent profile (optional)', default=os.getenv('AI_AGENT_PROFILE'))
-    parser.add_argument('--debug', action='store_true', help='Enable debug prints and stop after AgentDTO load')
-    parser.add_argument('--echo', action='store_true', help='Echo agent and input as JSON, then exit')
+    # If already using CLI subcommands, pass through unchanged
+    if args[0] in ("list", "call"):
+        sys.argv = [sys.argv[0]] + args
+        sys.exit(cli_main())
 
-    args = parser.parse_args()
-
-    # Preserve user-provided case; only strip leading '@' and whitespace
-    raw_agent = (args.agent or "").strip()
-    if raw_agent.startswith('@'):
-        raw_agent = raw_agent[1:]
-    agent_name = raw_agent
-    user_input = args.input or ''
-
-    
-
-    # Try discover agent YAML by normalized name
-    yaml_path = discover_agent_yaml(agent_name)
-    agent_path = args.agent_profile
-    if not agent_path and yaml_path:
-        agent_path = str(yaml_path)
-
-    # Echo mode: print structured agent/input and exit without running pipeline
-    if args.echo:
-        try:
-            print(json.dumps({"module": "call.app.call", "name": agent_name, "input": user_input, "echo": True, "agent_path": agent_path, "debug": args.debug}, ensure_ascii=False))
-            sys.stdout.write('\n')
-            sys.stdout.flush()
-        except Exception:
-            print(f"{agent_name}\t{user_input}")
-        sys.exit(0)
-
-    try:
-        # Pass discovered/explicit agent profile into pipeline
-        asyncio.run(main(agent_path=agent_path, user_input=user_input, debug=args.debug, agent_name=agent_name))
-    except KeyboardInterrupt:
-        print("\nOperation cancelled by user")
-        sys.exit(1)
-    except Exception as e:
-        try:
-            err = {
-                "module": "call.app.call",
-                "ok": False,
-                "error": format_exception_json(e),
-            }
-            print(json.dumps(err, ensure_ascii=False))
-            sys.stderr.flush()
-            sys.stdout.flush()
-        except Exception:
-            # Absolute fallback
-            print(f"{{\"ok\": false, \"error\": {{\"type\": \"{type(e).__name__}\", \"message\": \"{str(e)}\"}}}}")
-        sys.exit(1)
+    # Legacy form: treat first token as agent name and the rest as input text
+    agent_name = args[0]
+    input_text = " ".join(args[1:]) if len(args) > 1 else ""
+    sys.argv = [sys.argv[0], "call", agent_name]
+    if input_text:
+        sys.argv.append(input_text)
+    sys.exit(cli_main())
