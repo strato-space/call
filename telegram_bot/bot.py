@@ -532,7 +532,6 @@ def main() -> None:
         read_timeout=120.0,
         write_timeout=60.0,
         pool_timeout=30.0,
-        get_updates_timeout=30.0,
     )
 
     app = (
