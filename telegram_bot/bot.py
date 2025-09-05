@@ -375,12 +375,20 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await m.reply(str(ve), parse_mode=None)
         return
 
-    # Kick off a background task for isolation and responsiveness, and pass chat/thread
-    cid = getattr(update.effective_chat, 'id', None) if update else None
-    tid = getattr(getattr(update.message, 'message_thread_id', None), '__int__', lambda: None)()
-    if tid is None and update and update.message:
-        tid = getattr(update.message, 'message_thread_id', None)
-    asyncio.create_task(_call_task(m, name, rest, echo=echo_flag, chat_id=cid, thread_id=tid))
+    # Kick off a background task and pass the exact chat/thread where the command was received.
+    # These values should take precedence over any Agent card defaults or env variables downstream.
+    cid = update.effective_chat.id if update and update.effective_chat else None
+    tid = update.message.message_thread_id if update and update.message else None
+    asyncio.create_task(
+        _call_task(
+            m,
+            name,
+            rest,
+            echo=echo_flag,
+            chat_id=cid,
+            thread_id=tid,
+        )
+    )
     log.info("handle_call: scheduled task for name=%s", name)
     await m.reply(f"Started: <b>{name}</b>")
 

@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, Optional
+import os
+import sys
+import traceback
 
 # Discovery helpers are centralized in call.lib.discovery to avoid circular imports
 from call.lib.discovery import (
@@ -71,13 +74,67 @@ async def call_async(
     # Use default samples dir from discovery module to avoid importing app layer here
     from call.lib.discovery import default_samples_dir
 
-    agent, history, final_output = await app_call.run_digest_pipeline(
+    # Optionally enable periodic asyncio tasks dump (for diagnosing long waits)
+    dump_period_s = 0
+    try:
+        dump_period_s = int(os.environ.get("CALL_DUMP_TASKS_EVERY", "0") or "0")
+    except Exception:
+        dump_period_s = 0
+    dump_file_path = os.environ.get("CALL_DUMP_TASKS_FILE", "")
+    dump_fp = None
+
+    async def _dump_tasks_periodically(period: int):
+        # Delay once to let the run start
+        await asyncio.sleep(period)
+        while True:
+            try:
+                out = dump_fp if dump_fp is not None else sys.stderr
+                print("\n=== asyncio tasks dump ===", file=out)
+                for t in asyncio.all_tasks():
+                    if t is asyncio.current_task():
+                        continue
+                    print(f"Task: {t!r}", file=out)
+                    for fr in t.get_stack(limit=20):
+                        traceback.print_stack(f=fr, file=out)
+                    print("---", file=out)
+                print("=== end ===\n", file=out)
+                if dump_fp is not None:
+                    try:
+                        dump_fp.flush()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            await asyncio.sleep(period)
+
+    dump_task = None
+    try:
+        if dump_period_s > 0:
+            if dump_file_path:
+                try:
+                    dump_fp = open(dump_file_path, "a", encoding="utf-8", buffering=1)
+                except Exception:
+                    dump_fp = None
+            dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
+
+        agent, history, final_output = await app_call.run_digest_pipeline(
         default_samples_dir,
         agent_path=str(yaml_path),
         user_input=input_text or "",
         debug=False,
         cli_agent_name=name,
-    )
+        )
+    finally:
+        if dump_task is not None:
+            try:
+                dump_task.cancel()
+            except Exception:
+                pass
+        if dump_fp is not None:
+            try:
+                dump_fp.close()
+            except Exception:
+                pass
 
     return {
         "ok": True,
