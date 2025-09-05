@@ -19,7 +19,7 @@ from call.lib import api as call_api
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    items = call_api.list(query=args.q, include_aliases=args.aliases)
+    items = call_api.list(query=args.q, include_aliases=args.aliases, grouped=bool(getattr(args, 'grouped', False)))
     print(json.dumps(items, ensure_ascii=False, indent=2))
     return 0
 
@@ -79,6 +79,7 @@ def main() -> int:
     p_list = sub.add_parser("list", help="List available agents")
     p_list.add_argument("--aliases", action="store_true", help="Include aliases in output")
     p_list.add_argument("--q", type=str, default=None, help="Filter substring for names/paths")
+    p_list.add_argument("--grouped", action="store_true", help="Group output into AgentFab and agents sections")
     p_list.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
