@@ -286,7 +286,8 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         def emit_group(title: str, items: list[dict]):
             if not items:
                 return
-            lines.append(f"{title}")
+            # Bold header with HTML parse mode
+            lines.append(f"<b>{title}</b>")
             seen: set[str] = set()
             for it in items[:200]:  # safety cap per group
                 name = (it.get("name") or "").strip()
@@ -299,9 +300,30 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         if al and al not in seen:
                             lines.append(f"  @{al}")
                             seen.add(al)
-        emit_group("AgentFab", groups.get("AgentFab") or [])
+        # Emit AgentFab block with explicit @AgentFab at the top
+        af_items = groups.get("AgentFab") or []
+        if af_items:
+            lines.append("<b>AgentFab</b>")
+            seen_af: set[str] = set()
+            # Always include @AgentFab entry
+            lines.append("@AgentFab")
+            seen_af.add("AgentFab")
+            for it in af_items[:200]:
+                name = (it.get("name") or "").strip()
+                if name and name not in seen_af:
+                    lines.append(f"@{name}")
+                    seen_af.add(name)
+                if include_aliases:
+                    for al in (it.get("aliases") or []):
+                        al = (al or "").strip()
+                        if al and al not in seen_af:
+                            lines.append(f"  @{al}")
+                            seen_af.add(al)
+            # Add extra blank line after AgentFab block
+            lines.append("")
+        # Emit agents block
         emit_group("agents", groups.get("agents") or [])
-        await m.reply("\n".join(lines), parse_mode=None)
+        await m.reply("\n".join(lines), parse_mode="HTML")
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}")
 
