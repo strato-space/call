@@ -18,17 +18,13 @@ mcpServers:
     enabled: true
     # uvx --env-file /home/strato-space/call/.env mcp-google-sheets serve
     command: uvx
-    args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets==0.5.1"]
-    # serverUrl: "https://gsh-mcp.stratospace.fun"
-    # bridge:
-    #   command: mcp-stdio-bridge
-    #   args:
-    #     - "--url"
-    #     - "{serverUrl}"
-    #     - "--header"
-    #     - "Authorization: Bearer {API_ACCESS_TOKEN}"
-    #   env: {}
-
+    args:
+    - --env-file
+    - /home/strato-space/call/.env
+    - --from
+    - git+https://github.com/strato-space/mcp-google-sheets@main
+    - mcp-google-sheets
+    
   ev:
     serverUrl: "https://ev-mcp.stratospace.fun"
 
