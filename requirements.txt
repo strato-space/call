@@ -14,15 +14,11 @@ PyYAML                      # YAML parsing for agent configs (required by call.p
 beautifulsoup4
 # llama-index removed: pulls pandas build on Python 3.13; not used in call/
 # pathway>=0.5.0
-bs4
 setuptools 
 wheel
-pydantic 
-pydantic-core
-
+pydantic
 python-dotenv
 beautifulsoup4
 mcp>=1.9.4,<2
 pydantic>=2,<3
 pydantic-settings[dotenv]>=2.5.2,<3
-

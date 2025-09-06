@@ -165,7 +165,10 @@ def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
 
 # --- Centralized builders -----------------------------------------------------
 
-_MDV2_SPECIAL = r"_[]()~`>#+-=|{}.!*"
+# MarkdownV2 specials to escape in plain text.
+# We intentionally skip '*', '_' and also '[', ']', '(', ')' so that
+# emphasis and link syntax can render when already balanced in the input.
+_MDV2_SPECIAL = r"~`>#+-=|{}.!"
 
 
 def _escape_markdown_v2(text: str) -> str:
@@ -184,7 +187,16 @@ def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2")
     """
     try:
         if version.lower() == "v2":
-            escaped = _escape_markdown_v2(md or "")
+            # Normalize common formatting issues before escaping
+            s0 = md or ""
+            # Join Markdown links broken by newlines: "]\n(" -> "]("
+            s0 = re.sub(r"\]\s*\n\s*\(", "](", s0)
+            # Move outer bold/italic that wraps entire link inside the brackets:
+            # **[Text](url)** -> [**Text**](url)
+            s0 = re.sub(r"\*\*\[([^\]]+)\]\(([^)]+)\)\*\*", r"[**\1**](\2)", s0)
+            # __[Text](url)__ -> [__Text__](url)
+            s0 = re.sub(r"__\[([^\]]+)\]\(([^)]+)\)__", r"[__\1__](\2)", s0)
+            escaped = _escape_markdown_v2(s0)
             safe = telegram_truncate_markdown_safe(escaped, max_len)
             return safe, "MarkdownV2"
         else:
@@ -202,16 +214,19 @@ def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2")
 def _sanitize_html_minimal(text: str) -> str:
     """Escape everything then restore minimal safe tags we may intentionally add.
 
-    Restores: <b>, </b>, <br>, <br/>
+    Restores: <b>, </b>, <i>, </i>, <a href=...>, </a>, <br>, <br/>, <code>, </code>, <pre>, </pre>
     Extend as needed.
     """
     s = text or ""
     s = re.sub(r"<[^>]*$", "", s)  # cut any trailing partial tag from input
     s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    # restore minimal controlled tags
+
+    # basic restores for simple non-attribute tags
     s = (
         s.replace("&lt;b&gt;", "<b>")
          .replace("&lt;/b&gt;", "</b>")
+         .replace("&lt;i&gt;", "<i>")
+         .replace("&lt;/i&gt;", "</i>")
          .replace("&lt;br&gt;", "<br>")
          .replace("&lt;br/&gt;", "<br/>")
          .replace("&lt;code&gt;", "<code>")
@@ -219,6 +234,24 @@ def _sanitize_html_minimal(text: str) -> str:
          .replace("&lt;pre&gt;", "<pre>")
          .replace("&lt;/pre&gt;", "</pre>")
     )
+
+    # Safe restore for anchors: allow only http/https href
+    # Pattern matches: &lt;a href="..."&gt; -> validate URL -> <a href="...">
+    def _restore_anchor(m: re.Match) -> str:
+        href = m.group(1)
+        # unescape quotes/entities potentially present in href value
+        href_unescaped = href.replace("&amp;", "&").replace("&quot;", '"')
+        if href_unescaped.startswith("http://") or href_unescaped.startswith("https://"):
+            # re-escape double quotes in attribute value
+            safe_href = href_unescaped.replace('"', '&quot;')
+            return f'<a href="{safe_href}">'
+        return m.group(0)  # keep escaped if not allowed
+
+    # restore opening <a href="...">
+    s = re.sub(r"&lt;a\s+href=\"([^\"]+)\"&gt;", _restore_anchor, s, flags=re.IGNORECASE)
+    # restore closing </a>
+    s = s.replace("&lt;/a&gt;", "</a>")
+
     return s
 
 
