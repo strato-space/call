@@ -84,6 +84,31 @@ When the library runs successfully, it returns:
 
 `voice/src/actions/main.py` inspects the returned dict from the call library. If `{ ok: false }`, it maps `error_code` to the HTTP status and returns the body as-is, so clients receive a proper HTTP status (e.g., 404/500) with a Telegram-style error JSON.
 
+## Listing available agents
+
+You can enumerate available agents discovered in the Prompt repository via the library, the Actions API, or the MCP server.
+
+- Library (Python):
+
+  ```python
+  from call.lib.api import list as list_agents
+
+  flat = list_agents()  # [{"name": "...", "path": "..."}, ...]
+  with_aliases = list_agents(include_aliases=True)
+  grouped = list_agents(grouped=True)  # {"AgentFab": [...], "agents": [...]}
+  filtered = list_agents(query="news")
+  ```
+
+- Voice Actions API (requires bearer):
+
+  - GET `/agents`
+  - Query params: `query`, `include_aliases` (bool), `grouped` (bool)
+
+- MCP (mcp-voicebot):
+
+  - Tool name: `agents`
+  - Args: `query?: string`, `include_aliases?: boolean`, `grouped?: boolean`
+
 ### Running with local virtual environment
 
 Prefer the project venv interpreter to run commands:
