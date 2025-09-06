@@ -9,13 +9,15 @@
         "C:\\home\\strato-space",
         "C:\\Users\\Leader\\PycharmProjects"
       ],
-      "sequential-thinking-local": {
+      "env": {}
+      },
+      "seq-local": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
       "env": {}
-    },
-      "env": {}
-      },
+     },
+     "gsh": {"serverUrl": "https://gsh-mcp.stratospace.fun"}, 
+     
      "ev":  {"serverUrl": "https://ev-mcp.stratospace.fun"},
      "fs": {"serverUrl": "https://fs-mcp.stratospace.fun"},
     "git-server-local": {
@@ -107,7 +109,7 @@
     "tm":  {"serverUrl": "https://tm-mcp.stratospace.fun"},  
     
 
-    "gsh": {"serverUrl": "https://gsh-mcp.stratospace.fun"}, 
+  
     "tg":  {"serverUrl": "https://tg-mcp.stratospace.fun"},  
     "voice": {"serverUrl": "https://voice-mcp.stratospace.fun"},
     "github-mcp-server": {
