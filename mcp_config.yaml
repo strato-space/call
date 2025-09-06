@@ -16,8 +16,9 @@ mcpServers:
   # If you want to run a local process, provide command/args env like other *-local servers.
   gsh:
     enabled: true
+    # uvx --env-file /home/strato-space/call/.env mcp-google-sheets serve
     command: uvx
-    args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets", "serve"]
+    args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets@latest"]
     # serverUrl: "https://gsh-mcp.stratospace.fun"
     # bridge:
     #   command: mcp-stdio-bridge
