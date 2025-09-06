@@ -15,7 +15,7 @@ mcpServers:
   # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
   # If you want to run a local process, provide command/args env like other *-local servers.
   gsh:
-    enabled: false
+    enabled: true
     serverUrl: "https://gsh-mcp.stratospace.fun"
     # bridge:
     #   command: mcp-stdio-bridge
