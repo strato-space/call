@@ -1322,7 +1322,9 @@ def make_responses_image_generation_tool() -> FunctionTool:
             "mask": {"type": ["string", "null"], "description": "Optional mask path/URL"},
             "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"}
         },
-        "required": ["prompt", "images"],
+        # The OpenAI Responses tools validator requires 'required' to list ALL properties.
+        # Include every key from 'properties' to satisfy the strict schema check.
+        "required": ["prompt", "images", "size", "mask", "output_path"],
         "additionalProperties": False
     }
 
