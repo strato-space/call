@@ -3,7 +3,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
-from contextlib import asynccontextmanager, ExitStack
+from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
 from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
@@ -1736,26 +1736,80 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         async with build_agent_by_name(name, samples_dir) as (agent, cfg):
             ...
     """
-    server_gsheets = None
-    async with MCPServerStdioHook(
-        params={
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-filesystem", samples_dir],
-        },
-        name="fs",
-        client_session_timeout_seconds=60,
-    ) as server_fs, MCPServerStdioHook(
-        params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
-        name="seq",
-        client_session_timeout_seconds=180,
-    ) as server_seq, MCPServerStdioHook(
-        params={
-            "command": "uvx",
-            "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"],
-        },
-        client_session_timeout_seconds=60,
-    ) as server_gsheets:
+    # Optional YAML config to control MCP servers
+    cfg_yaml: dict | None = None
+    yaml_path = _call_dir / "mcp_config.yaml"
+    if yaml_path.exists():
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                cfg_yaml = yaml.safe_load(f) or {}
+        except Exception:
+            cfg_yaml = None
 
+    async with AsyncExitStack() as astack:
+        servers = []
+
+        def _spec(name: str) -> dict | None:
+            if not cfg_yaml:
+                return None
+            return (cfg_yaml.get("mcpServers") or {}).get(name)
+
+        async def _open_stdio(name: str, spec: dict, timeout: int) -> Any:
+            cmd = (spec or {}).get("command")
+            args = (spec or {}).get("args") or []
+            if not cmd:
+                return None
+            server = await astack.enter_async_context(
+                MCPServerStdioHook(
+                    params={"command": cmd, "args": args},
+                    name=name,
+                    client_session_timeout_seconds=timeout,
+                )
+            )
+            servers.append(server)
+            return server
+
+        # Start ALL enabled servers from YAML (no hardcoded list)
+        mcp_servers_started: list[Any] = []
+        if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
+            for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
+                if not isinstance(spec, dict):
+                    continue
+                if not spec.get("enabled", False):
+                    continue
+                # Prefer stdio via command/args
+                if "command" in spec:
+                    timeout = int(spec.get("timeoutSeconds", 120))
+                    srv = await _open_stdio(name, spec, timeout)
+                    if srv:
+                        mcp_servers_started.append(srv)
+                    continue
+                # Remote with bridge
+                if "serverUrl" in spec and isinstance(spec.get("bridge"), dict):
+                    bridge = spec["bridge"]
+                    bcmd = bridge.get("command")
+                    bargs = list(bridge.get("args") or [])
+                    if bcmd:
+                        url = spec.get("serverUrl") or ""
+                        token = os.getenv("API_ACCESS_TOKEN", "")
+                        fmt_args = []
+                        for a in bargs:
+                            if isinstance(a, str):
+                                a = a.replace("{serverUrl}", url).replace("{API_ACCESS_TOKEN}", token)
+                            fmt_args.append(a)
+                        bridge_spec = {"command": bcmd, "args": fmt_args}
+                        timeout = int(spec.get("timeoutSeconds", 120))
+                        srv = await _open_stdio(name, bridge_spec, timeout)
+                        if srv:
+                            mcp_servers_started.append(srv)
+                    else:
+                        logging.info("MCP '%s' has serverUrl but no bridge.command; skipping.", name)
+                else:
+                    # serverUrl without bridge => not supported by stdio launcher
+                    if "serverUrl" in spec:
+                        logging.info("MCP '%s' is remote (%s) but no bridge is defined; skipping.", name, spec.get("serverUrl"))
+
+        # Build agent
         cfg = await build_agent_config(agent_name)
         tools = [WebSearchTool(), make_responses_image_generation_tool()]
         if cfg.vs_list:
@@ -1763,27 +1817,25 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
             except Exception:
                 pass
+        # If YAML provided, use what we started; otherwise none
+        mcp_servers = mcp_servers_started
         agent = Agent(
             name=f"{cfg.name} [agent]",
             instructions=cfg.instructions,
             tools=tools,
-            mcp_servers=[server_fs, server_seq] + ([server_gsheets] if server_gsheets else []),
+            mcp_servers=mcp_servers,
             model=cfg.model,
             model_settings=(cfg.model_settings or ModelSettings()),
         )
 
-        # Expose tools from servers (let errors surface for easier debugging)
+        # Expose tools; count GSheets tools if present
         run_context = RunContextWrapper(context=None)
-        _ = await server_fs.list_tools(run_context, agent)
-        _ = await server_seq.list_tools(run_context, agent)
-        if server_gsheets:
-            tools_gsheets = await server_gsheets.list_tools(run_context, agent)
-            print("Google Sheets tools count:", len(tools_gsheets))
+        for srv in mcp_servers:
+            _ = await srv.list_tools(run_context, agent)
 
         try:
             yield agent, cfg
         finally:
-            # Context managers will close servers automatically
             pass
 
 
