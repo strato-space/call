@@ -1,0 +1,128 @@
+{
+    "mcpServers": {
+     "fs-local": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/home/strato-space",
+        "C:\\home\\strato-space",
+        "C:\\Users\\Leader\\PycharmProjects"
+      ],
+      "sequential-thinking-local": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "env": {}
+    },
+      "env": {}
+      },
+     "ev":  {"serverUrl": "https://ev-mcp.stratospace.fun"},
+     "fs": {"serverUrl": "https://fs-mcp.stratospace.fun"},
+    "git-server-local": {
+      "command": "uvx",
+      "args": [
+        "--env-file",
+        "D:\\home\\strato-space\\prompt\\.env",
+        "mcp-server-git",
+        "--repository",
+        "D:\\home\\strato-space\\server"
+      ]
+    },
+    "git-rms-local": {
+      "command": "uvx",
+      "args": [
+        "--env-file",
+        "D:\\home\\strato-space\\prompt\\.env",
+        "mcp-server-git",
+        "--repository",
+        "D:\\home\\strato-space\\rms"
+      ]
+    },
+    
+
+    "memory-local": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": "C:\\Users\\Leader\\PycharmProjects\\memory"
+      }
+    },
+    
+    
+    "time-local": {
+      "command": "python",
+      "args": ["-m", "mcp_server_time"],
+      "env": {}
+    },
+    "mcp-google-sheets-local": {
+      "command": "uvx",
+      "args": [
+        "--env-file", "C:\\Users\\Leader\\PycharmProjects\\ai\\.env",
+        "--from", "C:\\Users\\Leader\\PycharmProjects\\mcp-google-sheets",
+        "mcp-google-sheets"
+      ],
+      "env": {
+        "SERVICE_ACCOUNT_PATH": "C:\\Users\\Leader\\PycharmProjects\\ai\\wallet\\service-account-key.json"
+      }
+    },
+    "github0": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "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"
+      }
+    },
+    
+    "git-empty-local": {
+      "command": "uvx",
+      "args": ["--env-file", "C:\\home\\strato-space\\prompt\\.env", "mcp-server-git", "--repository", "C:\\home\\strato-space\\empty"]
+    },
+
+    "git-prompt-local": {
+      "command": "uvx",
+      "args": ["--env-file", "C:\\home\\strato-space\\prompt\\.env", "mcp-server-git", "--repository", "C:\\home\\strato-space\\prompt"]
+    },
+
+
+    "fe":  {"serverUrl": "https://fe-mcp.stratospace.fun"},  
+    "git": {"serverUrl": "https://git-mcp.stratospace.fun"}, 
+    
+    "github-0": { "type": "http", "url": "https://api.githubcopilot.com/mcp/"},
+    "github": {
+      "serverUrl": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer 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"
+      }
+    },  
+    "git-server": {"serverUrl": "https://git-server-mcp.stratospace.fun"}, 
+    "git-rms": {"serverUrl": "https://git-rms-mcp.stratospace.fun"}, 
+    "git-prompt": {"serverUrl": "https://git-prompt-mcp.stratospace.fun"}, 
+
+    
+    "mem": {"serverUrl": "https://mem-mcp.stratospace.fun"}, 
+    "seq": {"serverUrl": "https://seq-mcp.stratospace.fun"}, 
+    "tm":  {"serverUrl": "https://tm-mcp.stratospace.fun"},  
+    
+
+    "gsh": {"serverUrl": "https://gsh-mcp.stratospace.fun"}, 
+    "tg":  {"serverUrl": "https://tg-mcp.stratospace.fun"},  
+    "voice": {"serverUrl": "https://voice-mcp.stratospace.fun"},
+    "github-mcp-server": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "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"
+      }
+    }
+  } 
+}
