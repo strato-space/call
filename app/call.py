@@ -1733,27 +1733,29 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             ...
     """
     server_gsheets = None
-    async with MCPServerStdioHook(
+    async with 
+    MCPServerStdioHook(
             params={
                 "command": "npx",
                 "args": ["-y", "@modelcontextprotocol/server-filesystem", samples_dir]
             },
             name="fs",
             client_session_timeout_seconds=60
-    ) as server_fs, MCPServerStdioHook(
+    ) as server_fs, 
+    
+    MCPServerStdioHook(
             params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
             name="seq",
             client_session_timeout_seconds=180
-    ) as server_seq:
-        print("[MCP] Voice server disabled (package '@modelcontextprotocol/server-realtime-api-voice' not available)")
-        # Optionally enable Google Sheets server (kept disabled by default)
-        # async with MCPServerStdioHook(
-        #     params={
-        #         "command": "uvx",
-        #         "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
-        #     },
-        #     client_session_timeout_seconds=60
-        # ) as server_gsheets:
+    ) as server_seq, 
+    
+    MCPServerStdioHook(
+         params={
+             "command": "uvx",
+             "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
+         },
+         client_session_timeout_seconds=60
+    ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
         tools = [WebSearchTool(), make_responses_image_generation_tool()]
