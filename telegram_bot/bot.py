@@ -428,7 +428,6 @@ async def _call_task(
         )
         # Optionally echo a short confirmation
         agent = res.get("agent")
-        await m.reply(f"✅ Done: <b>{agent}</b>")
         log.info("_call_task: done name=%s", name)
     except Exception as e:
         log.exception("_call_task: error name=%s", name)
@@ -489,7 +488,6 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     )
     log.info("handle_call: scheduled task for name=%s", name)
-    await m.reply(f"Started: <b>{name}</b>")
 
 
 @_require_allowed_users
