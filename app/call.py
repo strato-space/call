@@ -1770,16 +1770,13 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             model_settings=(cfg.model_settings or ModelSettings()),
         )
 
-        # Expose tools from servers (side-effect logging retained)
+        # Expose tools from servers (let errors surface for easier debugging)
         run_context = RunContextWrapper(context=None)
-        try:
-            _ = await server_fs.list_tools(run_context, agent)
-            _ = await server_seq.list_tools(run_context, agent)
-            if server_gsheets:
-                tools_gsheets = await server_gsheets.list_tools(run_context, agent)
-                print("Google Sheets tools:", tools_gsheets)
-        except Exception:
-            pass
+        _ = await server_fs.list_tools(run_context, agent)
+        _ = await server_seq.list_tools(run_context, agent)
+        if server_gsheets:
+            tools_gsheets = await server_gsheets.list_tools(run_context, agent)
+            print("Google Sheets tools count:", len(tools_gsheets))
 
         try:
             yield agent, cfg
