@@ -55,6 +55,8 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
+from telegraph import Telegraph
+
 # Import HTML/Telegram/Telegraph utilities from utils with script fallback
 try:
     from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
@@ -77,7 +79,27 @@ except ImportError:
         telegram_prepare_html,
         telegram_prepare_markdown,
     )
-    from telegraph_utils import publish_results, create_telegrath_account
+    # telegraph_utils module uses relative imports; define minimal local fallbacks for script mode
+    def create_telegrath_account():
+        telegraph = Telegraph(TELEGRAPH_TOKEN)
+        acc = telegraph.create_account(
+            short_name='strato.space',
+            author_name='AI Agent @ strato.space',
+            author_url='https://linkedin.com/in/iqdoctor',
+        )
+        token = acc.get('access_token')
+        print(f"Telegraph access_token: {token}")
+
+    async def publish_results(title: str = "AgentName Results", content: str | None = None) -> str:
+        telegraph = Telegraph(TELEGRAPH_TOKEN)
+        clear_context = minify_html_func(content or "")
+        page_title = (
+            f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results")
+        )
+        response = telegraph.create_page(title=page_title, html_content=clear_context)
+        url = f"https://telegra.ph/{response['path']}"
+        print("Results published to:", url)
+        return url
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message

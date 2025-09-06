@@ -27,6 +27,33 @@ from call.lib.discovery import (
 
 
 
+def _error_payload(name: str, input_text: str, exc: BaseException, *, status: int | None = None, echo: bool = False) -> Dict[str, Any]:
+    """Build a Telegram Bot API–style error payload.
+
+    Shape:
+    {"ok": false, "error_code": <int>, "description": <str>, ...}
+    Additional fields preserved for our clients: agent, final_output, echo, error_type.
+    """
+    try:
+        msg = str(exc)
+    except Exception:
+        msg = ""
+    err_type = type(exc).__name__
+    # Heuristic mapping for Not Found
+    if status is None and isinstance(exc, (KeyError, FileNotFoundError, ValueError)) and "not found" in msg.lower():
+        status = 404
+    return {
+        "ok": False,
+        "error_code": int(status or 400),
+        "description": msg,
+        # extra context for our ecosystem
+        "error_type": err_type,
+        "agent": name,
+        "final_output": None,
+        "echo": bool(echo),
+    }
+
+
 async def call_async(
     name: str,
     input_text: str,
@@ -51,9 +78,13 @@ async def call_async(
     await app_call.init_bot()
 
     # Discover agent profile path using existing logic
-    yaml_path = discover_agent_yaml(name)
+    try:
+        yaml_path = discover_agent_yaml(name)
+    except Exception as e:
+        # Discovery raised an exception; convert to structured error
+        return _error_payload(name, input_text, e, status=404, echo=echo)
     if yaml_path is None:
-        raise ValueError(f"Agent '{name}' not found")
+        return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo)
 
     # Align with app/main: set effective targets (falling back to env defaults)
     selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
@@ -117,13 +148,17 @@ async def call_async(
                     dump_fp = None
             dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
 
-        agent, history, final_output = await app_call.run_digest_pipeline(
-        default_samples_dir,
-        agent_path=str(yaml_path),
-        user_input=input_text or "",
-        debug=False,
-        cli_agent_name=name,
-        )
+        try:
+            agent, history, final_output = await app_call.run_digest_pipeline(
+                default_samples_dir,
+                agent_path=str(yaml_path),
+                user_input=input_text or "",
+                debug=False,
+                cli_agent_name=name,
+            )
+        except Exception as e:
+            # Convert pipeline errors to structured error
+            return _error_payload(name, input_text, e, status=500, echo=echo)
     finally:
         if dump_task is not None:
             try:
@@ -164,7 +199,11 @@ def call(
         raise ValueError("input must be a string")
 
     norm = to_pascal_case(name)
-    return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo))
+    try:
+        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo))
+    except Exception as e:
+        # Last-resort guard: never explode to callers that expect JSON; provide structured error
+        return _error_payload(norm, input, e, status=500, echo=echo)
 
 
 def _read_indices() -> Dict[str, Dict[str, str]]:
