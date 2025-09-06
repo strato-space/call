@@ -17,7 +17,7 @@ mcpServers:
   gsh:
     enabled: true
     command: uvx
-    args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets"]
+    args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets", "serve"]
     # serverUrl: "https://gsh-mcp.stratospace.fun"
     # bridge:
     #   command: mcp-stdio-bridge
