@@ -22,6 +22,18 @@ from call.app.utils.telegram_text import (
     telegram_prepare_html,
 )
 
+# --- Live-send guards ---------------------------------------------------------
+# Set TELEGRAM_LIVE=1 to enable these integration tests.
+_LIVE = os.getenv("TELEGRAM_LIVE") == "1"
+_LIVE_KIND = (os.getenv("TELEGRAM_LIVE_KIND") or "").strip().lower()  # 'md' or 'html' optional
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _LIVE,
+        reason="Set TELEGRAM_LIVE=1 to run live Telegram send tests",
+    )
+]
+
 # --- Load .env from repo to populate TELEGRAM_* if not already set ---
 from pathlib import Path
 
@@ -103,15 +115,24 @@ for _cand in _env_candidates:
         load_dotenv(dotenv_path=str(_cand), override=False)
         break
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"),
-    reason="Integration test requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env or environment",
-)
+pytestmark = [
+    *pytestmark,  # keep live guard
+    pytest.mark.skipif(
+        not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"),
+        reason="Integration test requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env or environment",
+    ),
+]
 
 
-@pytest.mark.asyncio
-async def test_send_markdown_v2_message() -> None:
+def test_send_markdown_v2_message() -> None:
+    if _LIVE_KIND and _LIVE_KIND != "md":
+        pytest.skip("Skipping Markdown test due to TELEGRAM_LIVE_KIND filter")
     token, chat_id, thread_id = _env_token_chat_thread()
+
+    # Ensure proxies do not interfere with Telegram connectivity in test envs
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PROXY", "PROXY_URL"):
+        os.environ.pop(k, None)
+    os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
 
     # Prepare a MarkdownV2 sample (escaped automatically by helper)
     md_text = (
@@ -126,20 +147,28 @@ async def test_send_markdown_v2_message() -> None:
     request = HTTPXRequest(connect_timeout=20.0, read_timeout=120.0, pool_timeout=5.0)
     bot = Bot(token=token, request=request)
 
-    msg = await bot.send_message(
-        chat_id=chat_id,
-        message_thread_id=thread_id,
-        text=safe_text,
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    async def _run():
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            text=safe_text,
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        assert msg is not None
+        assert msg.message_id > 0
 
-    assert msg is not None
-    assert msg.message_id > 0
+    asyncio.run(_run())
 
 
-@pytest.mark.asyncio
-async def test_send_html_message() -> None:
+def test_send_html_message() -> None:
+    if _LIVE_KIND and _LIVE_KIND != "html":
+        pytest.skip("Skipping HTML test due to TELEGRAM_LIVE_KIND filter")
     token, chat_id, thread_id = _env_token_chat_thread()
+
+    # Ensure proxies do not interfere with Telegram connectivity in test envs
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PROXY", "PROXY_URL"):
+        os.environ.pop(k, None)
+    os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
 
     # Prepare an HTML sample (sanitized + truncated by helper)
     html_text = (
@@ -153,12 +182,14 @@ async def test_send_html_message() -> None:
     request = HTTPXRequest(connect_timeout=20.0, read_timeout=120.0, pool_timeout=5.0)
     bot = Bot(token=token, request=request)
 
-    msg = await bot.send_message(
-        chat_id=chat_id,
-        message_thread_id=thread_id,
-        text=safe_text,
-        parse_mode=ParseMode.HTML,
-    )
+    async def _run():
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            text=safe_text,
+            parse_mode=ParseMode.HTML,
+        )
+        assert msg is not None
+        assert msg.message_id > 0
 
-    assert msg is not None
-    assert msg.message_id > 0
+    asyncio.run(_run())
