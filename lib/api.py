@@ -2,8 +2,14 @@
 Library API for the call subsystem.
 
 Public surface:
-- call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None) -> dict
+- call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict
 - list(query: str | None = None, include_aliases: bool = False) -> list[dict]
+
+Behavior:
+- On success, returns: { ok: true, agent, agent_path, final_output, echo }
+- On operational failure, returns Telegram Bot API–style error envelope:
+  { ok: false, error_code: <int>, description: <str>, error_type: <str>, agent, final_output: null, echo }
+  * 404 for missing/unknown agent; 500 for internal pipeline errors.
 
 This module intentionally reuses discovery and pipeline utilities from `call/app/call.py` to
 avoid duplication. It focuses on a stable facade for the CLI and the Telegram bot.
@@ -27,7 +33,15 @@ from call.lib.discovery import (
 
 
 
-def _error_payload(name: str, input_text: str, exc: BaseException, *, status: int | None = None, echo: bool = False) -> Dict[str, Any]:
+def _error_payload(
+    name: str,
+    input_text: str,
+    exc: BaseException,
+    *,
+    status: int | None = None,
+    echo: bool = False,
+    debug: bool = False,
+) -> Dict[str, Any]:
     """Build a Telegram Bot API–style error payload.
 
     Shape:
@@ -42,7 +56,7 @@ def _error_payload(name: str, input_text: str, exc: BaseException, *, status: in
     # Heuristic mapping for Not Found
     if status is None and isinstance(exc, (KeyError, FileNotFoundError, ValueError)) and "not found" in msg.lower():
         status = 404
-    return {
+    payload: Dict[str, Any] = {
         "ok": False,
         "error_code": int(status or 400),
         "description": msg,
@@ -53,6 +67,37 @@ def _error_payload(name: str, input_text: str, exc: BaseException, *, status: in
         "echo": bool(echo),
     }
 
+    # Optional debug details (file/line/stack) for CLI usage
+    try:
+        debug_enabled = bool(debug) or str(os.environ.get("CALL_DEBUG", "")).lower() in ("1", "true", "yes", "on")
+    except Exception:
+        debug_enabled = bool(debug)
+    if debug_enabled:
+        try:
+            import traceback
+            tb = exc.__traceback__
+            frames = traceback.extract_tb(tb) if tb is not None else []
+            stack_items: List[Dict[str, Any]] = []
+            for fr in frames[-20:]:
+                stack_items.append({
+                    "file": fr.filename,
+                    "line": fr.lineno,
+                    "function": fr.name,
+                    "code": fr.line,
+                })
+            top_file = stack_items[-1]["file"] if stack_items else None
+            top_line = stack_items[-1]["line"] if stack_items else None
+            payload["debug"] = {
+                "file": top_file,
+                "line": top_line,
+                "stack": stack_items,
+            }
+        except Exception:
+            # best-effort only
+            pass
+
+    return payload
+
 
 async def call_async(
     name: str,
@@ -61,6 +106,7 @@ async def call_async(
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     echo: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -82,9 +128,9 @@ async def call_async(
         yaml_path = discover_agent_yaml(name)
     except Exception as e:
         # Discovery raised an exception; convert to structured error
-        return _error_payload(name, input_text, e, status=404, echo=echo)
+        return _error_payload(name, input_text, e, status=404, echo=echo, debug=debug)
     if yaml_path is None:
-        return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo)
+        return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo, debug=debug)
 
     # Align with app/main: set effective targets (falling back to env defaults)
     selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
@@ -158,7 +204,7 @@ async def call_async(
             )
         except Exception as e:
             # Convert pipeline errors to structured error
-            return _error_payload(name, input_text, e, status=500, echo=echo)
+            return _error_payload(name, input_text, e, status=500, echo=echo, debug=debug)
     finally:
         if dump_task is not None:
             try:
@@ -188,6 +234,7 @@ def call(
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     echo: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """
     Public sync facade for running an agent. Returns a dict with metadata/final_output.
@@ -200,10 +247,10 @@ def call(
 
     norm = to_pascal_case(name)
     try:
-        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo))
+        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo, debug=debug))
     except Exception as e:
         # Last-resort guard: never explode to callers that expect JSON; provide structured error
-        return _error_payload(norm, input, e, status=500, echo=echo)
+        return _error_payload(norm, input, e, status=500, echo=echo, debug=debug)
 
 
 def _read_indices() -> Dict[str, Dict[str, str]]:

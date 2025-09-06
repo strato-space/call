@@ -20,18 +20,46 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
-## Error Reporting
+## Error Reporting (Updated Sep 6, 2025)
 
-On any unhandled error, the CLI emits a structured JSON object with detailed diagnostics:
+The library now follows a Telegram Bot API–style error envelope for operational failures. Instead of raising, `call.lib.api.call()` returns:
 
 ```json
 {
-  "module": "call.app.call",
   "ok": false,
-  "error": {
-    "type": "AttributeError",
-    "message": "'NoneType' object has no attribute 'attributes'",
-    "file": "d:/home/strato-space/call/app/call.py", "line": 1103,
+  "error_code": 404,
+  "description": "Agent 'AgetnFab' not found",
+  "error_type": "ValueError",
+  "agent": "AgetnFab",
+  "final_output": null,
+  "echo": false
+}
+```
+
+- Missing/unknown agent → `error_code: 404`.
+- Internal pipeline error → `error_code: 500` with a descriptive message.
+- Additional context fields (`error_type`, `agent`, `echo`) are included for clients.
+
+Debug details (optional): when running from CLI or for troubleshooting, you can include file/line/stack in the error body.
+
+- Enable one of the following:
+  - Pass `debug=True` to `call.lib.api.call(name, input, debug=True)`
+  - Or set env var `CALL_DEBUG=1` (accepted values: 1/true/yes/on)
+
+Example with debug:
+
+```json
+{
+  "ok": false,
+  "error_code": 500,
+  "description": "...",
+  "error_type": "RuntimeError",
+  "agent": "AgentName",
+  "final_output": null,
+  "echo": false,
+  "debug": {
+    "file": "d:/home/strato-space/call/app/call.py",
+    "line": 1103,
     "stack": [
       {"file": "d:/home/strato-space/call/app/call.py", "line": 1103, "function": "run_digest_pipeline", "code": "dto = AgentDTO.from_yaml_file(path_obj)"},
       {"file": "d:/home/strato-space/call/app/call.py", "line": 1539, "function": "<module>", "code": "asyncio.run(main(...))"}
@@ -40,9 +68,21 @@ On any unhandled error, the CLI emits a structured JSON object with detailed dia
 }
 ```
 
-Notes:
-- Fields `file` and `line` point to the top stack frame where the exception occurred.
-- `stack` is an array of frames with `file`, `line`, `function`, and source `code` snippet when available.
+When the library runs successfully, it returns:
+
+```json
+{
+  "ok": true,
+  "agent": "AgentName",
+  "agent_path": ".../agent.yaml",
+  "final_output": "...",
+  "echo": false
+}
+```
+
+### FastAPI voice/actions integration
+
+`voice/src/actions/main.py` inspects the returned dict from the call library. If `{ ok: false }`, it maps `error_code` to the HTTP status and returns the body as-is, so clients receive a proper HTTP status (e.g., 404/500) with a Telegram-style error JSON.
 
 ### Running with local virtual environment
 
