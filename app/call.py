@@ -1735,28 +1735,23 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             ...
     """
     server_gsheets = None
-    async with 
-    MCPServerStdioHook(
-            params={
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", samples_dir]
-            },
-            name="fs",
-            client_session_timeout_seconds=60
-    ) as server_fs, 
-    
-    MCPServerStdioHook(
-            params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
-            name="seq",
-            client_session_timeout_seconds=180
-    ) as server_seq, 
-    
-    MCPServerStdioHook(
-         params={
-             "command": "uvx",
-             "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"]
-         },
-         client_session_timeout_seconds=60
+    async with MCPServerStdioHook(
+        params={
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", samples_dir],
+        },
+        name="fs",
+        client_session_timeout_seconds=60,
+    ) as server_fs, MCPServerStdioHook(
+        params={"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]},
+        name="seq",
+        client_session_timeout_seconds=180,
+    ) as server_seq, MCPServerStdioHook(
+        params={
+            "command": "uvx",
+            "args": ["--env-file", samples_dir + "/server/mcp/.env", "mcp-google-sheets@latest"],
+        },
+        client_session_timeout_seconds=60,
     ) as server_gsheets:
 
         cfg = await build_agent_config(agent_name)
