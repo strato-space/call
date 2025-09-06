@@ -2,7 +2,7 @@ mcpServers:
   fs-local:
     enabled: true
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:/home/strato-space"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
     env: {}
 
   seq-local:
