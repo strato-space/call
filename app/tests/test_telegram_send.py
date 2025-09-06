@@ -1,9 +1,17 @@
 import os
+import sys
 import asyncio
 import pytest
 from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Ensure the repository root is on sys.path so 'call' package is importable
+_this_file = Path(__file__).resolve()
+_call_dir = _this_file.parents[2]  # .../call
+_repo_root = _call_dir.parent      # .../
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 from telegram import Bot
 from telegram.constants import ParseMode
