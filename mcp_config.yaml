@@ -24,7 +24,12 @@ mcpServers:
     - --from
     - git+https://github.com/strato-space/mcp-google-sheets@main
     - mcp-google-sheets
-    
+  
+  voice:
+    enabled: true
+    command: python
+    args: ["-m", "voice.src.mcp_voicebot.server"]
+
   ev:
     serverUrl: "https://ev-mcp.stratospace.fun"
 
@@ -106,7 +111,7 @@ mcpServers:
   tg:
     serverUrl: "https://tg-mcp.stratospace.fun"
 
-  voice:
+  voice-s:
     serverUrl: "https://voice-mcp.stratospace.fun"
 
   github-mcp-server:
