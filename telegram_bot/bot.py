@@ -37,6 +37,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
+from call.lib.discovery import to_pascal_case
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -349,52 +350,23 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Run list via library API (no direct OpenAI calls here)
     try:
         log.debug("handle_list: query=%r include_aliases=%s", query, include_aliases)
-        groups = call_api.list(query=query, include_aliases=include_aliases, grouped=True)
-        # groups is a dict: {"AgentFab": [...], "agents": [...]}
-        if not isinstance(groups, dict) or (not groups.get("AgentFab") and not groups.get("agents")):
+        flat = call_api.list(query=query, include_aliases=include_aliases, grouped=False)
+        if not isinstance(flat, list) or not flat:
             await m.reply("No agents found")
             return
         lines: list[str] = []
-        def emit_group(title: str, items: list[dict]):
-            if not items:
-                return
-            # Bold header with HTML parse mode
-            lines.append(f"<b>{title}</b>")
-            seen: set[str] = set()
-            for it in items[:200]:  # safety cap per group
-                name = (it.get("name") or "").strip()
-                if name and name not in seen:
-                    lines.append(f"@{name}")
-                    seen.add(name)
-                if include_aliases:
-                    for al in (it.get("aliases") or []):
-                        al = (al or "").strip()
-                        if al and al not in seen:
-                            lines.append(f"  @{al}")
-                            seen.add(al)
-        # Emit AgentFab block with explicit @AgentFab at the top
-        af_items = groups.get("AgentFab") or []
-        if af_items:
-            lines.append("<b>AgentFab</b>")
-            seen_af: set[str] = set()
-            # Always include @AgentFab entry
-            lines.append("@AgentFab")
-            seen_af.add("AgentFab")
-            for it in af_items[:200]:
-                name = (it.get("name") or "").strip()
-                if name and name not in seen_af:
-                    lines.append(f"@{name}")
-                    seen_af.add(name)
-                if include_aliases:
-                    for al in (it.get("aliases") or []):
-                        al = (al or "").strip()
-                        if al and al not in seen_af:
-                            lines.append(f"  @{al}")
-                            seen_af.add(al)
-            # Add extra blank line after AgentFab block
-            lines.append("")
-        # Emit agents block
-        emit_group("agents", groups.get("agents") or [])
+        seen: set[str] = set()
+        for it in flat[:400]:
+            name = (it.get("name") or "").strip()
+            if name and name not in seen:
+                lines.append(f"@{name}")
+                seen.add(name)
+            if include_aliases:
+                for al in (it.get("aliases") or []):
+                    al = (al or "").strip()
+                    if al and al not in seen:
+                        lines.append(f"  @{al}")
+                        seen.add(al)
         await m.reply("\n".join(lines), parse_mode="HTML")
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}")
@@ -496,16 +468,73 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
-    if text.startswith("@"):
-        # Treat messages starting with @Name as call commands
-        await handle_call(update, context)
-    elif text.lower().startswith("list"):
-        await handle_list(update, context)
-    elif text.lower().startswith("call"):
-        await handle_call(update, context)
+
+    # Resolve agent name based on bot username and message text per policy
+    try:
+        me = await context.bot.get_me()
+        bot_user = getattr(me, "username", "") or ""
+    except Exception:
+        bot_user = ""
+
+    def _strip_bot_suffix(s: str) -> str:
+        s2 = s or ""
+        for suf in ("Bot", "_bot", "-bot", " bot"):
+            if s2.endswith(suf):
+                return s2[: -len(suf)]
+        return s2
+
+    base = to_pascal_case(_strip_bot_suffix(bot_user)) if bot_user else ""
+    # Special case: AgentFabBot → AgentFab
+    if base == "AgentFab":
+        resolved_name = "AgentFab"
+        resolved_input = text
     else:
-        # ignore or provide help
-        await handle_start(update, context)
+        # Check if base exists among agents
+        def _exists(agent_name: str) -> bool:
+            try:
+                items = call_api.list(query=None, include_aliases=False, grouped=False)
+                return any((it.get("name") or "") == agent_name for it in (items or []))
+            except Exception:
+                return False
+
+        if base and _exists(base):
+            resolved_name = base
+            resolved_input = text
+        else:
+            # Parse from text: @Name ... or leading word
+            t = text
+            candidate = None
+            rest = ""
+            if t.startswith("@"):
+                parts = t.split(maxsplit=1)
+                candidate = parts[0][1:]
+                rest = parts[1] if len(parts) > 1 else ""
+            else:
+                # leading word
+                parts = t.split(maxsplit=1)
+                candidate = parts[0]
+                rest = parts[1] if len(parts) > 1 else ""
+            cand_norm = to_pascal_case(candidate or "") if candidate else ""
+            if cand_norm and _exists(cand_norm):
+                resolved_name = cand_norm
+                resolved_input = rest
+            else:
+                # No agent found → empty name, pass full text as input
+                resolved_name = ""
+                resolved_input = text
+
+    cid = update.effective_chat.id if update and update.effective_chat else None
+    tid = update.message.message_thread_id if update and update.message else None
+    asyncio.create_task(
+        _call_task(
+            Messenger(context=context, update=update),
+            resolved_name,
+            resolved_input,
+            echo=False,
+            chat_id=cid,
+            thread_id=tid,
+        )
+    )
 
 
 def main() -> None:

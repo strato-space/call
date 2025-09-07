@@ -309,11 +309,14 @@ def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped:
     """
     Return list of available agents.
 
+    Policy (2025-09-07): only expose agents from the 'agents' directory; do not
+    include AgentFab entries in the default flat list.
+
     When grouped is False (default): returns a flat list of items, each a dict
-    {"name": str, "path": str, "aliases": [str, ...]}.
+    {"name": str, "path": str, "aliases": [str, ...]} from 'agents' only.
 
     When grouped is True: returns a dict with two lists keyed by registry roots:
-      {"AgentFab": [...], "agents": [...]} using the same item shape.
+      {"AgentFab": [], "agents": [...]} — AgentFab list is intentionally empty.
     """
     data = _read_indices()
     agents_map = data.get("agents", {})
@@ -349,10 +352,9 @@ def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped:
 
     if grouped:
         return {
-            "AgentFab": build_items(agents_af),
+            "AgentFab": [],  # intentionally empty per policy
             "agents": build_items(agents_ag),
         }
 
-    # Default flat mode combines both groups
-    flat_source: Dict[str, str] = {**agents_af, **agents_ag}
-    return build_items(flat_source)
+    # Default flat mode exposes only 'agents' entries
+    return build_items(agents_ag)
