@@ -20,55 +20,11 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
-## Error Reporting (Updated Sep 6, 2025)
+## Library return shape and errors (Updated Sep 7, 2025)
 
-The library now follows a Telegram Bot API–style error envelope for operational failures. Instead of raising, `call.lib.api.call()` returns:
+`call.lib.api.call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
 
-```json
-{
-  "ok": false,
-  "error_code": 404,
-  "description": "Agent 'AgetnFab' not found",
-  "error_type": "ValueError",
-  "agent": "AgetnFab",
-  "final_output": null,
-  "echo": false
-}
-```
-
-- Missing/unknown agent → `error_code: 404`.
-- Internal pipeline error → `error_code: 500` with a descriptive message.
-- Additional context fields (`error_type`, `agent`, `echo`) are included for clients.
-
-Debug details (optional): when running from CLI or for troubleshooting, you can include file/line/stack in the error body.
-
-- Enable one of the following:
-  - Pass `debug=True` to `call.lib.api.call(name, input, debug=True)`
-  - Or set env var `CALL_DEBUG=1` (accepted values: 1/true/yes/on)
-
-Example with debug:
-
-```json
-{
-  "ok": false,
-  "error_code": 500,
-  "description": "...",
-  "error_type": "RuntimeError",
-  "agent": "AgentName",
-  "final_output": null,
-  "echo": false,
-  "debug": {
-    "file": "d:/home/strato-space/call/app/call.py",
-    "line": 1103,
-    "stack": [
-      {"file": "d:/home/strato-space/call/app/call.py", "line": 1103, "function": "run_digest_pipeline", "code": "dto = AgentDTO.from_yaml_file(path_obj)"},
-      {"file": "d:/home/strato-space/call/app/call.py", "line": 1539, "function": "<module>", "code": "asyncio.run(main(...))"}
-    ]
-  }
-}
-```
-
-When the library runs successfully, it returns:
+- On success returns a dict:
 
 ```json
 {
@@ -80,9 +36,18 @@ When the library runs successfully, it returns:
 }
 ```
 
-### FastAPI voice/actions integration
+- On failure the function currently raises an exception (e.g., `ValueError` when agent not found, or `RuntimeError` on pipeline failure). Callers should catch and convert to their desired envelope. The `echo` flag is included in the success payload for upstream inspection.
 
-`voice/src/actions/main.py` inspects the returned dict from the call library. If `{ ok: false }`, it maps `error_code` to the HTTP status and returns the body as-is, so clients receive a proper HTTP status (e.g., 404/500) with a Telegram-style error JSON.
+Notes:
+- The Voice integration now imports and uses this library directly (no subprocess). See below.
+- If you need an error-envelope style response, wrap the call and convert exceptions into a `{ ok:false, ... }` JSON at your boundary (e.g., HTTP layer).
+
+### Voice integration via library
+
+- `voice/src/lib/core.py` (`VoicebotClient.call`) now calls `call.lib.api.call` directly.
+- The Voice CLI passes through `echo`:
+  - `echo=False`: Voice returns plain text to its caller.
+  - `echo=True`: Voice returns the full dict payload (suitable for JSON HTTP responses).
 
 ## Listing available agents
 
@@ -95,7 +60,6 @@ You can enumerate available agents discovered in the Prompt repository via the l
 
   flat = list_agents()  # [{"name": "...", "path": "..."}, ...]
   with_aliases = list_agents(include_aliases=True)
-  grouped = list_agents(grouped=True)  # {"AgentFab": [...], "agents": [...]}
   filtered = list_agents(query="news")
   ```
 
