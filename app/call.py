@@ -702,6 +702,21 @@ async def _responses_image_one_out(
                 if b64 or url:
                     return (b64, url)
 
+                # New Responses schema: parts with type 'image' may wrap data under 'image': {data, mime_type, url}
+                t = _get(obj, "type") or _get(obj, "kind")
+                if t in ("image", "output_image"):
+                    im = _get(obj, "image")
+                    if isinstance(im, dict):
+                        b64d = _get(im, "data")
+                        url2 = _get(im, "url") or _get(im, "image_url")
+                        if b64d or url2:
+                            return (b64d, url2)
+                    # Some variants may place data/mime_type directly on the same object
+                    b64d2 = _get(obj, "data")
+                    mime2 = _get(obj, "mime_type")
+                    if b64d2 and (mime2 is None or str(mime2).startswith("image/")):
+                        return (b64d2, None)
+
                 # Avoid cycles
                 try:
                     oid = id(obj)
