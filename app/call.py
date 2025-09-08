@@ -652,16 +652,17 @@ async def _responses_image_one_out(
                 "require_approval": "never",
             })
 
-        async def _call():
+        async def _call(instr_text: str, user_content: list[dict]):
             return await openai_client.responses.create(
                 model=model,
-                instructions=system,
+                instructions=instr_text,
                 tools=tools,
-                input=[{"role": "user", "content": content}],
+                tool_choice={"type": "tool", "name": "image_generation"},
+                input=[{"role": "user", "content": user_content}],
             )
 
         try:
-            resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+            resp = await async_retry(lambda: _call(system, content), retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
         except Exception as e:
             # Proactively deliver model error to Telegram and re-raise
             try:
@@ -756,6 +757,31 @@ async def _responses_image_one_out(
                 output_path.write_bytes(rr.content)
                 return output_path
         if not b64:
+            # One-time retry: nudge the model to call the tool explicitly
+            try:
+                nudge_text = (
+                    "You must call the image_generation tool exactly once now and return only the image.\n"
+                    f"Keep the same task. [SIZE={size}]"
+                )
+                retry_content = [
+                    {"type": "input_text", "text": nudge_text}
+                ]
+                resp2 = await async_retry(lambda: _call(system, retry_content), retries=1, base_delay=0.8, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+                b64, url = _extract_image_b64(resp2)
+                if not b64 and url:
+                    async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+                        rr = await client.get(url)
+                        rr.raise_for_status()
+                        output_path.write_bytes(rr.content)
+                        return output_path
+            except Exception:
+                # fall through to final error handling
+                pass
+            # Inform Telegram that no image was produced after retry
+            try:
+                await send_digest_notification(text="Image generation: no image found in model response (after retry)")
+            except Exception:
+                pass
             raise RuntimeError("Responses image not found (no b64/url).")
         output_path.write_bytes(base64.b64decode(b64))
         return output_path
