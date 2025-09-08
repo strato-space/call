@@ -26,6 +26,9 @@ mcpServers:
     - mcp-google-sheets
   
   voice:
+    serverUrl: "https://voice-mcp.stratospace.fun"
+
+  voice-uvx:
     enabled: true
     command: uvx
     args:
