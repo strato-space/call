@@ -660,7 +660,16 @@ async def _responses_image_one_out(
                 input=[{"role": "user", "content": content}],
             )
 
-        resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+        try:
+            resp = await async_retry(_call, retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+        except Exception as e:
+            # Proactively deliver model error to Telegram and re-raise
+            try:
+                msg = "Image generation failed (model error):\n" + format_exception_text(e)
+                await send_digest_notification(text=msg)
+            except Exception:
+                pass
+            raise
 
         # Extract a single image from Responses output
         def _extract_image_b64(r):
@@ -1311,9 +1320,17 @@ def make_responses_image_generation_tool() -> FunctionTool:
 
         if output_path:
             out = Path(output_path)
-            await _responses_image_one_out(
-                prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=out
-            )
+            try:
+                await _responses_image_one_out(
+                    prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=out
+                )
+            except Exception as e:
+                try:
+                    msg = "Image tool failed while saving to output_path:\n" + format_exception_text(e)
+                    await send_digest_notification(text=msg)
+                except Exception:
+                    pass
+                raise
             b64 = base64.b64encode(out.read_bytes()).decode("ascii")
             return {"b64_png": b64, "saved_path": str(out), "size": size}
         else:
@@ -1321,9 +1338,17 @@ def make_responses_image_generation_tool() -> FunctionTool:
                 tmp = stack.enter_context(tempfile.NamedTemporaryFile(suffix=".png", delete=False))
                 tmp_path = Path(tmp.name)
                 stack.callback(lambda: tmp_path.exists() and tmp_path.unlink(missing_ok=True))
-                await _responses_image_one_out(
-                    prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp_path
-                )
+                try:
+                    await _responses_image_one_out(
+                        prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp_path
+                    )
+                except Exception as e:
+                    try:
+                        msg = "Image tool failed while writing temp file:\n" + format_exception_text(e)
+                        await send_digest_notification(text=msg)
+                    except Exception:
+                        pass
+                    raise
                 b64 = base64.b64encode(tmp_path.read_bytes()).decode("ascii")
                 return {"b64_png": b64, "saved_path": None, "size": size}
 
