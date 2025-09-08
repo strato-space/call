@@ -1283,11 +1283,26 @@ def make_responses_image_generation_tool() -> FunctionTool:
     to produce exactly one image.
     """
     async def on_invoke_tool(tool_context, params: Dict[str, Any]) -> Dict[str, Any]:
-        prompt: str = params.get("prompt", "")
-        images: List[str] = params.get("images", []) or []
-        size: str = params.get("size", "1024x1024")
-        mask: Optional[str] = params.get("mask")
-        output_path: Optional[str] = params.get("output_path")
+        # Agents SDK may pass tool arguments as a JSON string; support both str and dict
+        try:
+            if isinstance(params, str):
+                try:
+                    params_obj = json.loads(params)
+                except Exception:
+                    params_obj = {}
+            else:
+                params_obj = params or {}
+        except Exception:
+            params_obj = {}
+
+        prompt: str = str(params_obj.get("prompt", "") or "")
+        images_val = params_obj.get("images", [])
+        images: List[str] = images_val if isinstance(images_val, list) else []
+        size: str = str(params_obj.get("size", "1024x1024") or "1024x1024")
+        mask_raw = params_obj.get("mask")
+        mask: Optional[str] = str(mask_raw) if isinstance(mask_raw, str) and mask_raw else None
+        output_path_raw = params_obj.get("output_path")
+        output_path: Optional[str] = str(output_path_raw) if isinstance(output_path_raw, str) and output_path_raw else None
 
         base = images[0] if images else None
         refs = images[1:] if len(images) > 1 else []
