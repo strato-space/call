@@ -54,6 +54,8 @@ if _CALL_ENV.exists():
 load_dotenv(override=True)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+# Optional selected bot name from CLI (set later in main) or env
+SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
@@ -273,6 +275,88 @@ def _extract_after(prefix: str, text: str) -> str:
     return text[len(prefix):].strip()
 
 
+# Shared helpers (deduplicated logic)
+
+def _strip_bot_suffix(s: str) -> str:
+    s2 = s or ""
+    for suf in ("Bot", "_bot", "-bot", " bot"):
+        if s2.endswith(suf):
+            return s2[: -len(suf)]
+    return s2
+
+
+def _get_bot_base(update: Update | None = None) -> str:
+    """Return normalized base name of this bot (e.g., 'AgentFab' for 'AgentFabBot') without calling Telegram API.
+
+    Preference:
+    1) Use SELECTED_BOT_NAME if set (e.g., provided via --bot-name)
+    2) Otherwise, cannot reliably infer bot username from Update; return empty string.
+    """
+    if SELECTED_BOT_NAME:
+        return to_pascal_case(_strip_bot_suffix(SELECTED_BOT_NAME))
+    return ""
+
+
+def _exists_agent(name: str) -> bool:
+    try:
+        items = call_api.list(query=None, include_aliases=False, grouped=False)
+        return any((it.get("name") or "") == name for it in (items or []))
+    except Exception:
+        return False
+
+
+def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple[str, str, bool]:
+    """Resolve (agent_name, input_text, should_handle) from a free-text message.
+
+    Rules:
+    - Private chats: "@Name ..." and "Name ..." are equivalent. If no explicit name,
+      fall back to empty agent; but if base == AgentFab, default to AgentFab.
+      Special case: leading '@' with no name (e.g., "@ text") → empty agent or AgentFab.
+    - Group/supergroup: only explicit "@Name ..." is handled; otherwise do not handle.
+    """
+    t = (text or "").strip()
+    default_base = "AgentFab" if base == "AgentFab" else ""
+
+    if is_private:
+        if not t:
+            return (default_base, t, True)
+        if t.startswith("@"):
+            parts = t.split(maxsplit=1)
+            tok = parts[0]
+            rest = parts[1] if len(parts) > 1 else ""
+            candidate = tok[1:]
+            if not candidate:
+                # '@ <text>' → empty agent, or AgentFab for AgentFabBot
+                return (default_base, rest or "", True)
+            cand_norm = to_pascal_case(candidate)
+            if cand_norm and _exists_agent(cand_norm):
+                return (cand_norm, rest, True)
+            # Unknown agent → treat as no explicit agent, pass full text
+            return (default_base, t, True)
+        else:
+            parts = t.split(maxsplit=1)
+            candidate = parts[0]
+            rest = parts[1] if len(parts) > 1 else ""
+            cand_norm = to_pascal_case(candidate)
+            if cand_norm and _exists_agent(cand_norm):
+                return (cand_norm, rest, True)
+            return (default_base, t, True)
+
+    # Group/supergroup: act only on explicit '@Name ...'
+    if not t or not t.startswith("@"):
+        return ("", t, False)
+    parts = t.split(maxsplit=1)
+    candidate = parts[0][1:]
+    rest = parts[1] if len(parts) > 1 else ""
+    if not candidate:
+        return (default_base, rest, True)
+    cand_norm = to_pascal_case(candidate)
+    if cand_norm and _exists_agent(cand_norm):
+        return (cand_norm, rest, True)
+    # Do not handle unknown names in group to reduce noise
+    return ("", t, False)
+
+
 def _parse_call_text(text: str) -> tuple[str, str]:
     """
     Parse forms like:
@@ -310,11 +394,18 @@ call-bot
 
 Commands:
 - /call [--echo] @Name <input>
+- /call [--echo] Name <input>  (equivalent to @Name)
 - /list [--aliases] [--q "filter"]
 
-Also supported as plain text:
-- @Name <input> (same as /call @Name <input>)
-- list [--aliases] [--q "filter"]
+Startup options:
+- --bot-name Name  (use TELEGRAM_TOKEN[Name] from env/.env; error if missing; falls back to TELEGRAM_TOKEN when not provided)
+
+Plain text (no slash):
+- In private chat: "@Name <input>" and "Name <input>" are equivalent.
+- In groups: only explicit "@Name <input>" is handled to avoid reacting to every message.
+
+Special cases:
+- If this bot is AgentFabBot, default agent is AgentFab when no name is specified (e.g., "@ <input>").
 
 Notes:
 - /list prints one name per line as @Name.
@@ -413,7 +504,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (update.message.text or "") if update.message else ""
     log.debug("handle_call: incoming text=%r", text)
 
-    # Parse optional --echo flag and extract @Name + input
+    # Parse optional --echo flag and extract Name/@Name + input (both forms are accepted)
     echo_flag = False
     try:
         t = text.strip()
@@ -435,15 +526,20 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 echo_flag = True
                 continue
             filtered.append(p)
-        t2 = " ".join(filtered)
-        if not t2 or not t2.lstrip().startswith("@"):
+        t2 = " ".join(filtered).lstrip()
+        if not t2:
             raise ValueError("Usage: /call [--echo] @Name <input>")
-        t2 = t2.lstrip()
         name_tok, rest = (t2.split(maxsplit=1) + [""])[:2]
-        name = name_tok[1:]
+        name = name_tok[1:] if name_tok.startswith("@") else name_tok
     except ValueError as ve:
         await m.reply(str(ve), parse_mode=None)
         return
+
+    base = _get_bot_base(update)
+    if base == "AgentFab":
+        if name != "AgentFab":
+            log.info("handle_call: overriding requested agent %s -> AgentFab due to bot base=%r", name, base)
+        name = "AgentFab"
 
     # Kick off a background task and pass the exact chat/thread where the command was received.
     # These values should take precedence over any Agent card defaults or env variables downstream.
@@ -468,68 +564,19 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
-
-    # Resolve agent name based on bot username and message text per policy
-    try:
-        me = await context.bot.get_me()
-        bot_user = getattr(me, "username", "") or ""
-    except Exception:
-        bot_user = ""
-
-    def _strip_bot_suffix(s: str) -> str:
-        s2 = s or ""
-        for suf in ("Bot", "_bot", "-bot", " bot"):
-            if s2.endswith(suf):
-                return s2[: -len(suf)]
-        return s2
-
-    base = to_pascal_case(_strip_bot_suffix(bot_user)) if bot_user else ""
-    # Special case: AgentFabBot → AgentFab
-    if base == "AgentFab":
-        resolved_name = "AgentFab"
-        resolved_input = text
-    else:
-        # Check if base exists among agents
-        def _exists(agent_name: str) -> bool:
-            try:
-                items = call_api.list(query=None, include_aliases=False, grouped=False)
-                return any((it.get("name") or "") == agent_name for it in (items or []))
-            except Exception:
-                return False
-
-        if base and _exists(base):
-            resolved_name = base
-            resolved_input = text
-        else:
-            # Parse from text: @Name ... or leading word
-            t = text
-            candidate = None
-            rest = ""
-            if t.startswith("@"):
-                parts = t.split(maxsplit=1)
-                candidate = parts[0][1:]
-                rest = parts[1] if len(parts) > 1 else ""
-            else:
-                # leading word
-                parts = t.split(maxsplit=1)
-                candidate = parts[0]
-                rest = parts[1] if len(parts) > 1 else ""
-            cand_norm = to_pascal_case(candidate or "") if candidate else ""
-            if cand_norm and _exists(cand_norm):
-                resolved_name = cand_norm
-                resolved_input = rest
-            else:
-                # No agent found → empty name, pass full text as input
-                resolved_name = ""
-                resolved_input = text
-
+    base = _get_bot_base(update)
+    chat_type = getattr(getattr(update, "effective_chat", None), "type", "") or ""
+    is_private = (chat_type == "private")
+    name, inp, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
+    if not should_handle:
+        return
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
     asyncio.create_task(
         _call_task(
             Messenger(context=context, update=update),
-            resolved_name,
-            resolved_input,
+            name,
+            inp,
             echo=False,
             chat_id=cid,
             thread_id=tid,
@@ -541,13 +588,33 @@ def main() -> None:
     # CLI flags
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--echo", action="store_true", help="Print startup parameters and exit 0")
+    parser.add_argument("--bot-name", dest="bot_name", default="", help="Bot name handle to select TELEGRAM_TOKEN[Name] from env/.env (overrides positional)")
+    # Positional bot name: `bot.py StratoSpaceAiBot` equivalent to `--bot-name StratoSpaceAiBot`
+    parser.add_argument("bot_name_pos", nargs="?", default="", help="Positional bot name; equivalent to --bot-name")
     args, _ = parser.parse_known_args()
 
     if args.echo:
         cfg = _current_config_dict()
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
         return
-    if not TELEGRAM_TOKEN:
+
+    # Resolve token based on optional bot name
+    global SELECTED_BOT_NAME
+    # Prefer flag over positional if both provided
+    SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
+
+    selected_token = TELEGRAM_TOKEN
+    if SELECTED_BOT_NAME:
+        key = f"TELEGRAM_TOKEN[{SELECTED_BOT_NAME}]"
+        cand = os.environ.get(key, "").strip()
+        if not cand:
+            # try exact match of env keys with different casing/syntax if any
+            # Environment variables from dotenv should preserve exact keys
+            print(f"Error: {key} is not set in environment/.env", file=sys.stderr)
+            sys.exit(1)
+        selected_token = cand
+
+    if not selected_token:
         raise RuntimeError("TELEGRAM_TOKEN is not set")
 
     # Configure HTTPX with sane timeouts to reduce startup/long-poll issues
@@ -563,7 +630,7 @@ def main() -> None:
 
     app = (
         ApplicationBuilder()
-        .token(TELEGRAM_TOKEN)
+        .token(selected_token)
         .request(request)
         .get_updates_request(request)
         .build()
