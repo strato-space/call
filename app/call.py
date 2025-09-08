@@ -242,8 +242,8 @@ async def init_bot():
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
     # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
     import os as _os
-    _os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org")
-    _os.environ.setdefault("no_proxy", "api.telegram.org,*.telegram.org")
+    _os.environ.setdefault("NO_PROXY", "api.telegram.org,*.telegram.org,*.stratospace.fun")
+    _os.environ.setdefault("no_proxy", "api.telegram.org,*.telegram.org,*.stratospace.fun")
     request = HTTPXRequest(
         connect_timeout=20.0,
         read_timeout=120.0,
