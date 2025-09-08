@@ -657,12 +657,16 @@ async def _responses_image_one_out(
                 model=model,
                 instructions=instr_text,
                 tools=tools,
-                tool_choice={"type": "tool", "name": "image_generation"},
                 input=[{"role": "user", "content": user_content}],
             )
 
         try:
-            resp = await async_retry(lambda: _call(system, content), retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+            # Strengthen instructions to bias the model to call the tool
+            forced_system = (
+                system
+                + "\n\nMANDATORY: You MUST call the `image_generation` tool exactly once and return only the image."
+            )
+            resp = await async_retry(lambda: _call(forced_system, content), retries=2, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
         except Exception as e:
             # Proactively deliver model error to Telegram and re-raise
             try:
@@ -766,7 +770,7 @@ async def _responses_image_one_out(
                 retry_content = [
                     {"type": "input_text", "text": nudge_text}
                 ]
-                resp2 = await async_retry(lambda: _call(system, retry_content), retries=1, base_delay=0.8, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+                resp2 = await async_retry(lambda: _call(forced_system, retry_content), retries=1, base_delay=0.8, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
                 b64, url = _extract_image_b64(resp2)
                 if not b64 and url:
                     async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
