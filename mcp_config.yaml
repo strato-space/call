@@ -27,6 +27,16 @@ mcpServers:
   
   voice:
     enabled: true
+    command: uvx
+    args:
+    - --env-file
+    - /home/strato-space/call/.env
+    - --from
+    - git+https://github.com/strato-space/voice@main
+    - mcp_voicebot
+
+  voice-py:
+    enabled: false
     command: python
     args: ["-m", "voice.src.mcp_voicebot.server"]
 
