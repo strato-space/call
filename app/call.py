@@ -629,20 +629,10 @@ async def _responses_image_one_out(
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with ExitStack() as stack:
+        # Per platform policy: do not attach images via API.
+        # All necessary images are discovered and read via MCP tools by the platform.
+        # We only send textual instructions with a size hint.
         content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt_text + f"\n\n[SIZE={size}]"}]
-        if base_image:
-            part = _as_input_image(base_image, stack)
-            if part:
-                content.append(part)
-        for r in (ref_images or []):
-            p = _as_input_image(r, stack)
-            if p:
-                content.append(p)
-        if mask:
-            m = _as_input_image(mask, stack)
-            if m:
-                content.append({"type": "input_text", "text": "[MASK BELOW – transparent = editable]"})
-                content.append(m)
 
         system = (
             "You are a precise image editor.\n"
