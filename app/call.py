@@ -621,7 +621,7 @@ async def _responses_image_one_out(
     ref_images: Optional[List[Union[str, Path, bytes]]] = None,
     mask: Optional[Union[str, Path, bytes]] = None,
     size: str = "1024x1024",
-    model: str = "gpt-4o",
+    model: Optional[str] = None,
 ):
     """
     Pure Responses API call using the built-in `image_generation` tool.
@@ -652,9 +652,12 @@ async def _responses_image_one_out(
                 "require_approval": "never",
             })
 
+        # Choose model: prefer explicit param, then env, then safe default
+        chosen_model = model or os.getenv("LLM_MODEL") or "gpt-5"
+
         async def _call(instr_text: str, user_content: list[dict]):
             return await openai_client.responses.create(
-                model=model,
+                model=chosen_model,
                 instructions=instr_text,
                 tools=tools,
                 input=[{"role": "user", "content": user_content}],
@@ -1399,7 +1402,7 @@ def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> P
     return (base_dir / file_name).resolve()
 
 
-def make_responses_image_generation_tool() -> FunctionTool:
+def make_responses_image_generation_tool(default_model: Optional[str] = None) -> FunctionTool:
     """
     Factory: returns a FunctionTool that calls Responses API `image_generation`
     to produce exactly one image.
@@ -1425,6 +1428,11 @@ def make_responses_image_generation_tool() -> FunctionTool:
         mask: Optional[str] = str(mask_raw) if isinstance(mask_raw, str) and mask_raw else None
         output_path_raw = params_obj.get("output_path")
         output_path: Optional[str] = str(output_path_raw) if isinstance(output_path_raw, str) and output_path_raw else None
+        # Optional model override
+        model_raw = params_obj.get("model")
+        model_override: Optional[str] = (
+            str(model_raw).strip() if isinstance(model_raw, str) and str(model_raw).strip() else None
+        )
 
         base = images[0] if images else None
         refs = images[1:] if len(images) > 1 else []
@@ -1433,7 +1441,13 @@ def make_responses_image_generation_tool() -> FunctionTool:
             out = Path(output_path)
             try:
                 await _responses_image_one_out(
-                    prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=out
+                    prompt_text=prompt,
+                    base_image=base,
+                    ref_images=refs,
+                    mask=mask,
+                    size=size,
+                    output_path=out,
+                    model=(model_override or default_model),
                 )
             except Exception as e:
                 try:
@@ -1451,7 +1465,13 @@ def make_responses_image_generation_tool() -> FunctionTool:
                 stack.callback(lambda: tmp_path.exists() and tmp_path.unlink(missing_ok=True))
                 try:
                     await _responses_image_one_out(
-                        prompt_text=prompt, base_image=base, ref_images=refs, mask=mask, size=size, output_path=tmp_path
+                        prompt_text=prompt,
+                        base_image=base,
+                        ref_images=refs,
+                        mask=mask,
+                        size=size,
+                        output_path=tmp_path,
+                        model=(model_override or default_model),
                     )
                 except Exception as e:
                     try:
@@ -1474,7 +1494,8 @@ def make_responses_image_generation_tool() -> FunctionTool:
             },
             "size": {"type": "string", "default": "1024x1024"},
             "mask": {"type": ["string", "null"], "description": "Optional mask path/URL"},
-            "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"}
+            "output_path": {"type": ["string", "null"], "description": "Where to save the result PNG"},
+            "model": {"type": ["string", "null"], "description": "Override model used for image generation (defaults to agent or env)"}
         },
         # The OpenAI Responses tools validator requires 'required' to list ALL properties.
         # Include every key from 'properties' to satisfy the strict schema check.
@@ -1965,7 +1986,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
 
         # Build agent
         cfg = await build_agent_config(agent_name)
-        tools = [WebSearchTool(), make_responses_image_generation_tool()]
+        tools = [WebSearchTool(), make_responses_image_generation_tool(default_model=cfg.model)]
         if cfg.vs_list:
             try:
                 tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
@@ -2071,12 +2092,14 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                                 mask=job.get("mask"),
                                 size=job.get("size") or "1024x1024",
                                 output_path=img_path_for_notify,
+                                model=cfg.model,
                             )
                         else:
                             print("[Responses] No JSON job; using prompt-only generation.")
                             await _responses_image_one_out(
                                 prompt_text=step1_output,
                                 output_path=img_path_for_notify,
+                                model=cfg.model,
                             )
                     except Exception as e:
                         # Log and continue without image
