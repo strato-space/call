@@ -596,9 +596,21 @@ def _as_input_image(src: Union[str, Path, bytes], stack: ExitStack):
         if _is_url(p):
             return {"type": "input_image", "image_url": p}
         data = Path(p).read_bytes()
-        return {"type": "input_image", "image_data": base64.b64encode(data).decode("ascii"), "mime_type": "image/png"}
+        return {
+            "type": "input_image",
+            "image": {
+                "data": base64.b64encode(data).decode("ascii"),
+                "mime_type": "image/png",
+            },
+        }
     if isinstance(src, (bytes, bytearray)):
-        return {"type": "input_image", "image_data": base64.b64encode(bytes(src)).decode("ascii"), "mime_type": "image/png"}
+        return {
+            "type": "input_image",
+            "image": {
+                "data": base64.b64encode(bytes(src)).decode("ascii"),
+                "mime_type": "image/png",
+            },
+        }
     return None
 
 async def _responses_image_one_out(
