@@ -1982,6 +1982,11 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
                 err_text = format_exception_text(e)
                 print("Error during main agent run:\n" + err_text)
                 history.append({"role": "assistant", "content": f"Error: {err_text}"})
+                # Proactively notify Telegram about the failure (e.g., 429 rate limit)
+                try:
+                    await send_digest_notification(text=f"Agent run failed:\n{err_text}")
+                except Exception:
+                    pass
                 is_mcp = "Error invoking MCP tool" in str(e)
                 if is_mcp and not mcp_retry_main_done:
                     mcp_retry_main_done = True
