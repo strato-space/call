@@ -33,7 +33,7 @@ mcpServers:
     - /home/strato-space/call/.env
     - --from
     - git+https://github.com/strato-space/voice@main
-    - mcp_voicebot
+    - mcp-voicebot
 
   voice-py:
     enabled: false
