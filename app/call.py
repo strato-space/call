@@ -799,9 +799,40 @@ async def _responses_image_one_out(
             except Exception:
                 # fall through to final error handling
                 pass
-            # Inform Telegram that no image was produced after retry
+            # Fallback attempt with a known image-capable model if configured/needed
             try:
-                await send_digest_notification(text="Image generation: no image found in model response (after retry)")
+                fallback_model = os.getenv("RESPONSES_IMAGE_FALLBACK_MODEL") or "gpt-4o"
+                if (chosen_model or "").lower() != fallback_model.lower():
+                    try:
+                        await send_digest_notification(text=f"Image generation: no image with {chosen_model or 'default'}; retrying with fallback model {fallback_model}…")
+                    except Exception:
+                        pass
+                    # Use the same nudge content to force tool usage
+                    resp3 = await async_retry(
+                        lambda: openai_client.responses.create(
+                            model=fallback_model,
+                            instructions=forced_system,
+                            tools=tools,
+                            input=[{"role": "user", "content": retry_content}],
+                        ),
+                        retries=1,
+                        base_delay=0.8,
+                        jitter=0.2,
+                        retry_on=(httpx.TimeoutException, OSError),
+                    )
+                    b64, url = _extract_image_b64(resp3)
+                    if not b64 and url:
+                        async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+                            rr = await client.get(url)
+                            rr.raise_for_status()
+                            output_path.write_bytes(rr.content)
+                            return output_path
+            except Exception:
+                # ignore fallback errors and proceed to final error message
+                pass
+            # Inform Telegram that no image was produced after retry (and fallback if attempted)
+            try:
+                await send_digest_notification(text="Image generation: no image found in model response (after retry/fallback)")
             except Exception:
                 pass
             raise RuntimeError("Responses image not found (no b64/url).")
