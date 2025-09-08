@@ -671,16 +671,82 @@ async def _responses_image_one_out(
                 pass
             raise
 
-        # Extract a single image from Responses output
+        # Extract a single image from Responses output (robust recursive search)
         def _extract_image_b64(r):
-            for msg in getattr(r, "output", []) or []:
-                for part in getattr(msg, "content", []) or []:
-                    t = getattr(part, "type", None) or getattr(part, "kind", None)
-                    if t in ("image", "output_image"):
-                        b64 = getattr(part, "image_base64", None) or getattr(part, "b64_json", None)
-                        url = getattr(part, "image_url", None) or getattr(part, "url", None)
-                        return (b64, url)
-            return (None, None)
+            seen = set()
+
+            def _get(obj, name, default=None):
+                try:
+                    return getattr(obj, name)
+                except Exception:
+                    pass
+                if isinstance(obj, dict):
+                    return obj.get(name, default)
+                try:
+                    d = getattr(obj, "__dict__", None)
+                    if isinstance(d, dict):
+                        return d.get(name, default)
+                except Exception:
+                    pass
+                return default
+
+            def _walk(obj):
+                # Check direct fields first
+                b64 = _get(obj, "image_base64") or _get(obj, "b64_json")
+                url = _get(obj, "image_url") or _get(obj, "url")
+                if b64 or url:
+                    return (b64, url)
+
+                # Avoid cycles
+                try:
+                    oid = id(obj)
+                    if oid in seen:
+                        return (None, None)
+                    seen.add(oid)
+                except Exception:
+                    pass
+
+                # Descend into common containers/attributes
+                # 1) If object has 'output' -> list
+                out = _get(obj, "output")
+                if isinstance(out, (list, tuple)):
+                    for it in out:
+                        b, u = _walk(it)
+                        if b or u:
+                            return (b, u)
+
+                # 2) If object has 'content' -> list
+                cont = _get(obj, "content")
+                if isinstance(cont, (list, tuple)):
+                    for it in cont:
+                        b, u = _walk(it)
+                        if b or u:
+                            return (b, u)
+
+                # 3) Generic dict walk
+                if isinstance(obj, dict):
+                    for v in obj.values():
+                        b, u = _walk(v)
+                        if b or u:
+                            return (b, u)
+
+                # 4) Generic list/tuple walk
+                if isinstance(obj, (list, tuple)):
+                    for v in obj:
+                        b, u = _walk(v)
+                        if b or u:
+                            return (b, u)
+
+                # 5) Fallback: try known attributes heuristically
+                for name in ("image", "data"):
+                    v = _get(obj, name)
+                    if v is not None:
+                        b, u = _walk(v)
+                        if b or u:
+                            return (b, u)
+                return (None, None)
+
+            return _walk(r)
 
         b64, url = _extract_image_b64(resp)
         if not b64 and url:
