@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
 import json
+import tempfile
 import yaml
 import httpx
 from openai import OpenAI
@@ -1281,7 +1282,7 @@ def make_responses_image_generation_tool() -> FunctionTool:
     Factory: returns a FunctionTool that calls Responses API `image_generation`
     to produce exactly one image.
     """
-    async def on_invoke_tool(params: Dict[str, Any]) -> Dict[str, Any]:
+    async def on_invoke_tool(tool_context, params: Dict[str, Any]) -> Dict[str, Any]:
         prompt: str = params.get("prompt", "")
         images: List[str] = params.get("images", []) or []
         size: str = params.get("size", "1024x1024")
