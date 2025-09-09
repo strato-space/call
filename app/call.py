@@ -167,45 +167,6 @@ OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
 # Initialize selected chat/thread defaults from .env
 selected_chat_id = TELEGRAM_CHAT_ID
 selected_thread_id = TELEGRAM_THREAD_ID or None
-# Global OpenAI client - will be configured with proxy in create_openai_client()
-openai_client: OpenAI = None
-
-def create_openai_client():
-    """Create and configure OpenAI client with proper proxy configuration for agents SDK."""
-    from openai import AsyncOpenAI
-    import agents
-    
-    # Get proxy configuration from environment
-    proxy_url = os.environ.get("OPENAI_PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
-    
-    if proxy_url:
-        # For agents SDK, we need to configure the underlying httpx client properly
-        import httpx
-        
-        # Create httpx client with proxy and generous timeouts
-        # Separate connect/read/write timeouts to better handle slow model responses
-        http_client = httpx.AsyncClient(
-            proxy=proxy_url,
-            timeout=httpx.Timeout(connect=45.0, read=600.0, write=240.0, pool=60.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            verify=True,
-            follow_redirects=True,
-        )
-        
-        # Create AsyncOpenAI client with proxied httpx client and small retry budget
-        client = AsyncOpenAI(
-            api_key=OPENAI_API_KEY,
-            http_client=http_client,
-            max_retries=2,
-            timeout=600.0,
-        )
-    else:
-        # Direct connection
-        client = AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=2, timeout=600.0)
-    
-    # Set as default client for agents SDK
-    agents.set_default_openai_client(client)
-    return client
 
 def format_exception_json(e: Exception) -> dict:
     """Return a compact JSON-serializable description of an exception."""
@@ -250,14 +211,6 @@ async def init_bot():
     )
     bot = Bot(token=telegram_token, request=request)
     return bot
-
-async def init_openai_client():
-    """Initialize the global OpenAI client with proper proxy configuration."""
-    global openai_client
-    if openai_client is None:
-        openai_client = create_openai_client()
-    print(f"Parse mode: {ParseMode.HTML}")
-    return openai_client
 
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
     """
@@ -1472,12 +1425,51 @@ class AgentConfig:
     base_dir: Path | None = None
 
 
-def _normalize_vs_list(vs_val: Any) -> List[str]:
+async def resolve_vector_stores(vs_val: Any) -> List[str]:
+    """Normalize and resolve vector store entries using a single list call.
+
+    - Accepts a string or collection and returns a list[str].
+    - Items starting with 'vs_' are kept as-is (assumed IDs).
+    - Other items are treated as names; we make one client.vector_stores.list() call
+      and map names (case-insensitive) to their IDs. Unmatched names are returned unchanged.
+    """
+    # Normalize input to a list of strings
     if vs_val is None:
+        items: List[str] = []
+    elif isinstance(vs_val, (list, tuple, set)):
+        items = [str(x) for x in vs_val if x is not None]
+    else:
+        items = [str(vs_val)]
+
+    if not items:
         return []
-    if isinstance(vs_val, (list, tuple, set)):
-        return [str(x) for x in vs_val if x is not None]
-    return [str(vs_val)]
+
+    # One list request via OpenAI official client; relies on env for proxy
+    try:
+        def _fetch_page():
+            client = OpenAI()
+            # use a large limit if available; 100 is commonly supported
+            return client.vector_stores.list(limit=100)
+
+        page = await asyncio.to_thread(_fetch_page)
+        name_to_id: dict[str, str] = {}
+        for vs in (getattr(page, "data", None) or []):
+            nm = (getattr(vs, "name", "") or "").strip().lower()
+            vid = getattr(vs, "id", None) or getattr(vs, "_id", None)
+            if nm and vid and nm not in name_to_id:
+                name_to_id[nm] = vid
+
+        resolved: List[str] = []
+        for s in items:
+            s_norm = (s or "").strip()
+            if s_norm.startswith("vs_"):
+                resolved.append(s_norm)
+            else:
+                resolved.append(name_to_id.get(s_norm.lower(), s_norm))
+        return resolved
+    except Exception:
+        # Best-effort fallback: return as-is
+        return items
 
 
 async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
@@ -1508,43 +1500,7 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
             instructions = instructions or ""
 
     # Vector stores from attributes (agent or prompt)
-    vs_list = _normalize_vs_list(attributes.get('vs'))
-    # Resolve vector store names to IDs when items are provided as names (not starting with 'vs_')
-    try:
-        if vs_list:
-            await init_openai_client()
-            client = openai_client
-            resolved_vs: List[str] = []
-            for item in vs_list:
-                s = str(item or "").strip()
-                if s.startswith("vs_"):
-                    resolved_vs.append(s)
-                    continue
-                # Lookup vector store by name (case-insensitive)
-                name_key = s.lower()
-                cursor = None
-                found_id: str | None = None
-                while True:
-                    try:
-                        page = await client.vector_stores.list(limit=100, after=cursor)
-                    except Exception:
-                        break
-                    for vs in (getattr(page, "data", None) or []):
-                        try:
-                            vs_name = (getattr(vs, "name", "") or "").strip().lower()
-                        except Exception:
-                            vs_name = ""
-                        if vs_name == name_key:
-                            found_id = getattr(vs, "id", None) or getattr(vs, "_id", None)
-                            break
-                    if found_id or not getattr(page, "has_more", False):
-                        break
-                    cursor = getattr(page, "last_id", None)
-                resolved_vs.append(found_id or s)
-            vs_list = resolved_vs
-    except Exception:
-        # Best-effort: on any failure keep original values
-        pass
+    vs_list = await resolve_vector_stores(attributes.get('vs'))
 
     # Sanitize numeric token fields in model_settings (if provided)
     try:
@@ -1903,9 +1859,6 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
         return agent, history, step1_output
 
 async def main(agent_path: str = None, user_input: str = "", agent_name: str = ""):
-    # Initialize OpenAI client with proper proxy configuration
-    await init_openai_client()
-    
     samples_dir = default_samples_dir
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir,
