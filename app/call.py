@@ -76,6 +76,7 @@ from agents import Agent, Runner, WebSearchTool
 from agents.tool import FileSearchTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
+from agents.realtime.session import OpenAIConversationsSession
 from agents.model_settings import ModelSettings
 
  # Telegraph usage is handled via utils.telegraph_utils
@@ -1629,6 +1630,9 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
             tools=tools,
             mcp_servers=mcp_servers,
         )
+        
+        session_key = f"{cfg.name}:{selected_chat_id}"
+        agent.conversations_session = OpenAIConversationsSession(session_key)
         # Initialize MCP servers (list tools to warm up)
         run_context = RunContextWrapper(context=None)
         for srv in mcp_servers:
