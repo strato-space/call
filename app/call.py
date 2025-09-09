@@ -1635,7 +1635,6 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
                 model=cfg.model or os.environ.get("LLM_MODEL") or "gpt-5",
             ),
             tools=tools,
-            include_json_instructions=True,
             mcp_servers=mcp_servers,
         )
         # Initialize MCP servers (list tools to warm up)
