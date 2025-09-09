@@ -1651,7 +1651,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
 
         # Now that selected_chat_id is finalized, attach conversation session (fail on error)
         session_key = f"{cfg.name}:{selected_chat_id}"
-        agent.conversations_session = OpenAIConversationsSession(session_key)
+        agent.conversations_session = OpenAIConversationsSession(conversation_id=session_key)
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
