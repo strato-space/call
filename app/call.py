@@ -1651,7 +1651,7 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
 
         # Now that selected_chat_id is finalized, create a Session for conversation history
         session_key = f"{cfg.name}:{selected_chat_id}"
-        session = OpenAIConversationsSession(session_id=session_key)
+        session = OpenAIConversationsSession(conversation_id=session_key)
         print(f"[INFO] Session key: {session_key}")
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
