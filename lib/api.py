@@ -198,7 +198,6 @@ async def call_async(
             agent, history, final_output = await app_call.run_digest_pipeline(
                 default_samples_dir,
                 user_input=input_text or "",
-                debug=False,
                 cli_agent_name=name,
             )
         except Exception as e:
