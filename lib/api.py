@@ -197,7 +197,6 @@ async def call_async(
         try:
             agent, history, final_output = await app_call.run_digest_pipeline(
                 default_samples_dir,
-                agent_path=str(yaml_path),
                 user_input=input_text or "",
                 debug=False,
                 cli_agent_name=name,

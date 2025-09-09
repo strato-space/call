@@ -89,8 +89,6 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=str(_env_file), override=True)
 
-# Module-level debug flag (can be overridden by main(debug=True))
-DEBUG = str(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes", "on")
 
 async def async_retry(
     op: Callable[[], Awaitable[Any]],
@@ -258,6 +256,7 @@ async def init_openai_client():
     global openai_client
     if openai_client is None:
         openai_client = create_openai_client()
+    print(f"Parse mode: {ParseMode.HTML}")
     return openai_client
 
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
@@ -488,8 +487,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             reply_markup=reply_markup
         )
     try:
-        if DEBUG:
-            print(f"[TG] send_message parse_mode={chosen_parse_mode}")
+        print(f"[TG] send_message parse_mode={chosen_parse_mode}")
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     except BadRequest as e:
         # Fallback to plain text if Telegram can't parse entities
@@ -506,8 +504,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
                     parse_mode=None,
                     reply_markup=reply_markup,
                 )
-            if DEBUG:
-                print("[TG] BadRequest parse error, retrying as plain text")
+            print("[TG] BadRequest parse error, retrying as plain text")
             message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         else:
             raise
@@ -1541,7 +1538,7 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
 
 
 @asynccontextmanager
-async def build_agent_by_name(agent_name: str, samples_dir: str):
+async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: str = ""):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
     Usage:
@@ -1634,16 +1631,68 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
         agent = Agent(
             name=f"{cfg.name} [agent]",
             instructions=cfg.instructions,
+            model_settings=ModelSettings(
+                model=cfg.model or os.environ.get("LLM_MODEL") or "gpt-5",
+            ),
             tools=tools,
+            include_json_instructions=True,
             mcp_servers=mcp_servers,
-            model=cfg.model,
-            model_settings=(cfg.model_settings or ModelSettings()),
         )
-
-        # Expose tools; count GSheets tools if present
+        # Initialize MCP servers (list tools to warm up)
         run_context = RunContextWrapper(context=None)
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
+
+        # Initialize bot and send welcome message
+        try:
+            await init_bot()
+        except Exception:
+            pass
+
+        # Try to resolve output targets from YAML and agent config
+        try:
+            merged_output = _merge_outputs(
+                (load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
+                None,
+            )
+            m_chat, m_thread = _extract_tg_targets(merged_output)
+            prompt_chat_id = m_chat
+            prompt_thread_id = m_thread
+        except Exception:
+            prompt_chat_id = None
+            prompt_thread_id = None
+
+        # Save globally for subsequent messages
+        global selected_chat_id, selected_thread_id
+        selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
+        selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
+
+        try:
+            print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+            print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
+        except Exception:
+            pass
+
+        # Derive display name and welcome text (no hardcoded fallback)
+        try:
+            display_name = ((cfg.name or agent_name) or "").strip()
+        except Exception:
+            display_name = (agent_name or "").strip()
+        msg_input = user_input or ""
+        if "\n" in msg_input:
+            code_block = f"<pre>{msg_input[:3600]}</pre>"
+        else:
+            code_block = f"<code>{msg_input[:3800]}</code>"
+        welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
+
+        try:
+            await send_telegram_welcome_message(
+                welcome_text[:4000],
+                chat_id=selected_chat_id,
+                message_thread_id=selected_thread_id,
+            )
+        except Exception:
+            pass
 
         try:
             yield agent, cfg
@@ -1651,193 +1700,172 @@ async def build_agent_by_name(agent_name: str, samples_dir: str):
             pass
 
 
-async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_input: str = "", debug: bool = False, cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
+async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
 
-    async with build_agent_by_name(cli_agent_name, samples_dir) as (agent, cfg):
+    async with build_agent_by_name(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg):
         # Выполняем запрос: передаём user_input как элемент истории в формате 
         # {"role": "user", "content": user_input}
         # Seed history: optional initial history + current user_input
         history = list(initial_history) if initial_history else []
         history.append({"role": "user", "content": user_input or "go"})
-        # Simple loop with max safety counter
-        max_cycles = 100
-        cycles = 0
-        # Retry guards to prevent infinite loops on repeated MCP failures
-        mcp_retry_main_done = False
-        mcp_retry_sr_done = False
-        # Ensure step1_output is always defined even if we break on first error
-        step1_output = ""
-        while True:
-            cycles += 1
-            if cycles > max_cycles:
-                print("Max cycles reached; exiting loop")
-                break
-            try:
-                result1 = await Runner.run(
-                    agent,
-                    history,
-                    max_turns=150,
-                )
-                history = result1.to_input_list()
-                step1_output = result1.final_output
-            except Exception as e:
-                # Log and continue by adding error and a 'go' to history
-                err_text = format_exception_text(e)
-                print("Error during main agent run:\n" + err_text)
-                history.append({"role": "assistant", "content": f"Error: {err_text}"})
-                # Proactively notify Telegram about the failure (e.g., 429 rate limit)
+
+        # Inner function: run main agent once, notify, optional SelfReflection
+        async def _run_main_and_optional_self_reflection(agent, cfg, *, user_input: str, cli_agent_name: str, history: List[Dict[str, Any]], samples_dir: str) -> tuple:
+            """Run the main agent once, send digest, optionally run SelfReflection, and return results."""
+            # Simple loop with max safety counter (kept, but without MCP-specific retries)
+            max_cycles = 100
+            cycles = 0
+            # Ensure step1_output is always defined even if we break on first error
+            step1_output = ""
+            while True:
+                cycles += 1
+                if cycles > max_cycles:
+                    print("Max cycles reached; exiting loop")
+                    break
                 try:
-                    await send_digest_notification(text=f"Agent run failed:\n{err_text}")
-                except Exception:
-                    pass
-                is_mcp = "Error invoking MCP tool" in str(e)
-                if is_mcp and not mcp_retry_main_done:
-                    mcp_retry_main_done = True
-                    history.append({"role": "user", "content": "go"})
-                    continue
-                # Do not auto-retry more than once; break the loop and return
-                break
+                    result1 = await Runner.run(
+                        agent,
+                        history,
+                        max_turns=150,
+                    )
+                    history = result1.to_input_list()
+                    step1_output = result1.final_output
+                except Exception as e:
+                    # Log and stop (no MCP retry handling)
+                    err_text = format_exception_text(e)
+                    print("Error during main agent run:\n" + err_text)
+                    history.append({"role": "assistant", "content": f"Error: {err_text}"})
+                    try:
+                        await send_digest_notification(text=f"Agent run failed:\n{err_text}")
+                    except Exception:
+                        pass
+                    break
 
-            print("Step 1 output:")
-            print(step1_output)
-            
-            # Image generation removed; notify without image
-            img_path_for_notify: Path | None = None
+                print("Step 1 output:")
+                print(step1_output)
+                
+                # Image generation removed; notify without image
+                img_path_for_notify: Path | None = None
 
-            # Send Telegram digest notification only outside of debug mode
-            if not debug:
+                # Send Telegram digest notification
                 await send_digest_notification(
                     agent_name=cfg.name,
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else agent_path),
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
                     input_text=user_input,
                     text=step1_output,
                     image_path=(str(img_path_for_notify) if img_path_for_notify and img_path_for_notify.exists() else None),
                 )
 
-            # Post-run: commit and push changes only outside of debug mode
-            if not debug:
+                # Post-run: commit and push changes
                 await post_run_git_push(agent_name=cfg.name, user_input=user_input)
 
-            # Only run SelfReflection when the original agent is AgentFab
-            # Consider both the resolved config name and the CLI-invoked name (may include leading '@')
-            invoked_name = (cli_agent_name or "").strip().lstrip("@").lower()
-            cfg_name_norm = (cfg.name or "").strip().lstrip("@").lower() if isinstance(cfg.name, str) else ""
-            is_agentfab = (cfg_name_norm == "agentfab") or (invoked_name == "agentfab")
-            if not is_agentfab:
-                # For non-AgentFab agents, finish after the first main run
-                break
+                # Only run SelfReflection when the original agent is AgentFab (simple check)
+                if (cfg.name or "").strip().lower() != "agentfab":
+                    # For non-AgentFab agents, finish after the first main run
+                    break
 
-            # --- Run SelfReflection agent and react to its return code ---
-            async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
-                print(f"[SR] Running SelfReflection (cycles={cycles})")
-                try:
-                    sr_result = await Runner.run(
-                        sr_agent,
-                        history,
-                        max_turns=100,
-                    )
-                except Exception as e:
-                    err_text = format_exception_text(e)
-                    print("Error during SelfReflection run:\n" + err_text)
-                    history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                    is_mcp = "Error invoking MCP tool" in str(e)
-                    if is_mcp and not mcp_retry_sr_done:
-                        mcp_retry_sr_done = True
-                        history.append({"role": "user", "content": "go"})
-                        # Skip to next outer loop iteration
-                        continue
-                    # Give up on SR this cycle; proceed to loop control (will likely break below)
-                    sr_result = None
-                # Prefer structured return code if available; else parse text
-                sr_code = getattr(sr_result, "return_code", None) if sr_result else None
-                sr_output = getattr(sr_result, "final_output", None) if sr_result else None
-                if not sr_code and isinstance(sr_output, str):
-                    s = sr_output.strip().upper()
-                    if s.startswith("PREV"):
-                        sr_code = "PREV"
-                    elif s.startswith("CONTINUE"):
-                        sr_code = "CONTINUE"
-                print(f"[SR] Return code: {sr_code}")
-                # If SelfReflection produced any text, echo to console and Telegram
-                if isinstance(sr_output, str) and sr_output.strip():
-                    print("[SR] Output:\n" + sr_output)
+                # --- Run SelfReflection agent and react to its return code ---
+                async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
+                    print(f"[SR] Running SelfReflection (cycles={cycles})")
                     try:
-                        await telegram_send_message(text=f"<b>SelfReflection</b>\n{sr_output}")
-                    except Exception:
-                        pass
-
-                # Handle PREV/CONTINUE loop control
-                if sr_code == "PREV":
-                    # Do NOT add SR result to history; just push a 'go' from user and restart loop
-                    print("[SR] PREV received: appending 'go' and restarting outer loop")
-                    history.append({"role": "user", "content": "go"})
-                    continue
-                elif sr_code == "CONTINUE":
-                    # Keep running SelfReflection repeatedly, skipping the main agent
-                    while sr_code == "CONTINUE":
-                        print(f"[SR] CONTINUE loop iteration (cycles={cycles})")
-                        cycles += 1
-                        if cycles > max_cycles:
-                            print("Max cycles reached in SelfReflection; exiting loop")
-                            sr_code = "MAX"
-                            break
+                        sr_result = await Runner.run(
+                            sr_agent,
+                            history,
+                            max_turns=100,
+                        )
+                    except Exception as e:
+                        err_text = format_exception_text(e)
+                        print("Error during SelfReflection run:\n" + err_text)
+                        history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
+                        break
+                    # Text-based control flow (no sr_code)
+                    sr_output = getattr(sr_result, "final_output", None) if sr_result else None
+                    s = (sr_output or "").strip()
+                    up = s.upper()
+                    # If SelfReflection produced any text, echo to console and Telegram
+                    if s:
+                        print("[SR] Output:\n" + s)
                         try:
-                            sr_result = await Runner.run(
-                                sr_agent,
-                                history,
-                                max_turns=100,
-                            )
-                        except Exception as e:
-                            err_text = format_exception_text(e)
-                            print("Error during SelfReflection CONTINUE iteration:\n" + err_text)
-                            history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                            is_mcp = "Error invoking MCP tool" in str(e)
-                            if is_mcp and not mcp_retry_sr_done:
-                                mcp_retry_sr_done = True
-                                history.append({"role": "user", "content": "go"})
-                                continue
-                            break
-                        # Update history fully to SR's view
-                        try:
-                            history = sr_result.to_input_list()
+                            await telegram_send_message(text=f"<b>SelfReflection</b>\n{s}")
                         except Exception:
-                            out2 = getattr(sr_result, "final_output", None)
-                            if isinstance(out2, str) and out2:
-                                history.append({"role": "assistant", "content": out2})
-                        # Re-evaluate SR code
-                        sr_code = getattr(sr_result, "return_code", None)
-                        if not sr_code and isinstance(getattr(sr_result, "final_output", None), str):
-                            s2 = sr_result.final_output.strip().upper()
-                            if s2.startswith("PREV"):
-                                sr_code = "PREV"
-                            elif s2.startswith("CONTINUE"):
-                                sr_code = "CONTINUE"
-                        # Echo SR output for CONTINUE iterations as well
-                        out_text = getattr(sr_result, "final_output", None)
-                        if isinstance(out_text, str) and out_text.strip():
-                            print("[SR] Output:\n" + out_text)
-                            try:
-                                await telegram_send_message(text=f"<b>SelfReflection</b>\n{out_text}")
-                            except Exception:
-                                pass
-                        print(f"[SR] Return code after CONTINUE iteration: {sr_code}")
-                        if sr_code == "PREV":
-                            print("[SR] PREV received inside CONTINUE loop: appending 'go' and breaking to outer loop")
-                            history.append({"role": "user", "content": "go"})
-                            break
+                            pass
 
-            # Loop control based on SelfReflection return code
-            if sr_code not in ("PREV", "CONTINUE"):
-                # At the end of the cycle, ask user for the next message only in interactive shells
-                import sys as _sys
+                    # Handle PREV/CONTINUE loop control via substring checks
+                    if "PREV" in up:
+                        # Do NOT add SR result to history; just push a 'go' from user and restart loop
+                        print("[SR] PREV received: appending 'go' and restarting outer loop")
+                        history.append({"role": "user", "content": "go"})
+                        continue
+                    elif "CONTINUE" in up:
+                        # Keep running SelfReflection repeatedly, skipping the main agent
+                        while True:
+                            print(f"[SR] CONTINUE loop iteration (cycles={cycles})")
+                            cycles += 1
+                            if cycles > max_cycles:
+                                print("Max cycles reached in SelfReflection; exiting loop")
+                                break
+                            try:
+                                sr_result = await Runner.run(
+                                    sr_agent,
+                                    history,
+                                    max_turns=100,
+                                )
+                            except Exception as e:
+                                err_text = format_exception_text(e)
+                                print("Error during SelfReflection CONTINUE iteration:\n" + err_text)
+                                history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
+                                break
+                            # Update history fully to SR's view
+                            try:
+                                history = sr_result.to_input_list()
+                            except Exception:
+                                out2 = getattr(sr_result, "final_output", None)
+                                if isinstance(out2, str) and out2:
+                                    history.append({"role": "assistant", "content": out2})
+                            # Re-evaluate SR output
+                            s2 = (getattr(sr_result, "final_output", None) or "").strip()
+                            up2 = s2.upper()
+                            # Echo SR output for CONTINUE iterations as well
+                            if s2:
+                                print("[SR] Output:\n" + s2)
+                                try:
+                                    await telegram_send_message(text=f"<b>SelfReflection</b>\n{s2}")
+                                except Exception:
+                                    pass
+                            if "PREV" in up2:
+                                print("[SR] PREV received during CONTINUE loop: appending 'go'")
+                                history.append({"role": "user", "content": "go"})
+                                break
+                            if "CONTINUE" not in up2:
+                                break
+
+            return agent, history, step1_output
+
+        # Delegate to the inner function
+        agent, history, step1_output = await _run_main_and_optional_self_reflection(
+            agent,
+            cfg,
+            user_input=user_input,
+            cli_agent_name=cli_agent_name,
+            history=history,
+            samples_dir=samples_dir,
+        )
+
+        # Loop control based on SelfReflection return code
+        if True: # sr_code not in ("PREV", "CONTINUE"):
+            # At the end of the cycle, ask user for the next message only in interactive shells
+            import sys as _sys
+            try:
+                is_tty = hasattr(_sys, "stdin") and _sys.stdin and _sys.stdin.isatty()
+            except Exception:
+                is_tty = False
+            if is_tty:
                 try:
-                    is_tty = hasattr(_sys, "stdin") and _sys.stdin and _sys.stdin.isatty()
+                    loop = asyncio.get_running_loop()
+                    prompt_text = "Enter next user message (or 'exit' to finish, empty => 'go'): "
+                    user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
                 except Exception:
-                    is_tty = False
-                if is_tty:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        prompt_text = "Enter next user message (or 'exit' to finish, empty => 'go'): "
+                    user_next = ""
                         user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
                     except Exception:
                         user_next = ""
@@ -1865,87 +1893,16 @@ async def run_digest_pipeline(samples_dir: str, agent_path: str = None, user_inp
 
         return agent, history, step1_output
 
-async def main(agent_path: str = None, user_input: str = "", debug: bool = False, agent_name: str = ""):
+async def main(agent_path: str = None, user_input: str = "", agent_name: str = ""):
     # Initialize OpenAI client with proper proxy configuration
     await init_openai_client()
-    # Allow caller to force debug prints
-    global DEBUG
-    if debug:
-        DEBUG = True
     
-    # When debugging, avoid external side effects like Telegram messages
-    if not debug:
-        await init_bot()
-        
-    # Load agent profile if specified
-    agent_attrs = {}
-    if agent_path and os.path.exists(agent_path):
-        agent_attrs = extract_agent_attributes(agent_path)
-    
-    # Prepare the welcome message: show agent name and input
-    display_name = (agent_attrs.get("name") if agent_attrs else None) or (agent_name or "Agent")
-    # Use <pre><code> for multi-line; <code> for single-line
-    msg_input = user_input or ""
-    if "\n" in msg_input:
-        code_block = f"<pre>{msg_input[:3600]}</pre>"
-    else:
-        code_block = f"<code>{msg_input[:3800]}</code>"
-    welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
-
-    
-    # KISS: Single-pass selection — merge possible outputs and extract once
-    try:
-        merged_output = _merge_outputs(
-            (load_yaml(Path(agent_path)).get("output") if agent_path else None),
-            (agent_attrs.get('output') if isinstance(agent_attrs, dict) else None),
-        )
-        m_chat, m_thread = _extract_tg_targets(merged_output)
-        prompt_chat_id = m_chat
-        prompt_thread_id = m_thread
-    except Exception:
-        pass
-
-    # Save globally for all subsequent messages (welcome, MCP hook, digest)
-    global selected_chat_id, selected_thread_id
-    selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
-    selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
-
-    if not debug:
-        print(f"[INFO] Agent path: {agent_path}")
-        print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
-
-    if not debug:
-        await send_telegram_welcome_message(
-            welcome_text[:4000],
-            chat_id=selected_chat_id,
-            message_thread_id=selected_thread_id,
-        )
-    
-    # Compute samples directory: agent directory + '/memory' if agent_path provided
-    if agent_path:
-        samples_dir = os.path.join(os.path.dirname(agent_path), 'memory')
-    else:
-        samples_dir = default_samples_dir
-
     samples_dir = default_samples_dir
-    # Run the digest pipeline with the agent profile
-    # Backward compatibility: some deployments may have older run_digest_pipeline signature
-    try:
-        agent, history, step1_output = await run_digest_pipeline(
-            samples_dir,
-            agent_path=agent_path,
-            user_input=user_input,
-            debug=debug,
-            cli_agent_name=agent_name,
-        )
-    except TypeError:
-        # Fallback: call without cli_agent_name for older servers
-        agent, history, step1_output = await run_digest_pipeline(
-            samples_dir,
-            agent_path=agent_path,
-            user_input=user_input,
-            debug=debug,
-        )
+    agent, history, step1_output = await run_digest_pipeline(
+        samples_dir,
+        user_input=user_input,
+        cli_agent_name=agent_name,
+    )
 
 
 async def republish_results() -> str:
