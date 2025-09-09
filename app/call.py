@@ -1651,6 +1651,11 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
 
         # Now that selected_chat_id is finalized, attach conversation session (fail on error)
         session_key = f"{cfg.name}:{selected_chat_id}"
+        await send_telegram_welcome_message(
+            session_key,
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+        )
         agent.conversations_session = OpenAIConversationsSession(conversation_id=session_key)
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
