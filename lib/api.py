@@ -120,7 +120,6 @@ async def call_async(
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
-    await app_call.init_openai_client()
     await app_call.init_bot()
 
     # Discover agent profile path using existing logic
