@@ -1,5 +1,6 @@
 openai                     # OpenAI’s official Python library
 requests[socks]>=2.31.0            # Requests + PySocks for SOCKS5 proxy
+httpx[socks] 
 # OR, if using HTTPX instead of requests:
 # httpx>=0.23.0
 # httpx-socks>=0.6.0
