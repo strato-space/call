@@ -1630,70 +1630,48 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
             tools=tools,
             mcp_servers=mcp_servers,
         )
-        
-        session_key = f"{cfg.name}:{selected_chat_id}"
-        agent.conversations_session = OpenAIConversationsSession(session_key)
-        # Initialize MCP servers (list tools to warm up)
         run_context = RunContextWrapper(context=None)
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
 
-        # Initialize bot and send welcome message
-        try:
-            await init_bot()
-        except Exception:
-            pass
+        await init_bot()
+        
+        merged_output = _merge_outputs(
+            (load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
+            None,
+        )
+        m_chat, m_thread = _extract_tg_targets(merged_output)
+        prompt_chat_id = m_chat
+        prompt_thread_id = m_thread
 
-        # Try to resolve output targets from YAML and agent config
-        try:
-            merged_output = _merge_outputs(
-                (load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
-                None,
-            )
-            m_chat, m_thread = _extract_tg_targets(merged_output)
-            prompt_chat_id = m_chat
-            prompt_thread_id = m_thread
-        except Exception:
-            prompt_chat_id = None
-            prompt_thread_id = None
 
         # Save globally for subsequent messages
         global selected_chat_id, selected_thread_id
         selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
         selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
-        try:
-            print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
-            print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
-        except Exception:
-            pass
+        # Now that selected_chat_id is finalized, attach conversation session (fail on error)
+        session_key = f"{cfg.name}:{selected_chat_id}"
+        agent.conversations_session = OpenAIConversationsSession(session_key)
 
-        # Derive display name and welcome text (no hardcoded fallback)
-        try:
-            display_name = ((cfg.name or agent_name) or "").strip()
-        except Exception:
-            display_name = (agent_name or "").strip()
+        print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+        print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
+
+        
+        display_name = ((cfg.name or agent_name) or "").strip()
         msg_input = user_input or ""
-        if "\n" in msg_input:
-            code_block = f"<pre>{msg_input[:3600]}</pre>"
-        else:
-            code_block = f"<code>{msg_input[:3800]}</code>"
+        
+        code_block = f"<code>{msg_input[:3800]}</code>"
         welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
 
-        try:
-            await send_telegram_welcome_message(
-                welcome_text[:4000],
-                chat_id=selected_chat_id,
-                message_thread_id=selected_thread_id,
-            )
-        except Exception:
-            pass
-
-        try:
-            yield agent, cfg
-        finally:
-            pass
-
+        await send_telegram_welcome_message(
+            welcome_text[:4000],
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+        )
+        
+        yield agent, cfg
+        
 
 async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
 
