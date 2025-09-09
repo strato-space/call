@@ -1529,8 +1529,60 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
     )
 
 
-@asynccontextmanager
-async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: str = ""):
+async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None) -> list[Any]:
+    """Start all enabled MCP servers as defined in cfg_yaml and return the list."""
+    mcp_servers_started: list[Any] = []
+    if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
+
+        async def _open_stdio(name: str, spec: dict, timeout: int):
+            cmd = (spec or {}).get("command")
+            args = (spec or {}).get("args") or []
+            if not cmd:
+                return None
+            server = await MCPServerStdioHook(
+                params={"command": cmd, "args": args},
+                name=name,
+                client_session_timeout_seconds=timeout,
+            ).connect()
+            return server
+
+        for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            if not spec.get("enabled", False):
+                continue
+            if "command" in spec:
+                timeout = int(spec.get("timeoutSeconds", 120))
+                srv = await _open_stdio(name, spec, timeout)
+                if srv:
+                    mcp_servers_started.append(srv)
+                continue
+            if "serverUrl" in spec and isinstance(spec.get("bridge"), dict):
+                bridge = spec["bridge"]
+                bcmd = bridge.get("command")
+                bargs = list(bridge.get("args") or [])
+                if bcmd:
+                    url = spec.get("serverUrl") or ""
+                    token = os.getenv("API_ACCESS_TOKEN", "")
+                    fmt_args = []
+                    for a in bargs:
+                        if isinstance(a, str):
+                            a = a.replace("{serverUrl}", url).replace("{API_ACCESS_TOKEN}", token)
+                        fmt_args.append(a)
+                    bridge_spec = {"command": bcmd, "args": fmt_args}
+                    timeout = int(spec.get("timeoutSeconds", 120))
+                    srv = await _open_stdio(name, bridge_spec, timeout)
+                    if srv:
+                        mcp_servers_started.append(srv)
+                else:
+                    logging.info("MCP '%s' has serverUrl but no bridge.command; skipping.", name)
+            else:
+                if "serverUrl" in spec:
+                    logging.info("MCP '%s' is remote (%s) but no bridge is defined; skipping.", name, spec.get("serverUrl"))
+    return mcp_servers_started
+
+
+async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = ""):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
     Usage:
@@ -1555,60 +1607,8 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
                 return None
             return (cfg_yaml.get("mcpServers") or {}).get(name)
 
-        async def _open_stdio(name: str, spec: dict, timeout: int) -> Any:
-            cmd = (spec or {}).get("command")
-            args = (spec or {}).get("args") or []
-            if not cmd:
-                return None
-            server = await astack.enter_async_context(
-                MCPServerStdioHook(
-                    params={"command": cmd, "args": args},
-                    name=name,
-                    client_session_timeout_seconds=timeout,
-                )
-            )
-            servers.append(server)
-            return server
-
-        # Start ALL enabled servers from YAML (no hardcoded list)
-        mcp_servers_started: list[Any] = []
-        if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
-            for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
-                if not isinstance(spec, dict):
-                    continue
-                if not spec.get("enabled", False):
-                    continue
-                # Prefer stdio via command/args
-                if "command" in spec:
-                    timeout = int(spec.get("timeoutSeconds", 120))
-                    srv = await _open_stdio(name, spec, timeout)
-                    if srv:
-                        mcp_servers_started.append(srv)
-                    continue
-                # Remote with bridge
-                if "serverUrl" in spec and isinstance(spec.get("bridge"), dict):
-                    bridge = spec["bridge"]
-                    bcmd = bridge.get("command")
-                    bargs = list(bridge.get("args") or [])
-                    if bcmd:
-                        url = spec.get("serverUrl") or ""
-                        token = os.getenv("API_ACCESS_TOKEN", "")
-                        fmt_args = []
-                        for a in bargs:
-                            if isinstance(a, str):
-                                a = a.replace("{serverUrl}", url).replace("{API_ACCESS_TOKEN}", token)
-                            fmt_args.append(a)
-                        bridge_spec = {"command": bcmd, "args": fmt_args}
-                        timeout = int(spec.get("timeoutSeconds", 120))
-                        srv = await _open_stdio(name, bridge_spec, timeout)
-                        if srv:
-                            mcp_servers_started.append(srv)
-                    else:
-                        logging.info("MCP '%s' has serverUrl but no bridge.command; skipping.", name)
-                else:
-                    # serverUrl without bridge => not supported by stdio launcher
-                    if "serverUrl" in spec:
-                        logging.info("MCP '%s' is remote (%s) but no bridge is defined; skipping.", name, spec.get("serverUrl"))
+        # Start ALL enabled servers from YAML via helper
+        mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml)
 
         # Build agent
         cfg = await build_agent_config(agent_name)
@@ -1669,179 +1669,52 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
             chat_id=selected_chat_id,
             message_thread_id=selected_thread_id,
         )
-        
+        # Run the main agent once with pure user_input string (session-enabled)
+        initial_input = (user_input or "go")
+        try:
+            result1 = await Runner.run(
+                agent,
+                initial_input,
+                max_turns=150,
+                session=session,
+            )
+            step1_output = getattr(result1, "final_output", None)
+        except Exception as e:
+            err_text = format_exception_text(e)
+            print("Error during main agent run:\n" + err_text)
+            step1_output = f"Error: {err_text}"
+
+        # Notify digest (no image) and push
+        try:
+            await send_digest_notification(
+                agent_name=cfg.name,
+                agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
+                input_text=initial_input,
+                text=(step1_output or ""),
+                image_path=None,
+            )
+        except Exception:
+            pass
+        try:
+            await post_run_git_push(agent_name=cfg.name, user_input=user_input)
+        except Exception:
+            pass
+
+        # Expose final_output to callers via cfg
+        try:
+            setattr(cfg, "_last_final_output", step1_output)
+        except Exception:
+            pass
+
         yield agent, cfg, session
         
 
 async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
 
-    async with build_agent_by_name(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg, session):
-        # Выполняем запрос: передаём user_input как элемент истории в формате 
-        # {"role": "user", "content": user_input}
-        # Seed history: optional initial history + current user_input
-        history = list(initial_history) if initial_history else []
-        history.append({"role": "user", "content": user_input or "go"})
-
-        # Inner function: run main agent once, notify, optional SelfReflection
-        async def _run_main_and_optional_self_reflection(agent, cfg, *, user_input: str, cli_agent_name: str, history: List[Dict[str, Any]], samples_dir: str) -> tuple:
-            """Run the main agent once, send digest, optionally run SelfReflection, and return results."""
-            # Simple loop with max safety counter (kept, but without MCP-specific retries)
-            max_cycles = 100
-            cycles = 0
-            # Ensure step1_output is always defined even if we break on first error
-            step1_output = ""
-            while True:
-                cycles += 1
-                if cycles > max_cycles:
-                    print("Max cycles reached; exiting loop")
-                    break
-                try:
-                    result1 = await Runner.run(
-                        agent,
-                        history,
-                        max_turns=150,
-                        session=session,
-                    )
-                    history = result1.to_input_list()
-                    step1_output = result1.final_output
-                except Exception as e:
-                    # Log and stop (no MCP retry handling)
-                    err_text = format_exception_text(e)
-                    print("Error during main agent run:\n" + err_text)
-                    history.append({"role": "assistant", "content": f"Error: {err_text}"})
-                    try:
-                        await send_digest_notification(text=f"Agent run failed:\n{err_text}")
-                    except Exception:
-                        pass
-                    break
-
-                print("Step 1 output:")
-                print(step1_output)
-                
-                # Image generation removed; notify without image
-                img_path_for_notify: Path | None = None
-
-                # Send Telegram digest notification
-                await send_digest_notification(
-                    agent_name=cfg.name,
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
-                    input_text=user_input,
-                    text=step1_output,
-                    image_path=(str(img_path_for_notify) if img_path_for_notify and img_path_for_notify.exists() else None),
-                )
-
-                # Post-run: commit and push changes
-                await post_run_git_push(agent_name=cfg.name, user_input=user_input)
-
-                # Only run SelfReflection when the original agent is AgentFab (simple check)
-                if (cfg.name or "").strip().lower() != "agentfab":
-                    # For non-AgentFab agents, finish after the first main run
-                    break
-
-                # --- Run SelfReflection agent and react to its return code ---
-                async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg, _sr_session):
-                    print(f"[SR] Running SelfReflection (cycles={cycles})")
-                    try:
-                        sr_result = await Runner.run(
-                            sr_agent,
-                            history,
-                            max_turns=100,
-                            session=_sr_session,
-                        )
-                    except Exception as e:
-                        err_text = format_exception_text(e)
-                        print("Error during SelfReflection run:\n" + err_text)
-                        history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                        break
-                    # Text-based control flow (no sr_code)
-                    sr_output = getattr(sr_result, "final_output", None) if sr_result else None
-                    s = (sr_output or "").strip()
-                    up = s.upper()
-                    # If SelfReflection produced any text, echo to console and Telegram
-                    if s:
-                        print("[SR] Output:\n" + s)
-                        try:
-                            await telegram_send_message(text=f"<b>SelfReflection</b>\n{s}")
-                        except Exception:
-                            pass
-
-                    # Handle PREV/CONTINUE loop control via substring checks
-                    if "PREV" in up:
-                        # Do NOT add SR result to history; just push a 'go' from user and restart loop
-                        print("[SR] PREV received: appending 'go' and restarting outer loop")
-                        history.append({"role": "user", "content": "go"})
-                        continue
-                    elif "CONTINUE" in up:
-                        # Keep running SelfReflection repeatedly, skipping the main agent
-                        while True:
-                            print(f"[SR] CONTINUE loop iteration (cycles={cycles})")
-                            cycles += 1
-                            if cycles > max_cycles:
-                                print("Max cycles reached in SelfReflection; exiting loop")
-                                break
-                            try:
-                                sr_result = await Runner.run(
-                                    sr_agent,
-                                    history,
-                                    max_turns=100,
-                                    session=session,
-                                )
-                            except Exception as e:
-                                err_text = format_exception_text(e)
-                                print("Error during SelfReflection CONTINUE iteration:\n" + err_text)
-                                history.append({"role": "assistant", "content": f"SelfReflection error: {err_text}"})
-                                break
-                            # Update history fully to SR's view
-                            try:
-                                history = sr_result.to_input_list()
-                            except Exception:
-                                out2 = getattr(sr_result, "final_output", None)
-                                if isinstance(out2, str) and out2:
-                                    history.append({"role": "assistant", "content": out2})
-                            # Re-evaluate SR output
-                            s2 = (getattr(sr_result, "final_output", None) or "").strip()
-                            up2 = s2.upper()
-                            # Echo SR output for CONTINUE iterations as well
-                            if s2:
-                                print("[SR] Output:\n" + s2)
-                                try:
-                                    await telegram_send_message(text=f"<b>SelfReflection</b>\n{s2}")
-                                except Exception:
-                                    pass
-                            if "PREV" in up2:
-                                print("[SR] PREV received during CONTINUE loop: appending 'go'")
-                                history.append({"role": "user", "content": "go"})
-                                break
-                            if "CONTINUE" not in up2:
-                                break
-
-            return agent, history, step1_output
-
-        # Delegate to the inner function
-        agent, history, step1_output = await _run_main_and_optional_self_reflection(
-            agent,
-            cfg,
-            user_input=user_input,
-            cli_agent_name=cli_agent_name,
-            history=history,
-            samples_dir=samples_dir,
-        )
-
-        # (interactive stdin prompt removed for simplicity)
-
-        # qa_prompt = await load_qa_prompt()
-        # noinspection PyTypeChecker
-        # history.append({"role": "user", "content": qa_prompt})
-
-        # 2 шаг — получить содержимое prompt/prompt.md
-        # result2 = await Runner.run(agent, history, max_turns=50)
-
-        # step2_output = result2.final_output
-
-        # print("Step 2 output:")
-        # print(step2_output)
-
-        return agent, history, step1_output
+    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg, session):
+        # Return simplified triple: no history, just final output from cfg attribute
+        final_output = getattr(cfg, "_last_final_output", None)
+        return agent, [], final_output
 
 async def main(agent_path: str = None, user_input: str = "", agent_name: str = ""):
     samples_dir = default_samples_dir
