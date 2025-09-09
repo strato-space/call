@@ -1649,14 +1649,10 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
         selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
         selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
-        # Now that selected_chat_id is finalized, attach conversation session (fail on error)
+        # Now that selected_chat_id is finalized, create a Session for conversation history
         session_key = f"{cfg.name}:{selected_chat_id}"
-        await send_telegram_welcome_message(
-            session_key,
-            chat_id=selected_chat_id,
-            message_thread_id=selected_thread_id,
-        )
-        agent.conversations_session = OpenAIConversationsSession(conversation_id=session_key)
+        session = OpenAIConversationsSession(session_id=session_key)
+        print(f"[INFO] Session key: {session_key}")
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
@@ -1674,12 +1670,12 @@ async def build_agent_by_name(agent_name: str, samples_dir: str, *, user_input: 
             message_thread_id=selected_thread_id,
         )
         
-        yield agent, cfg
+        yield agent, cfg, session
         
 
 async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
 
-    async with build_agent_by_name(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg):
+    async with build_agent_by_name(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg, session):
         # Выполняем запрос: передаём user_input как элемент истории в формате 
         # {"role": "user", "content": user_input}
         # Seed history: optional initial history + current user_input
@@ -1704,6 +1700,7 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
                         agent,
                         history,
                         max_turns=150,
+                        session=session,
                     )
                     history = result1.to_input_list()
                     step1_output = result1.final_output
@@ -1742,13 +1739,14 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
                     break
 
                 # --- Run SelfReflection agent and react to its return code ---
-                async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg):
+                async with build_agent_by_name("SelfReflection", samples_dir) as (sr_agent, sr_cfg, _sr_session):
                     print(f"[SR] Running SelfReflection (cycles={cycles})")
                     try:
                         sr_result = await Runner.run(
                             sr_agent,
                             history,
                             max_turns=100,
+                            session=_sr_session,
                         )
                     except Exception as e:
                         err_text = format_exception_text(e)
@@ -1786,6 +1784,7 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
                                     sr_agent,
                                     history,
                                     max_turns=100,
+                                    session=session,
                                 )
                             except Exception as e:
                                 err_text = format_exception_text(e)
