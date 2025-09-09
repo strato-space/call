@@ -1851,33 +1851,7 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
             samples_dir=samples_dir,
         )
 
-        # Loop control based on SelfReflection return code
-        if True: # sr_code not in ("PREV", "CONTINUE"):
-            # At the end of the cycle, ask user for the next message only in interactive shells
-            import sys as _sys
-            try:
-                is_tty = hasattr(_sys, "stdin") and _sys.stdin and _sys.stdin.isatty()
-            except Exception:
-                is_tty = False
-            if is_tty:
-                try:
-                    loop = asyncio.get_running_loop()
-                    prompt_text = "Enter next user message (or 'exit' to finish, empty => 'go'): "
-                    user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
-                except Exception:
-                    user_next = ""
-                        user_next = await loop.run_in_executor(None, lambda: input(prompt_text))
-                    except Exception:
-                        user_next = ""
-
-                    if isinstance(user_next, str) and user_next.strip().lower() == "exit":
-                        break
-                    # Append user's message (default to 'go') and continue the outer loop
-                    history.append({"role": "user", "content": (user_next or "go")})
-                    continue
-                else:
-                    print("[INFO] Non-interactive shell detected; skipping CLI prompt and finishing.")
-                    break
+        # (interactive stdin prompt removed for simplicity)
 
         # qa_prompt = await load_qa_prompt()
         # noinspection PyTypeChecker
