@@ -76,7 +76,14 @@ from agents import Agent, Runner, WebSearchTool
 from agents.tool import FileSearchTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
-from agents.realtime.session import OpenAIConversationsSession
+try:
+    from agents.realtime.session import OpenAIConversationsSession
+except ImportError as e:
+    raise ImportError(
+        "OpenAIConversationsSession is not available in agents.realtime.session. "
+        "Please update the 'agents' package to a version that provides it, "
+        "or remove the conversations session feature."
+    ) from e
 from agents.model_settings import ModelSettings
 
  # Telegraph usage is handled via utils.telegraph_utils
