@@ -1509,6 +1509,42 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
 
     # Vector stores from attributes (agent or prompt)
     vs_list = _normalize_vs_list(attributes.get('vs'))
+    # Resolve vector store names to IDs when items are provided as names (not starting with 'vs_')
+    try:
+        if vs_list:
+            await init_openai_client()
+            client = openai_client
+            resolved_vs: List[str] = []
+            for item in vs_list:
+                s = str(item or "").strip()
+                if s.startswith("vs_"):
+                    resolved_vs.append(s)
+                    continue
+                # Lookup vector store by name (case-insensitive)
+                name_key = s.lower()
+                cursor = None
+                found_id: str | None = None
+                while True:
+                    try:
+                        page = await client.vector_stores.list(limit=100, after=cursor)
+                    except Exception:
+                        break
+                    for vs in (getattr(page, "data", None) or []):
+                        try:
+                            vs_name = (getattr(vs, "name", "") or "").strip().lower()
+                        except Exception:
+                            vs_name = ""
+                        if vs_name == name_key:
+                            found_id = getattr(vs, "id", None) or getattr(vs, "_id", None)
+                            break
+                    if found_id or not getattr(page, "has_more", False):
+                        break
+                    cursor = getattr(page, "last_id", None)
+                resolved_vs.append(found_id or s)
+            vs_list = resolved_vs
+    except Exception:
+        # Best-effort: on any failure keep original values
+        pass
 
     # Sanitize numeric token fields in model_settings (if provided)
     try:
