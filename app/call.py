@@ -3,6 +3,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
+import re
 from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
 from dataclasses import dataclass, field
 import urllib.parse
@@ -525,6 +526,20 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 logging.getLogger("openai").setLevel(logging.DEBUG)
 
 default_samples_dir = str(Path(__file__).resolve().parents[2])
+
+
+def normalize_agent_name(raw: str) -> str:
+    """Normalize agent name:
+
+    - Split by any non-alphanumeric character (spaces and similar) into parts
+    - CamelCase each part (PascalCase)
+    - Join parts without separators (remove spaces and similar)
+    - No fallbacks: may return empty string if nothing to normalize
+    """
+    s = (raw or "").strip()
+    parts = [p for p in re.split(r"[^A-Za-z0-9]+", s) if p]
+    cased = [p[:1].upper() + p[1:] for p in parts]
+    return "".join(cased)
 
 
 def _flatten_output_section(output_val) -> dict:
@@ -1483,7 +1498,9 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
 
     # Defaults
     default_model = os.environ.get("LLM_MODEL", "gpt-4.5")
-    name = (dto.name if dto and dto.name else (agent_name or "Agent")).strip()
+    # Normalize the agent name once, no fallbacks
+    raw_name = (dto.name if dto and dto.name else (agent_name or "")).strip()
+    name = normalize_agent_name(raw_name)
     model = (dto.model if dto and dto.model else default_model)
     model_settings = (dto.model_settings if dto else None)
     attributes: Dict[str, Any] = dict(getattr(dto, 'attributes', {}) or {})
@@ -1659,7 +1676,11 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
         # Now that selected_chat_id is finalized, create a Session for conversation history
-        session_key = f"{cfg.name}:{selected_chat_id}"
+        # Use strictly validated session key (letters, numbers, underscores, dashes)
+        normalized_name = (cfg.name or "").strip()
+        session_key = f"{normalized_name}-{selected_chat_id}"
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_key):
+            raise ValueError(f"Invalid session_key '{session_key}': only letters, numbers, underscores, and dashes are allowed")
         session = OpenAIConversationsSession(conversation_id=session_key)
         print(f"[INFO] Session key: {session_key}")
 
