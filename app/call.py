@@ -1529,8 +1529,13 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
     )
 
 
-async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None) -> list[Any]:
-    """Start all enabled MCP servers as defined in cfg_yaml and return the list."""
+async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitStack) -> list[Any]:
+    """Start all enabled MCP servers as defined in cfg_yaml and return the list.
+
+    IMPORTANT: we enter each stdio client's async context via the provided AsyncExitStack,
+    so that __aenter__/__aexit__ run on the same task. This prevents AnyIO cancel scope
+    mismatches like "Attempted to exit cancel scope in a different task than it was entered in".
+    """
     mcp_servers_started: list[Any] = []
     if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
 
@@ -1539,11 +1544,14 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None) -> list[Any]:
             args = (spec or {}).get("args") or []
             if not cmd:
                 return None
-            server = await MCPServerStdio(
-                params={"command": cmd, "args": args},
-                name=name,
-                client_session_timeout_seconds=timeout,
-            ).connect()
+            # Use our Telegram-integrated hook and ensure lifecycle is tied to astack
+            server = await astack.enter_async_context(
+                MCPServerStdioHook(
+                    params={"command": cmd, "args": args},
+                    name=name,
+                    client_session_timeout_seconds=timeout,
+                )
+            )
             return server
 
         for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
@@ -1608,8 +1616,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 return None
             return (cfg_yaml.get("mcpServers") or {}).get(name)
 
-        # Start ALL enabled servers from YAML via helper
-        mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml)
+        # Start ALL enabled servers from YAML via helper (lifecycle bound to astack)
+        mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
 
         # Build agent
         cfg = await build_agent_config(agent_name)
