@@ -1677,8 +1677,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         # Now that selected_chat_id is finalized, create a Session for conversation history
         # Use strictly validated session key (letters, numbers, underscores, dashes)
-        normalized_name = (cfg.name or "").strip()
-        session_key = f"{normalized_name}-{selected_chat_id}"
+        session_key = f"{cfg.name}-{selected_chat_id}"
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_key):
             raise ValueError(f"Invalid session_key '{session_key}': only letters, numbers, underscores, and dashes are allowed")
         session = OpenAIConversationsSession(conversation_id=session_key)
