@@ -1680,8 +1680,9 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         session_key = f"{cfg.name}-{selected_chat_id}"
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_key):
             raise ValueError(f"Invalid session_key '{session_key}': only letters, numbers, underscores, and dashes are allowed")
-        session = OpenAIConversationsSession(conversation_id=session_key)
-        print(f"[INFO] Session key: {session_key}")
+        conversation_id = f"conv_{session_key}"
+        session = OpenAIConversationsSession(conversation_id=conversation_id)
+        print(f"[INFO] Session key: {conversation_id}")
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
