@@ -73,7 +73,7 @@ if _env_file is None:
     checked = ", ".join(str(p) for p in _env_candidates)
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
-from agents import Agent, Runner, WebSearchTool, OpenAIConversationsSession
+from agents import Agent, Runner, WebSearchTool, SQLiteSession
 from agents.tool import FileSearchTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
@@ -1675,23 +1675,23 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
         selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
-        # Now that selected_chat_id is finalized, create a Session for conversation history
-        # Create a new OpenAI conversation (id assigned by API) and use returned id.
-        session_key = f"{cfg.name}-{selected_chat_id}"
+        # Now that selected_chat_id is finalized, create a local SQLite-backed session
+        # Deterministic and unique per dialog thread (agent:chat[:thread])
+        if selected_thread_id is not None:
+            session_id = f"{cfg.name}:{selected_chat_id}:{selected_thread_id}"
+        else:
+            session_id = f"{cfg.name}:{selected_chat_id}"
+
+        db_path = os.getenv("CALL_DB", "call/call.db")
         try:
-            def _create_conv():
-                client = OpenAI()
-                # Attach our readable key for debugging/discovery
-                return client.conversations.create(metadata={"session_key": session_key})
-            conv = await asyncio.to_thread(_create_conv)
-            conversation_id = getattr(conv, "id", None) or getattr(conv, "conversation_id", None)
-            if not conversation_id:
-                raise RuntimeError("OpenAI returned no conversation id")
-        except Exception as e:
-            # Let it crash loudly – per KISS – if we cannot create the conversation
-            raise
-        session = OpenAIConversationsSession(conversation_id=conversation_id)
-        print(f"[INFO] Session key: {conversation_id}")
+            db_dir = os.path.dirname(db_path)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        session = SQLiteSession(session_id, db_path)
+        print(f"[INFO] Session id: {session_id} @ {db_path}")
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
