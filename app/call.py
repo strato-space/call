@@ -447,6 +447,42 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
         # Fallback to plain text if Telegram can't parse entities
         emsg = str(e).lower()
         if "can't parse entities" in emsg or "parse entities" in emsg or "entity" in emsg:
+            # 1) If we attempted MarkdownV2, try legacy Markdown (v1)
+            if chosen_parse_mode == ParseMode.MARKDOWN_V2:
+                try:
+                    md_v1_text, _ = telegram_prepare_markdown(text or "", 4000, version="v1")
+                    def _op_md1():
+                        return bot.send_message(
+                            chat_id=eff_chat_id,
+                            message_thread_id=eff_thread_id,
+                            text=md_v1_text,
+                            parse_mode=ParseMode.MARKDOWN,
+                            reply_markup=reply_markup,
+                        )
+                    print("[TG] BadRequest parse error, retrying as Markdown (v1)")
+                    message = await async_retry(_op_md1, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+                    return message
+                except Exception:
+                    pass
+
+            # 2) Try HTML (sanitized)
+            try:
+                html_text, _ = telegram_prepare_html(text or "", 4000)
+                def _op_html():
+                    return bot.send_message(
+                        chat_id=eff_chat_id,
+                        message_thread_id=eff_thread_id,
+                        text=html_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=reply_markup,
+                    )
+                print("[TG] BadRequest parse error, retrying as HTML")
+                message = await async_retry(_op_html, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+                return message
+            except Exception:
+                pass
+
+            # 3) Plain text fallback
             plain = (text or "")
             if len(plain) > 4096:
                 plain = plain[: 4095] + "…"
