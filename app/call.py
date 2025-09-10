@@ -1539,7 +1539,7 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None) -> list[Any]:
             args = (spec or {}).get("args") or []
             if not cmd:
                 return None
-            server = await MCPServerStdioHook(
+            server = await MCPServerStdio(
                 params={"command": cmd, "args": args},
                 name=name,
                 client_session_timeout_seconds=timeout,
@@ -1582,6 +1582,7 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None) -> list[Any]:
     return mcp_servers_started
 
 
+@asynccontextmanager
 async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = ""):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
