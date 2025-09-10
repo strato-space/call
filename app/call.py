@@ -1681,6 +1681,14 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_key):
             raise ValueError(f"Invalid session_key '{session_key}': only letters, numbers, underscores, and dashes are allowed")
         conversation_id = f"conv_{session_key}"
+        # Ensure the conversation exists up-front; if creation fails (exists or perms), continue.
+        try:
+            def _create_conv():
+                client = OpenAI()
+                return client.conversations.create(id=conversation_id)
+            await asyncio.to_thread(_create_conv)
+        except Exception:
+            pass
         session = OpenAIConversationsSession(conversation_id=conversation_id)
         print(f"[INFO] Session key: {conversation_id}")
 
