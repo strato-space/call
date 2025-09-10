@@ -7,6 +7,7 @@ __all__ = [
     "telegram_truncate_markdown_safe",
     "telegram_prepare_html",
     "telegram_prepare_markdown",
+    "markdown_to_html_minimal",
 ]
 
 
@@ -209,6 +210,71 @@ def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2")
         if len(s) > max_len:
             s = s[: max_len - 1] + "…"
         return s, None
+
+
+# --- Minimal Markdown -> HTML converter --------------------------------------
+
+def markdown_to_html_minimal(text: str) -> str:
+    """Convert a small, safe subset of Markdown to HTML for Telegram.
+
+    Supported:
+    - **bold** and __bold__ -> <b>...</b>
+    - `inline code` -> <code>...</code>
+    - ```fenced blocks``` -> <pre>...</pre>
+    - [text](https://url) -> <a href="https://url">text</a>
+    - Bullets at line starts ('- ' or '* ') -> a bullet character '• '
+
+    Notes:
+    - We intentionally do not implement full Markdown; just enough for common cases.
+    - We do not attempt italics to avoid over-matching underscores inside words.
+    - Code blocks are protected first so subsequent replacements won't touch them.
+    """
+    s = text or ""
+
+    # 1) Extract fenced code blocks first
+    code_blocks: list[str] = []
+
+    def _take_codeblock(m: re.Match) -> str:
+        content = m.group(1)
+        idx = len(code_blocks)
+        code_blocks.append(content)
+        return f"[[[CODEBLOCK{idx}]]]"
+
+    # ```...``` (non-greedy), DOTALL so it spans lines
+    s = re.sub(r"```\s*\n?(.*?)\n?```", _take_codeblock, s, flags=re.DOTALL)
+
+    # 2) Inline code: `...` (avoid triple backticks by extraction above)
+    s = re.sub(r"(?<!`)`([^`\n]+?)`(?!`)", r"<code>\1</code>", s)
+
+    # 3) Bold: **...** and __...__ (non-greedy)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"__(.+?)__", r"<b>\1</b>", s)
+
+    # 4) Links: [text](https://...) only
+    def _link_sub(m: re.Match) -> str:
+        label = m.group(1)
+        url = m.group(2)
+        if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
+            # Escape double quotes in URL attribute; label will be sanitized later
+            safe_url = url.replace('"', '&quot;')
+            return f"<a href=\"{safe_url}\">{label}</a>"
+        return m.group(0)
+
+    s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _link_sub, s)
+
+    # 5) Bullets: convert leading '- ' or '* ' to a bullet character
+    def _bullet_sub(m: re.Match) -> str:
+        indent = m.group(1) or ""
+        return f"{indent}• "
+
+    s = re.sub(r"(?m)^(\s*)[-*]\s+", _bullet_sub, s)
+
+    # 6) Restore code blocks as <pre>...</pre>
+    for i, content in enumerate(code_blocks):
+        # Keep original content; it will be HTML-escaped by sanitizer later
+        s = s.replace(f"[[[CODEBLOCK{i}]]]", f"<pre>{content}</pre>")
+
+    return s
 
 
 def _sanitize_html_minimal(text: str) -> str:
