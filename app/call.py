@@ -1676,19 +1676,20 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
 
         # Now that selected_chat_id is finalized, create a Session for conversation history
-        # Use strictly validated session key (letters, numbers, underscores, dashes)
+        # Create a new OpenAI conversation (id assigned by API) and use returned id.
         session_key = f"{cfg.name}-{selected_chat_id}"
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_key):
-            raise ValueError(f"Invalid session_key '{session_key}': only letters, numbers, underscores, and dashes are allowed")
-        conversation_id = f"conv_{session_key}"
-        # Ensure the conversation exists up-front; if creation fails (exists or perms), continue.
         try:
             def _create_conv():
                 client = OpenAI()
-                return client.conversations.create(id=conversation_id)
-            await asyncio.to_thread(_create_conv)
-        except Exception:
-            pass
+                # Attach our readable key for debugging/discovery
+                return client.conversations.create(metadata={"session_key": session_key})
+            conv = await asyncio.to_thread(_create_conv)
+            conversation_id = getattr(conv, "id", None) or getattr(conv, "conversation_id", None)
+            if not conversation_id:
+                raise RuntimeError("OpenAI returned no conversation id")
+        except Exception as e:
+            # Let it crash loudly – per KISS – if we cannot create the conversation
+            raise
         session = OpenAIConversationsSession(conversation_id=conversation_id)
         print(f"[INFO] Session key: {conversation_id}")
 
