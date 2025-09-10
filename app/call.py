@@ -1694,20 +1694,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         print(f"[INFO] Session id: {session_id} @ {db_path}")
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
-        print(f"[INFO] Welcome target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
-
-        
-        display_name = ((cfg.name or agent_name) or "").strip()
-        msg_input = user_input or ""
-        
-        code_block = f"<code>{msg_input[:3800]}</code>"
-        welcome_text = f"<b>🔌 {display_name}</b>\n{code_block}"
-
-        await send_telegram_welcome_message(
-            welcome_text[:4000],
-            chat_id=selected_chat_id,
-            message_thread_id=selected_thread_id,
-        )
+        print(f"[INFO] Target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
         try:
