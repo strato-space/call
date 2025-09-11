@@ -22,15 +22,14 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
-  # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/chigwell/telegram-mcp.git run main.py
+  # uv --directory /home/strato-space/telegram-mcp run main.py
+  # note: the app should load /home/strato-space/call/.env itself (e.g., via python-dotenv)
   telegram-mcp:
     enabled: true
-    command: uvx
+    command: uv
     args:
-      - --env-file
-      - /home/strato-space/call/.env
-      - --from
-      - git+https://github.com/chigwell/telegram-mcp.git
+      - --directory
+      - /home/strato-space/telegram-mcp
       - run
       - main.py
 

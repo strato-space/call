@@ -20,8 +20,6 @@
     "telegram-mcp": {
       "command": "uv",
       "args": [
-        "--env-file",
-        "D:/home/strato-space/call/.env",
         "--directory",
         "D:/home/strato-space/telegram-mcp",
         "run",
