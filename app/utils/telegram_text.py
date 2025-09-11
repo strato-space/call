@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from .html_sanitizer import clean_html_for_telegram
 
 __all__ = [
     "telegram_truncate_html_safe",
@@ -36,8 +37,8 @@ def telegram_truncate_html_safe(html: str, max_len: int) -> str:
         s = strip_partial_tail(s)
 
         # Compute stack of still-open tags in s
-        tag_re = re.compile(r"</?([a-zA-Z0-9]+)(?:\s[^>]*)?>")
-        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
+        tag_re = re.compile(r"</?([a-zA-Z0-9\-]+)(?:\s[^>]*)?>")
+        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br", "tg-spoiler"}
         stack: list[str] = []
         for m in tag_re.finditer(s):
             tag = m.group(1).lower()
@@ -266,7 +267,8 @@ def telegram_prepare_html(html: str, max_len: int = 4000) -> tuple[str, str]:
     - Sanitizes to minimal safe subset and truncates without breaking entities/tags.
     """
     try:
-        sanitized = _sanitize_html_minimal(html or "")
+        # Full sanitizer tailored for Telegram HTML (handles <h1>.., lists, hr, spoilers, attrs)
+        sanitized = clean_html_for_telegram(html or "")
         safe = telegram_truncate_html_safe(sanitized, max_len)
         return safe, "HTML"
     except Exception:
