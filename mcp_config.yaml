@@ -1,15 +1,37 @@
 mcpServers:
+  # ---------------------------------------------------------------------------
+  # How to update Claude Desktop config from this file
+  # 1) Take only entries with 'enabled: true' below.
+  # 2) Build JSON with `mcpServers` entries mapping command/args/serverUrl.
+  # 3) Replace all '/home/strato-space' with 'D:/home/strato-space' (Windows).
+  # 4) Save to %APPDATA%\Claude\claude_desktop_config.json
+  # 5) Optionally keep a local copy at call/claude_desktop_config.json
+  # ---------------------------------------------------------------------------
+  # cmd: npx -y @modelcontextprotocol/server-filesystem /home/strato-space
   fs-local:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
     env: {}
 
+  # cmd: npx -y @modelcontextprotocol/server-sequential-thinking
   seq-local:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
+
+  # cmd: uv --env-file /home/strato-space/call/.env --directory /home/strato-space/telegram-mcp run main.py
+  telegram-mcp:
+    enabled: true
+    command: uv
+    args:
+      - --env-file
+      - /home/strato-space/call/.env
+      - --directory
+      - /home/strato-space/telegram-mcp
+      - run
+      - main.py
 
   # Google Sheets MCP (remote or local)
   # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
@@ -19,18 +41,19 @@ mcpServers:
     # uvx --env-file /home/strato-space/call/.env mcp-google-sheets serve
     command: uvx
     args:
-    - --env-file
-    - /home/strato-space/call/.env
-    - --from
-    - git+https://github.com/strato-space/mcp-google-sheets@main
-    - mcp-google-sheets
+      - --env-file
+      - /home/strato-space/call/.env
+      - --from
+      - git+https://github.com/strato-space/mcp-google-sheets@main
+      - mcp-google-sheets
   
-  voice:
-    enabled: true
+  voice-srv:
+    enabled: false
     serverUrl: "https://voice-mcp.stratospace.fun"
 
-  voice-uvx:
-    enabled: false
+  # cmd: uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/voice@main mcp-voicebot
+  voice:
+    enabled: true
     command: uvx
     args:
     - --env-file

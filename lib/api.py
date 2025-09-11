@@ -113,8 +113,8 @@ async def call_async(
     Returns a dict with basic run metadata and the final_output.
 
     Notes:
-    - This will initialize OpenAI client and Telegram bot (so that downstream utils can publish).
-    - It sends a short welcome message first, then runs the pipeline.
+    - This will initialize the Telegram bot (so that downstream utils can publish).
+    - No explicit welcome message is sent here to avoid duplicates; the app pipeline will send a single digest.
     - If agent discovery fails, raises ValueError.
     """
     # Lazily import app-layer functions to avoid hard import at module load time
@@ -138,14 +138,7 @@ async def call_async(
     app_call.selected_chat_id = selected_chat_id
     app_call.selected_thread_id = selected_thread_id
 
-    # Welcome banner (kept concise; lib is the owner of messenger side-effects per SRS)
-    try:
-        disp_name = to_pascal_case(name) or "Agent"
-        welcome = f"<b>🔌 {disp_name}</b>\n<code>{(input_text or '')[:3800]}</code>"
-        await app_call.send_telegram_welcome_message(welcome, chat_id=selected_chat_id, message_thread_id=selected_thread_id)
-    except Exception:
-        # Non-fatal for the run
-        pass
+    # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
     # Use default samples dir from discovery module to avoid importing app layer here
     from call.lib.discovery import default_samples_dir

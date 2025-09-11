@@ -213,6 +213,14 @@ async def init_bot():
     bot = Bot(token=telegram_token, request=request)
     return bot
 
+
+async def init_openai_client():
+    """Backward-compat shim. No-op since we no longer rely on creating OpenAI conversations.
+
+    Kept to satisfy older callers that import call.app.call.init_openai_client.
+    """
+    return None
+
 async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, chat_id: str = None, message_thread_id: int = None) -> Optional[Message]:
     """
     Send a message to the configured Telegram chat.
@@ -411,15 +419,10 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
         except Exception:
             return False
 
-    # Choose parse mode, then prepare safely using centralized helpers
-    is_md = _looks_like_markdown(text or "")
+    # KISS: Always send as HTML using sanitizer; rely on plain fallback on error
     try:
-        if is_md:
-            safe_text, chosen_mode = telegram_prepare_markdown(text or "", 4000, version="v2")
-            chosen_parse_mode = ParseMode.MARKDOWN_V2 if chosen_mode == "MarkdownV2" else ParseMode.MARKDOWN
-        else:
-            safe_text, chosen_mode = telegram_prepare_html(text or "", 4000)
-            chosen_parse_mode = ParseMode.HTML if chosen_mode == "HTML" else None
+        safe_text, chosen_mode = telegram_prepare_html(text or "", 4000)
+        chosen_parse_mode = ParseMode.HTML if chosen_mode == "HTML" else None
     except Exception:
         # Plain fallback on any preparation error
         safe_text = (text or "")
@@ -444,45 +447,9 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
         print(f"[TG] send_message parse_mode={chosen_parse_mode}")
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     except BadRequest as e:
-        # Fallback to plain text if Telegram can't parse entities
+        # KISS: If Telegram can't parse, send plain text once.
         emsg = str(e).lower()
-        if "can't parse entities" in emsg or "parse entities" in emsg or "entity" in emsg:
-            # 1) If we attempted MarkdownV2, try legacy Markdown (v1)
-            if chosen_parse_mode == ParseMode.MARKDOWN_V2:
-                try:
-                    md_v1_text, _ = telegram_prepare_markdown(text or "", 4000, version="v1")
-                    def _op_md1():
-                        return bot.send_message(
-                            chat_id=eff_chat_id,
-                            message_thread_id=eff_thread_id,
-                            text=md_v1_text,
-                            parse_mode=ParseMode.MARKDOWN,
-                            reply_markup=reply_markup,
-                        )
-                    print("[TG] BadRequest parse error, retrying as Markdown (v1)")
-                    message = await async_retry(_op_md1, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-                    return message
-                except Exception:
-                    pass
-
-            # 2) Try HTML (sanitized)
-            try:
-                html_text, _ = telegram_prepare_html(text or "", 4000)
-                def _op_html():
-                    return bot.send_message(
-                        chat_id=eff_chat_id,
-                        message_thread_id=eff_thread_id,
-                        text=html_text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=reply_markup,
-                    )
-                print("[TG] BadRequest parse error, retrying as HTML")
-                message = await async_retry(_op_html, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-                return message
-            except Exception:
-                pass
-
-            # 3) Plain text fallback
+        if "parse" in emsg or "entity" in emsg:
             plain = (text or "")
             if len(plain) > 4096:
                 plain = plain[: 4095] + "…"
@@ -513,15 +480,10 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
 
     safe_caption = None
     if caption:
-        # Prepare caption via centralized helpers
+        # KISS: Always prepare caption as HTML
         try:
-            cap_is_md = "```" in caption or any(m in (caption or "") for m in ("**", "__", "# ", "1. "))
-            if cap_is_md:
-                safe_caption, cmode = telegram_prepare_markdown(caption or "", 1024, version="v2")
-                parse_mode = ParseMode.MARKDOWN_V2 if cmode == "MarkdownV2" else ParseMode.MARKDOWN
-            else:
-                safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
-                parse_mode = ParseMode.HTML if cmode == "HTML" else None
+            safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
+            parse_mode = ParseMode.HTML if cmode == "HTML" else None
         except Exception:
             safe_caption = (caption or "")
             if len(safe_caption) > 1024:
