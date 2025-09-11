@@ -261,7 +261,8 @@ async def send_digest_notification(
     url: str | None = None,
     *,
     text: str = None,
-    message_thread_id: int = None,
+    chat_id: int | None = None,
+    message_thread_id: int | None = None,
     agent_name: str | None = None,
     agent_path: str | Path | None = None,
     input_text: str | None = None,
@@ -331,19 +332,25 @@ async def send_digest_notification(
 
     try:
         # If an image is provided, send it as a photo with optional caption
+        # Determine effective chat/thread once to avoid races with globals
+        eff_chat_id = chat_id if chat_id is not None else selected_chat_id
+        eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
+
         if image_path:
             message_obj = await telegram_send_photo(
                 image_path=image_path,
                 caption=text,
-                message_thread_id=message_thread_id,
+                chat_id=eff_chat_id,
+                message_thread_id=eff_thread_id,
                 reply_markup=reply_markup,
             )
         else:
             # KISS: rely on globally selected_* targets updated once in main()
             message_obj = await telegram_send_message(
+                chat_id=eff_chat_id,
                 text=text,
                 reply_markup=reply_markup,
-                message_thread_id=message_thread_id)
+                message_thread_id=eff_thread_id)
 
         print(f"Digest notification sent. ID: {message_obj.message_id}, Chat ID: {message_obj.chat_id}")
         return message_obj
@@ -1670,14 +1677,19 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         # Save globally for subsequent messages
         global selected_chat_id, selected_thread_id
-        # Respect previously selected targets (e.g., set by lib.api from Telegram update)
-        # Only fall back to agent YAML/output or .env when not already set
-        selected_chat_id = (
-            selected_chat_id if (selected_chat_id is not None) else (prompt_chat_id or TELEGRAM_CHAT_ID)
-        )
-        selected_thread_id = (
-            selected_thread_id if (selected_thread_id is not None) else (prompt_thread_id or (TELEGRAM_THREAD_ID or None))
-        )
+        # Respect previously selected targets (e.g., set by lib.api from Telegram update).
+        # If current value equals env default, allow agent YAML/output to override.
+        # Otherwise, keep the explicit value set by the caller.
+        env_chat = TELEGRAM_CHAT_ID
+        env_thread = (TELEGRAM_THREAD_ID or None)
+
+        if selected_chat_id is None or selected_chat_id == env_chat:
+            selected_chat_id = (prompt_chat_id or env_chat)
+        # else: keep caller-provided selected_chat_id
+
+        if selected_thread_id is None or selected_thread_id == env_thread:
+            selected_thread_id = (prompt_thread_id or env_thread)
+        # else: keep caller-provided selected_thread_id
 
         # Now that selected_chat_id is finalized, create a local SQLite-backed session
         # Deterministic and unique per dialog thread (agent:chat[:thread])
@@ -1716,11 +1728,16 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         # Notify digest (no image) and push
         try:
+            # Capture targets locally to avoid races with global changes
+            use_chat_id = selected_chat_id
+            use_thread_id = selected_thread_id
             await send_digest_notification(
                 agent_name=cfg.name,
                 agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
                 input_text=initial_input,
                 text=(step1_output or ""),
+                chat_id=use_chat_id,
+                message_thread_id=use_thread_id,
                 image_path=None,
             )
         except Exception:
