@@ -4,16 +4,7 @@ A minimal, extensible subsystem for invoking AI agents and prompt pipelines by n
 
 Call provides a unified invocation syntax, consistent logging, and pluggable backends to run agents and prompts defined in Prompt Repository and ai-team. It is designed to be simple first, then grow into a full orchestration layer.
 
-## Updates (2025-09-12)
-
-- Chat routing fix (Telegram): replies now respect the originating chat/thread id from the incoming update. The pipeline no longer overwrites `selected_chat_id`/`selected_thread_id` with `.env` or Agent YAML defaults; explicit values from `call.lib.api.call(..., chat_id, thread_id)` take precedence throughout the run.
-- Telegram HTML sanitizer centralized and aligned with Bot API. Outgoing messages via `telegram_prepare_html()` now strictly use only the supported tags and attributes. Key normalizations:
-  - h1–h6 → `<b>…</b>` followed by a newline (headers are not supported in Telegram HTML)
-  - `<span class="tg-spoiler">…</span>` → `<tg-spoiler>…</tg-spoiler>`
-  - `<hr>` → two newlines
-  - Lists (`<ul>/<ol>/<li>`) → newline-separated bullets/numbers
-  - Allowed tags: `a`, `b/strong`, `i/em`, `u/ins`, `s/strike/del`, `code`, `pre`, `blockquote`, `tg-spoiler`, `tg-emoji`
-  - Allowed attributes: `a[href]`, `blockquote[expandable]`, `tg-emoji[emoji-id]`, `code[class~=language-*]`
+> Recent changes: see `CHANGELOG.md`.
 
 ## Key Concepts
 
@@ -282,8 +273,8 @@ Notes:
 ### Telegram formatting and routing (Updated Sep 12, 2025)
 
 - Formatting:
-  - HTML mode is used for all rich messages. Sanitization is centralized in `call/app/utils/html_sanitizer.py` and enforced via `telegram_prepare_html()`.
-  - Only the Bot API–supported tags/attrs are emitted. Headings are converted to bold + newline; lists are flattened to text; spoilers, `tg-emoji`, code/pre, blockquotes are preserved.
+  - HTML mode is used for all rich messages. Sanitization is centralized in `call/app/utils/html_sanitizer.py` (via `telegram_prepare_html()`).
+  - Only Bot API–supported tags/attrs are emitted (headers mapped to bold + newline; lists flattened; spoilers, `tg-emoji`, code/pre, blockquotes preserved).
 - Routing precedence:
   - Incoming Telegram update chat/thread id (passed to `call.lib.api.call(chat_id=..., thread_id=...)`) → highest priority.
   - Agent YAML `output.tg.chat_id/thread_id` → used only if no explicit chat/thread was provided.
