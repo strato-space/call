@@ -17,16 +17,6 @@
       ],
       "env": {}
     },
-    "voice": {
-      "command": "uvx",
-      "args": [
-        "--env-file",
-        "D:/home/strato-space/call/.env",
-        "--from",
-        "git+https://github.com/strato-space/voice@main",
-        "mcp-voicebot"
-      ]
-    },
     "telegram-mcp": {
       "command": "uv",
       "args": [
@@ -36,6 +26,16 @@
         "D:/home/strato-space/telegram-mcp",
         "run",
         "main.py"
+      ]
+    },
+    "voice": {
+      "command": "uvx",
+      "args": [
+        "--env-file",
+        "D:/home/strato-space/call/.env",
+        "--from",
+        "git+https://github.com/strato-space/voice@main",
+        "mcp-voicebot"
       ]
     }
   },
