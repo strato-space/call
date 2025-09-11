@@ -4,10 +4,20 @@ from bs4 import BeautifulSoup
 import re
 
 __all__ = [
+    "sanitize_telegram_html",
+    "truncate_telegram_html_safe",
+    "prepare_telegram_html",
     "clean_html_for_telegram",
     "clean_html_for_telegraph",
     "minify_html_func",
 ]
+
+# Telegram Bot API — allowed HTML subset for parse_mode=HTML
+# https://core.telegram.org/bots/api#html-style
+ALLOWED_TELEGRAM_TAGS = {
+    "a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+    "code", "pre", "blockquote", "br", "tg-spoiler", "tg-emoji"
+}
 
 
 def clean_html_for_telegraph(html_content: str) -> str:
@@ -81,13 +91,11 @@ def clean_html_for_telegraph(html_content: str) -> str:
     return cleaned.strip()
 
 
-def clean_html_for_telegram(html_content: str) -> str:
-    """Sanitize HTML for Telegram parse_mode=HTML.
+def sanitize_telegram_html(html_content: str) -> str:
+    """Return sanitized HTML compatible with Telegram parse_mode=HTML.
 
-    Telegram supports a limited subset of tags. This function:
-    - Converts <ul>/<ol>/<li> into plain-text bullet or numbered lines.
-    - Unwraps unsupported tags while preserving text.
-    - Strips disallowed attributes, keeping only href on <a>.
+    Applies Telegram Bot API rules: strip unsupported tags/attrs, normalize headings,
+    lists, hr, spoilers, and fix self-closing tags.
     """
     if not isinstance(html_content, str):
         return ""
@@ -103,7 +111,6 @@ def clean_html_for_telegram(html_content: str) -> str:
     soup = BeautifulSoup(html_content, "html.parser")
 
     # Normalize headings: convert <h1>.. <h6> into <b>Title</b><br>
-    # Telegram HTML does not support heading tags.
     for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
         for h in list(soup.find_all(level)):
             bold = soup.new_tag("b")
@@ -146,20 +153,36 @@ def clean_html_for_telegram(html_content: str) -> str:
         replacement_text = "\n".join(lines) if lines else ""
         ol.replace_with(replacement_text)
 
-    # Allowed tags for Telegram HTML (per Bot API):
-    # a, b/strong, i/em, u/ins, s/strike/del, code, pre, blockquote, br, tg-spoiler
-    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br", "tg-spoiler"}
-
     # Unwrap unsupported tags
     for tag in list(soup.find_all(True)):
-        if tag.name not in allowed_tags:
+        if tag.name not in ALLOWED_TELEGRAM_TAGS:
             tag.unwrap()
 
-    # Strip attributes, keep only href for <a> (no attrs for tg-spoiler)
+    # Strip attributes, keep only allowed per Bot API:
+    # - <a href="...">
+    # - <blockquote expandable>
+    # - <tg-emoji emoji-id="...">
+    # - <code class="language-xyz"> (when nested in <pre> or standalone)
     for tag in soup.find_all(True):
         allowed_attrs = {}
-        if tag.name == "a" and tag.has_attr("href"):
-            allowed_attrs["href"] = tag["href"]
+        if tag.name == "a":
+            if tag.has_attr("href"):
+                allowed_attrs["href"] = tag["href"]
+        elif tag.name == "blockquote":
+            # Preserve boolean 'expandable' attribute if present (valueless boolean)
+            if tag.has_attr("expandable"):
+                # BeautifulSoup serializes None as a valueless attribute: <blockquote expandable>
+                allowed_attrs["expandable"] = None
+        elif tag.name == "tg-emoji":
+            if tag.has_attr("emoji-id"):
+                allowed_attrs["emoji-id"] = tag["emoji-id"]
+        elif tag.name == "code":
+            # Keep 'class' tokens that start with 'language-'
+            cls = tag.get("class")
+            if isinstance(cls, list):
+                keep = [c for c in cls if isinstance(c, str) and c.startswith("language-")]
+                if keep:
+                    allowed_attrs["class"] = keep
         tag.attrs = allowed_attrs
 
     cleaned = str(soup)
@@ -169,6 +192,101 @@ def clean_html_for_telegram(html_content: str) -> str:
     cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
 
     return cleaned.strip()
+
+
+def clean_html_for_telegram(html_content: str) -> str:
+    """Backward-compatible alias for sanitize_telegram_html."""
+    return sanitize_telegram_html(html_content)
+
+
+def truncate_telegram_html_safe(html: str, max_len: int) -> str:
+    """Truncate a sanitized Telegram HTML string to <= max_len while preserving validity.
+
+    Assumes the input is already sanitized by sanitize_telegram_html().
+    """
+    try:
+        if not isinstance(html, str):
+            return ""
+        if len(html) <= max_len:
+            return html
+
+        def strip_partial_tail(s: str) -> str:
+            s = re.sub(r"<[^>]*$", "", s)
+            s = re.sub(r"&[^;\s]{0,10}$", "", s)
+            return s
+
+        s = html[: max_len - 1] + "…"
+        s = strip_partial_tail(s)
+
+        tag_re = re.compile(r"</?([a-zA-Z0-9\-]+)(?:\s[^>]*)?>")
+        allowed = set(ALLOWED_TELEGRAM_TAGS)
+        stack: list[str] = []
+        for m in tag_re.finditer(s):
+            tag = m.group(1).lower()
+            if tag not in allowed:
+                continue
+            full = m.group(0)
+            if full.startswith("</"):
+                if stack and stack[-1] == tag:
+                    stack.pop()
+                else:
+                    if tag in stack:
+                        idx = len(stack) - 1 - stack[::-1].index(tag)
+                        stack.pop(idx)
+            else:
+                if tag != "br":
+                    stack.append(tag)
+
+        def closers_for_stack(stk: list[str]) -> str:
+            return "".join(f"</{t}>" for t in reversed(stk))
+
+        attempts = 0
+        while attempts < 5:
+            closers = closers_for_stack(stack)
+            if len(s) + len(closers) <= max_len:
+                s = s + closers
+                return s
+            over = (len(s) + len(closers)) - max_len
+            cut_by = max(over + 1, 8)
+            s = s[: max(0, len(s) - cut_by)]
+            s = strip_partial_tail(s)
+            stack.clear()
+            for m in tag_re.finditer(s):
+                tag = m.group(1).lower()
+                if tag not in allowed:
+                    continue
+                full = m.group(0)
+                if full.startswith("</"):
+                    if stack and stack[-1] == tag:
+                        stack.pop()
+                    else:
+                        if tag in stack:
+                            idx = len(stack) - 1 - stack[::-1].index(tag)
+                            stack.pop(idx)
+                else:
+                    if tag != "br":
+                        stack.append(tag)
+            attempts += 1
+
+        return (s[:max_len]).rstrip()
+    except Exception:
+        return (str(html)[: max_len]).rstrip()
+
+
+def prepare_telegram_html(html: str, max_len: int = 4000) -> tuple[str, str]:
+    """Return (text, parse_mode) for Telegram HTML send: sanitize + truncate.
+
+    Always returns parse_mode="HTML" on success; falls back to plain text on error.
+    """
+    try:
+        sanitized = sanitize_telegram_html(html or "")
+        safe = truncate_telegram_html_safe(sanitized, max_len)
+        return safe, "HTML"
+    except Exception:
+        s = (str(html) or "")
+        if len(s) > max_len:
+            s = s[: max_len - 1] + "…"
+        return s, None
 
 
 def minify_html_func(html_string: str) -> str:
