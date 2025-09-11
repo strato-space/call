@@ -18,6 +18,14 @@ def clean_html_for_telegraph(html_content: str) -> str:
     - We unwrap unsupported blocks while preserving text content.
     - We keep a minimal set of safe attributes.
     """
+    # Some inputs may arrive HTML-escaped (e.g., '&lt;h3&gt;'). Unescape once.
+    try:
+        import html as _py_html
+        if isinstance(html_content, str) and ("&lt;" in html_content or "&gt;" in html_content):
+            html_content = _py_html.unescape(html_content)
+    except Exception:
+        pass
+
     soup = BeautifulSoup(html_content, "html.parser")
 
     # 1) Drop document-level wrappers early
@@ -83,6 +91,14 @@ def clean_html_for_telegram(html_content: str) -> str:
     """
     if not isinstance(html_content, str):
         return ""
+
+    # Some inputs may arrive HTML-escaped (e.g., '&lt;h3&gt;'). Unescape once so headers/lists can be normalized.
+    try:
+        import html as _py_html
+        if "&lt;" in html_content or "&gt;" in html_content:
+            html_content = _py_html.unescape(html_content)
+    except Exception:
+        pass
 
     soup = BeautifulSoup(html_content, "html.parser")
 
