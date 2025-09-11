@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
-from .html_sanitizer import clean_html_for_telegram
+from .html_sanitizer import (
+    prepare_telegram_html as _prepare_html,
+    truncate_telegram_html_safe as _truncate_html,
+)
 
 __all__ = [
     "telegram_truncate_html_safe",
@@ -12,92 +15,10 @@ __all__ = [
 
 
 def telegram_truncate_html_safe(html: str, max_len: int) -> str:
-    """Truncate a sanitized HTML string to <= max_len characters while preserving validity.
-
-    Assumes the input is already sanitized for Telegram by clean_html_for_telegram().
-    - Avoids cutting inside a tag or HTML entity
-    - Ensures all opened tags are closed
-    - Removes trailing partial tag fragments like '<tagnam'
-    """
+    """Wrapper that delegates truncation to centralized sanitizer module."""
     try:
-        if not isinstance(html, str):
-            return ""
-        if len(html) <= max_len:
-            return html
-
-        def strip_partial_tail(s: str) -> str:
-            # Remove any partial tag at the end
-            s = re.sub(r"<[^>]*$", "", s)
-            # Remove any partial HTML entity at the end (e.g., '&amp')
-            s = re.sub(r"&[^;\s]{0,10}$", "", s)
-            return s
-
-        # Start with a hard cut (reserve one char for ellipsis)
-        s = html[: max_len - 1] + "…"
-        s = strip_partial_tail(s)
-
-        # Compute stack of still-open tags in s
-        tag_re = re.compile(r"</?([a-zA-Z0-9\-]+)(?:\s[^>]*)?>")
-        allowed = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br", "tg-spoiler"}
-        stack: list[str] = []
-        for m in tag_re.finditer(s):
-            tag = m.group(1).lower()
-            if tag not in allowed:
-                continue
-            full = m.group(0)
-            if full.startswith("</"):
-                # closing: pop if present
-                if stack and stack[-1] == tag:
-                    stack.pop()
-                else:
-                    # Try to remove matching earlier open elsewhere
-                    if tag in stack:
-                        idx = len(stack) - 1 - stack[::-1].index(tag)
-                        stack.pop(idx)
-            else:
-                # opening; treat <br> as self-contained
-                if tag != "br":
-                    stack.append(tag)
-
-        def closers_for_stack(stk: list[str]) -> str:
-            return "".join(f"</{t}>" for t in reversed(stk))
-
-        # Ensure closers fit within max_len; if not, shorten s and recompute
-        attempts = 0
-        while attempts < 5:
-            closers = closers_for_stack(stack)
-            if len(s) + len(closers) <= max_len:
-                s = s + closers
-                return s
-            # Need to make room: shorten s
-            over = (len(s) + len(closers)) - max_len
-            # Remove 'over' chars plus some buffer from end, then tidy tail and recompute stack
-            cut_by = max(over + 1, 8)
-            s = s[: max(0, len(s) - cut_by)]
-            s = strip_partial_tail(s)
-            # Recompute stack
-            stack.clear()
-            for m in tag_re.finditer(s):
-                tag = m.group(1).lower()
-                if tag not in allowed:
-                    continue
-                full = m.group(0)
-                if full.startswith("</"):
-                    if stack and stack[-1] == tag:
-                        stack.pop()
-                    else:
-                        if tag in stack:
-                            idx = len(stack) - 1 - stack[::-1].index(tag)
-                            stack.pop(idx)
-                else:
-                    if tag != "br":
-                        stack.append(tag)
-            attempts += 1
-
-        # Fallback: last resort hard trim to max_len without closers (should be rare)
-        return (s[:max_len]).rstrip()
+        return _truncate_html(html, max_len)
     except Exception:
-        # On any failure, return a simple hard-clamped string
         return (str(html)[: max_len]).rstrip()
 
 
@@ -218,59 +139,14 @@ def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2")
 
 
 def _sanitize_html_minimal(text: str) -> str:
-    """Escape everything then restore minimal safe tags we may intentionally add.
-
-    Restores: <b>, </b>, <i>, </i>, <a href=...>, </a>, <br>, <br/>, <code>, </code>, <pre>, </pre>
-    Extend as needed.
-    """
-    s = text or ""
-    s = re.sub(r"<[^>]*$", "", s)  # cut any trailing partial tag from input
-    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    # basic restores for simple non-attribute tags
-    s = (
-        s.replace("&lt;b&gt;", "<b>")
-         .replace("&lt;/b&gt;", "</b>")
-         .replace("&lt;i&gt;", "<i>")
-         .replace("&lt;/i&gt;", "</i>")
-         .replace("&lt;br&gt;", "<br>")
-         .replace("&lt;br/&gt;", "<br/>")
-         .replace("&lt;code&gt;", "<code>")
-         .replace("&lt;/code&gt;", "</code>")
-         .replace("&lt;pre&gt;", "<pre>")
-         .replace("&lt;/pre&gt;", "</pre>")
-    )
-
-    # Safe restore for anchors: allow only http/https href
-    # Pattern matches: &lt;a href="..."&gt; -> validate URL -> <a href="...">
-    def _restore_anchor(m: re.Match) -> str:
-        href = m.group(1)
-        # unescape quotes/entities potentially present in href value
-        href_unescaped = href.replace("&amp;", "&").replace("&quot;", '"')
-        if href_unescaped.startswith("http://") or href_unescaped.startswith("https://"):
-            # re-escape double quotes in attribute value
-            safe_href = href_unescaped.replace('"', '&quot;')
-            return f'<a href="{safe_href}">'
-        return m.group(0)  # keep escaped if not allowed
-
-    # restore opening <a href="...">
-    s = re.sub(r"&lt;a\s+href=\"([^\"]+)\"&gt;", _restore_anchor, s, flags=re.IGNORECASE)
-    # restore closing </a>
-    s = s.replace("&lt;/a&gt;", "</a>")
-
-    return s
+    """Deprecated: kept for backward-compat in case of imports; no-op passthrough."""
+    return text or ""
 
 
 def telegram_prepare_html(html: str, max_len: int = 4000) -> tuple[str, str]:
-    """Return (text, parse_mode) prepared for Telegram HTML parse mode.
-
-    - Sanitizes to minimal safe subset and truncates without breaking entities/tags.
-    """
+    """Wrapper that delegates to centralized html_sanitizer.prepare_telegram_html."""
     try:
-        # Full sanitizer tailored for Telegram HTML (handles <h1>.., lists, hr, spoilers, attrs)
-        sanitized = clean_html_for_telegram(html or "")
-        safe = telegram_truncate_html_safe(sanitized, max_len)
-        return safe, "HTML"
+        return _prepare_html(html, max_len)
     except Exception:
         s = (str(html) or "")
         if len(s) > max_len:
