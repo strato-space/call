@@ -22,7 +22,7 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
-  # uv --directory /home/strato-space/telegram-mcp run main.py
+  # uv --directory /home/strato-space/telegram-mcp run --active --link-mode=copy main.py
   # note: the app should load /home/strato-space/call/.env itself (e.g., via python-dotenv)
   telegram-mcp:
     enabled: true
@@ -31,6 +31,8 @@ mcpServers:
       - --directory
       - /home/strato-space/telegram-mcp
       - run
+      - --active
+      - --link-mode=copy
       - main.py
 
 

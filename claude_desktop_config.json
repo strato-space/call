@@ -23,6 +23,8 @@
         "--directory",
         "D:/home/strato-space/telegram-mcp",
         "run",
+        "--active",
+        "--link-mode=copy",
         "main.py"
       ]
     },
