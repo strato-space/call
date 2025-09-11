@@ -22,7 +22,7 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
-  # uv --directory /home/strato-space/telegram-mcp run --active --link-mode=copy main.py
+  # uv --directory /home/strato-space/telegram-mcp run main.py
   # note: the app should load /home/strato-space/call/.env itself (e.g., via python-dotenv)
   telegram-mcp:
     enabled: true
@@ -31,8 +31,6 @@ mcpServers:
       - --directory
       - /home/strato-space/telegram-mcp
       - run
-      - --active
-      - --link-mode=copy
       - main.py
 
 
@@ -54,16 +52,16 @@ mcpServers:
     enabled: false
     serverUrl: "https://voice-mcp.stratospace.fun"
 
-  # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/voice@main mcp-voicebot
+  # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
   voice:
     enabled: true
-    command: uvx
+    command: uv
     args:
-    - --env-file
-    - /home/strato-space/call/.env
-    - --from
-    - git+https://github.com/strato-space/voice@main
-    - mcp-voicebot
+      - --directory
+      - /home/strato-space/voice
+      - run
+      - -m
+      - mcp_voicebot.server
 
   # python -m voice.src.mcp_voicebot.server
   voice-py:
