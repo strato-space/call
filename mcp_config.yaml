@@ -7,21 +7,22 @@ mcpServers:
   # 4) Save to %APPDATA%\Claude\claude_desktop_config.json
   # 5) Optionally keep a local copy at call/claude_desktop_config.json
   # ---------------------------------------------------------------------------
-  # cmd: npx -y @modelcontextprotocol/server-filesystem /home/strato-space
+  
+  # npx -y @modelcontextprotocol/server-filesystem /home/strato-space
   fs-local:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
     env: {}
 
-  # cmd: npx -y @modelcontextprotocol/server-sequential-thinking
+  # npx -y @modelcontextprotocol/server-sequential-thinking
   seq-local:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
-  # cmd: uv --env-file /home/strato-space/call/.env --directory /home/strato-space/telegram-mcp run main.py
+  # uv --env-file /home/strato-space/call/.env --directory /home/strato-space/telegram-mcp run main.py
   telegram-mcp:
     enabled: true
     command: uv
@@ -33,12 +34,13 @@ mcpServers:
       - run
       - main.py
 
-  # Google Sheets MCP (remote or local)
-  # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
-  # If you want to run a local process, provide command/args env like other *-local servers.
+
+  # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
   gsh:
+    # Google Sheets MCP (remote or local)
+    # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
+    # If you want to run a local process, provide command/args env like other *-local servers.
     enabled: false
-    # uvx --env-file /home/strato-space/call/.env mcp-google-sheets serve
     command: uvx
     args:
       - --env-file
@@ -51,7 +53,7 @@ mcpServers:
     enabled: false
     serverUrl: "https://voice-mcp.stratospace.fun"
 
-  # cmd: uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/voice@main mcp-voicebot
+  # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/voice@main mcp-voicebot
   voice:
     enabled: true
     command: uvx
@@ -62,10 +64,65 @@ mcpServers:
     - git+https://github.com/strato-space/voice@main
     - mcp-voicebot
 
+  # python -m voice.src.mcp_voicebot.server
   voice-py:
     enabled: false
     command: python
     args: ["-m", "voice.src.mcp_voicebot.server"]
+
+  # uvx --env-file D:/home/strato-space/prompt/.env mcp-server-git --repository D:/home/strato-space/server
+  git-server-local:
+    command: uvx
+    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/server"]
+
+  # uvx --env-file D:/home/strato-space/prompt/.env mcp-server-git --repository D:/home/strato-space/rms
+  git-rms-local:
+    command: uvx
+    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/rms"]
+
+  # npx -y @modelcontextprotocol/server-memory
+  memory-local:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory"]
+    env:
+      MEMORY_FILE_PATH: "C:/Users/Leader/PycharmProjects/memory"
+
+  # python -m mcp_server_time
+  time-local:
+    command: python
+    args: ["-m", "mcp_server_time"]
+    env: {}
+
+  # uvx --env-file C:/Users/Leader/PycharmProjects/ai/.env --from C:/Users/Leader/PycharmProjects/mcp-google-sheets mcp-google-sheets
+  mcp-google-sheets-local:
+    command: uvx
+    args: ["--env-file", "C:/Users/Leader/PycharmProjects/ai/.env", "--from", "C:/Users/Leader/PycharmProjects/mcp-google-sheets", "mcp-google-sheets"]
+    env:
+      SERVICE_ACCOUNT_PATH: "C:/Users/Leader/PycharmProjects/ai/wallet/service-account-key.json"
+
+  # npx -y @modelcontextprotocol/server-github
+  github0:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "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"
+
+  # uvx --env-file /home/strato-space/prompt/.env mcp-server-git --repository /home/strato-space/empty
+  git-empty-local:
+    command: uvx
+    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/empty"]
+
+  # uvx --env-file /home/strato-space/prompt/.env mcp-server-git --repository /home/strato-space/prompt
+  git-prompt-local:
+    command: uvx
+    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/prompt"]
+
+  # docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+  github-mcp-server:
+    command: docker
+    args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "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"
 
   ev:
     serverUrl: "https://ev-mcp.stratospace.fun"
@@ -73,59 +130,11 @@ mcpServers:
   fs:
     serverUrl: "https://fs-mcp.stratospace.fun"
 
-  git-server-local:
-    command: uvx
-    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/server"]
-
-  git-rms-local:
-    command: uvx
-    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/rms"]
-
-  memory-local:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-memory"]
-    env:
-      MEMORY_FILE_PATH: "C:/Users/Leader/PycharmProjects/memory"
-
-  time-local:
-    command: python
-    args: ["-m", "mcp_server_time"]
-    env: {}
-
-  mcp-google-sheets-local:
-    command: uvx
-    args: ["--env-file", "C:/Users/Leader/PycharmProjects/ai/.env", "--from", "C:/Users/Leader/PycharmProjects/mcp-google-sheets", "mcp-google-sheets"]
-    env:
-      SERVICE_ACCOUNT_PATH: "C:/Users/Leader/PycharmProjects/ai/wallet/service-account-key.json"
-
-  github0:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "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"
-
-  git-empty-local:
-    command: uvx
-    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/empty"]
-
-  git-prompt-local:
-    command: uvx
-    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/prompt"]
-
   fe:
     serverUrl: "https://fe-mcp.stratospace.fun"
 
   git:
     serverUrl: "https://git-mcp.stratospace.fun"
-
-  github-0:
-    type: http
-    url: "https://api.githubcopilot.com/mcp/"
-
-  github:
-    serverUrl: "https://api.githubcopilot.com/mcp/"
-    headers:
-      Authorization: "Bearer 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"
 
   git-server:
     serverUrl: "https://git-server-mcp.stratospace.fun"
@@ -151,8 +160,11 @@ mcpServers:
   voice-s:
     serverUrl: "https://voice-mcp.stratospace.fun"
 
-  github-mcp-server:
-    command: docker
-    args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "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"
+  github-0:
+    type: http
+    url: "https://api.githubcopilot.com/mcp/"
+
+  github:
+    serverUrl: "https://api.githubcopilot.com/mcp/"
+    headers:
+      Authorization: "Bearer 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"
