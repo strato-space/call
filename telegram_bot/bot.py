@@ -398,7 +398,7 @@ Commands:
 - /list [--aliases] [--q "filter"]
 
 Startup options:
-- --bot-name Name  (use TELEGRAM_TOKEN[Name] from env/.env; error if missing; falls back to TELEGRAM_TOKEN when not provided)
+- --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
 
 Plain text (no slash):
 - In private chat: "@Name <input>" and "Name <input>" are equivalent.
@@ -588,7 +588,7 @@ def main() -> None:
     # CLI flags
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--echo", action="store_true", help="Print startup parameters and exit 0")
-    parser.add_argument("--bot-name", dest="bot_name", default="", help="Bot name handle to select TELEGRAM_TOKEN[Name] from env/.env (overrides positional)")
+    parser.add_argument("--bot-name", dest="bot_name", default="", help="Bot name handle to select TELEGRAM_TOKEN.Name from env/.env (overrides positional)")
     # Positional bot name: `bot.py StratoSpaceAiBot` equivalent to `--bot-name StratoSpaceAiBot`
     parser.add_argument("bot_name_pos", nargs="?", default="", help="Positional bot name; equivalent to --bot-name")
     args, _ = parser.parse_known_args()
@@ -605,14 +605,19 @@ def main() -> None:
 
     selected_token = TELEGRAM_TOKEN
     if SELECTED_BOT_NAME:
-        key = f"TELEGRAM_TOKEN[{SELECTED_BOT_NAME}]"
+        key = f"TELEGRAM_TOKEN.{SELECTED_BOT_NAME}"
         cand = os.environ.get(key, "").strip()
-        if not cand:
-            # try exact match of env keys with different casing/syntax if any
-            # Environment variables from dotenv should preserve exact keys
-            print(f"Error: {key} is not set in environment/.env", file=sys.stderr)
+        if cand:
+            selected_token = cand
+        else:
+            print(
+                (
+                    "Error: bot token not set in environment/.env. "
+                    f"Expected {key}."
+                ),
+                file=sys.stderr,
+            )
             sys.exit(1)
-        selected_token = cand
 
     if not selected_token:
         raise RuntimeError("TELEGRAM_TOKEN is not set")
