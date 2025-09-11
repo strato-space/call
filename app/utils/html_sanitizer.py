@@ -96,6 +96,19 @@ def clean_html_for_telegram(html_content: str) -> str:
             h.replace_with(bold)
             bold.insert_after(br)
 
+    # Convert Telegram spoilers: <span class="tg-spoiler"> -> <tg-spoiler>
+    for sp in list(soup.find_all("span", class_="tg-spoiler")):
+        tg = soup.new_tag("tg-spoiler")
+        tg.string = sp.get_text(strip=False)
+        sp.replace_with(tg)
+
+    # Replace <hr> with two line breaks
+    for hr in list(soup.find_all("hr")):
+        br1 = soup.new_tag("br")
+        br2 = soup.new_tag("br")
+        hr.replace_with(br1)
+        br1.insert_after(br2)
+
     # Convert lists to plain text lines
     for ul in list(soup.find_all("ul")):
         lines = []
@@ -103,9 +116,8 @@ def clean_html_for_telegram(html_content: str) -> str:
             txt = li.get_text(" ", strip=True)
             if txt:
                 lines.append(f"• {txt}")
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ul.replace_with(new_p)
+        replacement_text = "\n".join(lines) if lines else ""
+        ul.replace_with(replacement_text)
 
     for ol in list(soup.find_all("ol")):
         lines = []
@@ -115,19 +127,19 @@ def clean_html_for_telegram(html_content: str) -> str:
             if txt:
                 lines.append(f"{idx}. {txt}")
                 idx += 1
-        new_p = soup.new_tag("p")
-        new_p.string = "\n".join(lines) if lines else ""
-        ol.replace_with(new_p)
+        replacement_text = "\n".join(lines) if lines else ""
+        ol.replace_with(replacement_text)
 
-    # Allowed tags for Telegram HTML
-    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br"}
+    # Allowed tags for Telegram HTML (per Bot API):
+    # a, b/strong, i/em, u/ins, s/strike/del, code, pre, blockquote, br, tg-spoiler
+    allowed_tags = {"a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "blockquote", "br", "tg-spoiler"}
 
     # Unwrap unsupported tags
     for tag in list(soup.find_all(True)):
         if tag.name not in allowed_tags:
             tag.unwrap()
 
-    # Strip attributes, keep only href for <a>
+    # Strip attributes, keep only href for <a> (no attrs for tg-spoiler)
     for tag in soup.find_all(True):
         allowed_attrs = {}
         if tag.name == "a" and tag.has_attr("href"):
