@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 import re
 
 __all__ = [
@@ -16,7 +16,7 @@ __all__ = [
 # https://core.telegram.org/bots/api#html-style
 ALLOWED_TELEGRAM_TAGS = {
     "a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-    "code", "pre", "blockquote", "br", "tg-spoiler", "tg-emoji"
+    "code", "pre", "blockquote", "tg-spoiler", "tg-emoji"
 }
 
 
@@ -110,14 +110,13 @@ def sanitize_telegram_html(html_content: str) -> str:
 
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # Normalize headings: convert <h1>.. <h6> into <b>Title</b><br>
+    # Normalize headings: convert <h1>.. <h6> into <b>Title</b> plus a newline
     for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
         for h in list(soup.find_all(level)):
             bold = soup.new_tag("b")
             bold.string = h.get_text(strip=False)
-            br = soup.new_tag("br")
             h.replace_with(bold)
-            bold.insert_after(br)
+            bold.insert_after(NavigableString("\n"))
 
     # Convert Telegram spoilers: <span class="tg-spoiler"> -> <tg-spoiler>
     for sp in list(soup.find_all("span", class_="tg-spoiler")):
@@ -125,12 +124,16 @@ def sanitize_telegram_html(html_content: str) -> str:
         tg.string = sp.get_text(strip=False)
         sp.replace_with(tg)
 
-    # Replace <hr> with two line breaks
+    # Replace <hr> with two newline characters
     for hr in list(soup.find_all("hr")):
-        br1 = soup.new_tag("br")
-        br2 = soup.new_tag("br")
-        hr.replace_with(br1)
-        br1.insert_after(br2)
+        nl1 = NavigableString("\n")
+        nl2 = NavigableString("\n")
+        hr.replace_with(nl1)
+        nl1.insert_after(nl2)
+
+    # Replace existing <br> tags with newline characters (not listed in supported tags)
+    for br in list(soup.find_all("br")):
+        br.replace_with(NavigableString("\n"))
 
     # Convert lists to plain text lines
     for ul in list(soup.find_all("ul")):
