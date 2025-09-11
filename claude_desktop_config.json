@@ -23,19 +23,17 @@
         "--directory",
         "D:/home/strato-space/telegram-mcp",
         "run",
-        "--active",
-        "--link-mode=copy",
         "main.py"
       ]
     },
     "voice": {
-      "command": "uvx",
+      "command": "uv",
       "args": [
-        "--env-file",
-        "D:/home/strato-space/call/.env",
-        "--from",
-        "git+https://github.com/strato-space/voice@main",
-        "mcp-voicebot"
+        "--directory",
+        "D:/home/strato-space/voice",
+        "run",
+        "-m",
+        "mcp_voicebot.server"
       ]
     }
   },
