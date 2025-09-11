@@ -1670,8 +1670,14 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         # Save globally for subsequent messages
         global selected_chat_id, selected_thread_id
-        selected_chat_id = prompt_chat_id or TELEGRAM_CHAT_ID
-        selected_thread_id = prompt_thread_id or (TELEGRAM_THREAD_ID or None)
+        # Respect previously selected targets (e.g., set by lib.api from Telegram update)
+        # Only fall back to agent YAML/output or .env when not already set
+        selected_chat_id = (
+            selected_chat_id if (selected_chat_id is not None) else (prompt_chat_id or TELEGRAM_CHAT_ID)
+        )
+        selected_thread_id = (
+            selected_thread_id if (selected_thread_id is not None) else (prompt_thread_id or (TELEGRAM_THREAD_ID or None))
+        )
 
         # Now that selected_chat_id is finalized, create a local SQLite-backed session
         # Deterministic and unique per dialog thread (agent:chat[:thread])
