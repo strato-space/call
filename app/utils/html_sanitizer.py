@@ -86,6 +86,16 @@ def clean_html_for_telegram(html_content: str) -> str:
 
     soup = BeautifulSoup(html_content, "html.parser")
 
+    # Normalize headings: convert <h1>.. <h6> into <b>Title</b><br>
+    # Telegram HTML does not support heading tags.
+    for level in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        for h in list(soup.find_all(level)):
+            bold = soup.new_tag("b")
+            bold.string = h.get_text(strip=False)
+            br = soup.new_tag("br")
+            h.replace_with(bold)
+            bold.insert_after(br)
+
     # Convert lists to plain text lines
     for ul in list(soup.find_all("ul")):
         lines = []
