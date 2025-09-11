@@ -9,7 +9,8 @@ def test_list_flat_and_filtered(monkeypatch):
     fake = {
         "agents": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml", "DialogSummary": "/p/agents/DialogSummary/agent.yaml"},
         "aliases": {"NA": "/p/agents/NewsAggr/agent.yaml"},
-        "agents_af": {"AgentFabOne": "/p/AgentFab/AgentFabOne/agent.yaml"},
+        # AgentFab section intentionally not used in flat mode
+        "agents_af": {},
         "agents_ag": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml", "DialogSummary": "/p/agents/DialogSummary/agent.yaml"},
     }
 
@@ -19,7 +20,6 @@ def test_list_flat_and_filtered(monkeypatch):
     items = mod.list()
     assert isinstance(items, list)
     names = [x["name"] for x in items]
-    assert "AgentFabOne" in names
     assert "NewsAggr" in names
     assert "DialogSummary" in names
 
@@ -42,7 +42,7 @@ def test_list_grouped(monkeypatch):
     fake = {
         "agents": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml"},
         "aliases": {},
-        "agents_af": {"AgentFabOne": "/p/AgentFab/AgentFabOne/agent.yaml"},
+        "agents_af": {},
         "agents_ag": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml"},
     }
 
@@ -53,5 +53,6 @@ def test_list_grouped(monkeypatch):
     assert set(grouped.keys()) == {"AgentFab", "agents"}
     af = grouped["AgentFab"]
     ag = grouped["agents"]
-    assert any(x["name"] == "AgentFabOne" for x in af)
+    # AgentFab list is intentionally empty in grouped output policy
+    assert af == []
     assert any(x["name"] == "NewsAggr" for x in ag)

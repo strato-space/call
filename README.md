@@ -234,7 +234,7 @@ security:
 
 The module `call.app.call` expects the following environment variables (can be provided via `.env`):
 
-- `TELEGRAM_TOKEN` — Telegram Bot token
+- `TELEGRAM_TOKEN` — default Telegram Bot token (used when no bot name is selected)
 - `TELEGRAM_CHAT_ID` — primary chat id (int). If a 10‑digit id is provided, it will be normalized to `-100XXXXXXXXXX` internally.
 - `TELEGRAM_SECOND_CHAT_ID` — secondary chat id (int)
 - `TELEGRAM_THREAD_ID` — optional thread id (int)
@@ -245,6 +245,28 @@ The module `call.app.call` expects the following environment variables (can be p
 Notes:
 - On startup, `call.app.call` will copy `../.env` into local `.env` if `.env` is missing.
 - All mandatory envs are sanitized by `ensure_env()`; missing required ones will raise.
+
+### Telegram bot tokens (call/telegram_bot)
+
+For running the Telegram bot (`call/telegram_bot/bot.py`) with multiple bot identities, use a single naming convention in `.env`:
+
+```
+# Default token (used when no --bot-name provided)
+TELEGRAM_TOKEN=123456:ABCDEF
+
+# Named tokens (one line per bot)
+TELEGRAM_TOKEN.StratoSpaceAiBot=111111:AAAAAA
+TELEGRAM_TOKEN.AgentFabBot=222222:BBBBBB
+```
+
+Start the bot with a specific identity:
+
+```
+python -m call.telegram_bot.bot --bot-name StratoSpaceAiBot
+```
+
+Notes:
+- Only the dot notation `TELEGRAM_TOKEN.Name` is supported for named bots.
 
 ### Python dependencies
 
