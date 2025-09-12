@@ -271,7 +271,7 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
 
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         telegram_last_message = message
-        print(f"Message sent. ID: {message.message_id}, Chat ID: {message.chat_id}, Thread ID: {message.message_thread_id}")
+        debug_print(f"TG message sent id={message.message_id} chat={message.chat_id} thread={message.message_thread_id}")
         return message
     except Exception as e:
         print(f"Error sending Telegram message: {e}")
@@ -431,7 +431,7 @@ async def send_digest_notification(
                 reply_markup=reply_markup,
                 message_thread_id=eff_thread_id)
 
-        print(f"Digest notification sent. ID: {message_obj.message_id}, Chat ID: {message_obj.chat_id}")
+        debug_print(f"Digest notification sent id={message_obj.message_id} chat={message_obj.chat_id}")
         return message_obj
     except Exception as e:
         print(f"Error sending Telegram message/photo: {e}")
@@ -530,7 +530,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             reply_markup=reply_markup
         )
     try:
-        print(f"[TG] send_message parse_mode={chosen_parse_mode}")
+        debug_print(f"[TG] send_message parse_mode={chosen_parse_mode}")
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     except BadRequest as e:
         # KISS: If Telegram can't parse, send plain text once.
@@ -547,7 +547,7 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
                     parse_mode=None,
                     reply_markup=reply_markup,
                 )
-            print("[TG] BadRequest parse error, retrying as plain text")
+            debug_print("[TG] BadRequest parse error, retrying as plain text")
             message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         else:
             raise
@@ -914,7 +914,7 @@ class MCPServerStdioHook(MCPServerStdio):
             raise
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
-        print(f"[MCP Hook] Calling tool: {tool_name}")
+        debug_print(f"[MCP Hook] Calling tool: {tool_name}")
         # Bind parent method to avoid 'super(): no arguments' inside nested closures
         parent_call_tool = super(MCPServerStdioHook, self).call_tool
         # Try to present arguments in YAML for readability (console)
@@ -960,7 +960,7 @@ class MCPServerStdioHook(MCPServerStdio):
                         return str(obj)
 
         yaml_args = _to_yaml_text(arguments)
-        print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
+        debug_print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
 
         if tool_name != 'sequentialthinking':
             # For all other tools: send/edit YAML arguments in Telegram without progress bar
@@ -1028,7 +1028,7 @@ class MCPServerStdioHook(MCPServerStdio):
                 async def _call():
                     return await parent_call_tool(tool_name, arguments)
                 result = await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
-                print(f"[MCP Hook] Tool {tool_name} completed successfully")
+                debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 return result
             except Exception as e:
                 err_text = format_exception_text(e)
