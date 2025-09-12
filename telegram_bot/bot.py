@@ -151,7 +151,14 @@ def _summarize_update(update: Update) -> str:
 
 
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """TypeHandler callback to log every incoming update."""
+    """TypeHandler callback to log every incoming update (gated by CALL_DEBUG)."""
+    try:
+        enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        enabled = False
+    if not enabled:
+        return None
+
     summary = _summarize_update(update)
     log.info("Update: %s", summary)
     # Also print to stdout for easy grepping when logs are redirected

@@ -18,8 +18,8 @@ def test_compose_welcome_html_includes_model_and_preview(monkeypatch):
         model="gpt-5",
     )
 
-    assert "<b>FooAgent</b>" in html
-    assert "<code>model: gpt-5</code>" in html
-    assert "<code>hello world</code>" in html
-    assert "<code>mcp: []</code>" in html
-    assert "<code>vs: ['vs_abc']</code>" in html
+    assert "🔌 <b>FooAgent</b>" in html
+    assert "hello world" in html
+    assert "mcp: []" in html
+    assert "vs: ['vs_abc']" in html
+    assert "model: gpt-5" in html

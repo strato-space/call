@@ -736,7 +736,7 @@ def compose_welcome_html(
     """
     title = (agent_name or "Agent").strip() or "Agent"
     gh_url = github_blob_url(agent_yaml_path) if agent_yaml_path else None
-    header = f"🍴 <b><a href='{gh_url}'>{title}</a></b>" if gh_url else f"🍴 <b>{title}</b>"
+    header = f"🔌 <b><a href='{gh_url}'>{title}</a></b>" if gh_url else f"🔌 <b>{title}</b>"
 
     preview = (user_input or "").strip()
     if len(preview) > 3800:
@@ -755,13 +755,16 @@ def compose_welcome_html(
     vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
 
     parts = [header]
-    if model:
-        parts.append(f"\n<code>model: {model}</code>")
     if preview:
-        parts.append("\n<code>" + preview + "</code>")
-    parts.append(f"\n<code>mcp: {mcp_names}</code>")
-    parts.append(f"\n<code>vs: {vs_ids}</code>")
-    return "\n".join(parts)
+        parts.append("")
+        parts.append(preview)
+    parts.append("")
+    parts.append(f"mcp: {mcp_names}")
+    parts.append("")
+    parts.append(f"vs: {vs_ids}")
+    if model:
+        parts.append("model: " + str(model))
+    return "\n\n".join(parts)
 
 def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
     """Extract chat_id and thread_id from various 'output' layouts.
@@ -1824,10 +1827,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         env_model = os.environ.get("LLM_MODEL")
         yaml_model = (cfg.model or None)
         final_model = yaml_model or env_model or "gpt-5"
-        try:
-            print(f"[INFO] Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
-        except Exception:
-            pass
+        debug_print(f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
         agent = Agent(
             name=f"{cfg.name} [agent]",

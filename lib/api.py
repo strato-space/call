@@ -165,6 +165,15 @@ async def call_async(
         while True:
             try:
                 out = dump_fp if dump_fp is not None else sys.stderr
+                # Gate stderr dumps behind CALL_DEBUG to reduce noise in production
+                if dump_fp is None:
+                    try:
+                        enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in ("1", "true", "yes", "on")
+                    except Exception:
+                        enabled = False
+                    if not enabled:
+                        await asyncio.sleep(period)
+                        continue
                 print("\n=== asyncio tasks dump ===", file=out)
                 for t in asyncio.all_tasks():
                     if t is asyncio.current_task():
