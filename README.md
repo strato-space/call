@@ -310,6 +310,24 @@ Notes:
   - `.env` defaults (`TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`) → last fallback.
   - The pipeline passes explicit chat/thread through the final notification to avoid races with globals.
 
+### Digest notification helper (Updated Sep 12, 2025)
+
+Function: `call.app.call.send_digest_notification(*, text: str | None = None, chat_id: int | None = None, message_thread_id: int | None = None, agent_name: str | None = None, agent_path: str | Path | None = None, input_text: str | None = None, image_path: str | Path | None = None) -> telegram.Message | None`
+
+Behavior and arguments:
+
+- `text` — optional message body. If empty/whitespace, falls back to a minimal banner and echoes `input_text` in a `<code>` block. If `text` is ≥4000 chars, content is published to Telegraph and a link banner is sent instead.
+- `chat_id`, `message_thread_id` — explicit routing targets. If omitted, fall back to module-level `selected_chat_id/selected_thread_id` which are initialized from `.env` and can be overridden by the Telegram bot/lib.
+- `agent_name` — used for presentation (e.g., Telegraph title) and for resolving optional button macros.
+- `agent_path` — path to the agent’s `agent.yaml`. If present, the helper loads its `buttons` section and builds inline buttons. Macro `{{digest_url}}` is substituted with the Telegraph link when one was generated.
+- `input_text` — original user input. Used in the fallback banner to provide context.
+- `image_path` — if provided, a photo is sent with `text` as the caption (sanitized and truncated to 1024 chars) instead of a plain text message.
+
+Notes:
+
+- The helper prints concise debug lines: `[DEBUG] send_digest_notification args: ...` and `[DEBUG] send_digest_notification publish_url=...`.
+- Empty/whitespace-only `text` is normalized to `None` to avoid Telegram errors about empty messages.
+
 ### Python dependencies
 
 Install Python deps from `app/requirements.txt`:
@@ -319,6 +337,19 @@ uv venv && source .venv/bin/activate
 uv pip install -r app/requirements.txt
 # or: pip install -r app/requirements.txt
 ```
+
+### Testing
+
+- Run unit tests (requires `pytest` in your environment):
+
+```bash
+pytest -q call/app/tests/test_send_digest_notification.py
+```
+
+- What’s covered:
+  - Empty `text` fallback to banner with input echo
+  - Long `text` publishing to Telegraph and link injection
+  - `{{digest_url}}` macro substitution in `buttons` loaded from `agent.yaml`
 
 ## Execution Model (MVP)
 

@@ -259,7 +259,6 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
 
 
 async def send_digest_notification(
-    url: str | None = None,
     *,
     text: str = None,
     chat_id: int | None = None,
@@ -269,25 +268,86 @@ async def send_digest_notification(
     input_text: str | None = None,
     image_path: str | Path | None = None,
 ) -> Optional[Message]:
+    """Send a digest message/photo to Telegram with sensible fallbacks.
+
+    Arguments:
+    - text: Optional main body text to send. If it is a non-empty string shorter than
+      Telegram limits, it will be sent as-is (sanitized by downstream helpers).
+      If it is empty/whitespace, we treat it as absent and send a minimal banner
+      with the original input echoed. If it's 4000+ chars, we publish it to Telegraph
+      and send a short banner with the resulting link.
+    - chat_id: Explicit chat id to target. If None, falls back to the module-level
+      `selected_chat_id` which is initialized from `.env` and may be overridden by
+      the Telegram bot/lib facade.
+    - message_thread_id: Explicit topic/thread id (for supergroups). If None, falls
+      back to `selected_thread_id`.
+    - agent_name: Resolved agent display name. Used for presentation (e.g., Telegraph
+      title) and optional buttons macro substitutions.
+    - agent_path: Path to `agent.yaml` (string or Path). If provided and exists,
+      the function will try to read `buttons` section to build inline buttons; it
+      also allows macro expansion for `{{digest_url}}` if a Telegraph link was created.
+    - input_text: Original user input. When we need to fall back to a banner (no text
+      or after publishing), this input is echoed within a <code> block for context.
+    - image_path: If provided, the function sends a photo instead of a text message.
+      The `text` parameter becomes the caption (sanitized and truncated to 1024 chars).
+
+    Behavior:
+    - Always uses the finalized chat/thread computed from explicit arguments or
+      module-level selections to avoid races.
+    - Performs safe HTML preparation/truncation in downstream helpers.
+    - Builds inline buttons from `agent.yaml` if present. Macro `{{digest_url}}` is
+      replaced with the generated Telegraph URL when applicable.
+
+    Returns:
+    - telegram.Message on success; None on failure (with error logged to stdout).
+    """
+    # Debug: print incoming args (avoid dumping large payloads)
+    try:
+        print(
+            "[DEBUG] send_digest_notification args: "
+            f"text_len={(len(text) if isinstance(text, str) else 'None')}, "
+            f"chat_id={chat_id}, message_thread_id={message_thread_id}, "
+            f"agent_name={agent_name}, agent_path={agent_path}, "
+            f"input_len={(len(input_text) if isinstance(input_text, str) else 'None')}, "
+            f"image_path={image_path}"
+        )
+    except Exception:
+        pass
+
     # If content is too long for Telegram, publish and use resulting URL
+    local_url: str | None = None
     try:
         if (text is not None) and isinstance(text, str) and len(text) >= 4000:
             pub_title = (agent_name or "Agent")
-            url = await publish_results(title=pub_title, content=text)
+            local_url = await publish_results(title=pub_title, content=text)
             text = None  # switch to link mode
     except Exception:
         # On failure to publish, fall back to sending as-is (may get truncated by Telegram)
         pass
 
+    # Normalize empty/whitespace-only text to None so we don't attempt to send an empty Telegram message.
+    # This triggers the fallback banner below with optional input echo.
+    try:
+        if text is not None and isinstance(text, str) and not text.strip():
+            text = None
+    except Exception:
+        # Best-effort only; if anything goes wrong, proceed with existing value
+        pass
+
     # Prepare final text
     if text is None:
-        text = f"📰 {url}" if url else "📰"
+        text = f"📰 {local_url}" if local_url else "📰"
         if input_text:
             try:
                 safe_input = (input_text or "")[:3800]
                 text = text + f"\n<code>{safe_input}</code>"
             except Exception:
                 pass
+
+    try:
+        print(f"[DEBUG] send_digest_notification publish_url={local_url}")
+    except Exception:
+        pass
 
     # Try to load buttons configuration from agent.yaml and perform macro substitution
     keyboard = None
@@ -317,7 +377,7 @@ async def send_digest_notification(
                     link = str(b.get("url", "")).strip()
                     # Macro substitutions
                     if link:
-                        safe_url = url or ""
+                        safe_url = local_url or ""
                         link = link.replace("{{digest_url}}", safe_url)
                     if link:
                         row.append(InlineKeyboardButton(label, url=link))
