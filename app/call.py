@@ -755,18 +755,30 @@ def compose_welcome_html(
     vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
 
     parts = [header]
-    code_lines: list[str] = []
-    if preview:
-        code_lines.append(f"<code>{preview}</code>")
+    # Build preview line and attrs lines separately to control spacing
+    preview_line = f"<code>{preview}</code>" if preview else None
+    attr_lines: list[str] = []
     if mcp_names:
-        code_lines.append(f"<code>mcp: {mcp_names}</code>")
+        attr_lines.append(f"<code>mcp: {mcp_names}</code>")
     if vs_ids:
-        code_lines.append(f"<code>vs: {vs_ids}</code>")
+        attr_lines.append(f"<code>vs: {vs_ids}</code>")
     if model:
-        code_lines.append(f"<code>model: {model}</code>")
-    if code_lines:
-        parts.append("")  # single blank line between header and codes
-        parts.append("\n".join(code_lines))
+        attr_lines.append(f"<code>model: {model}</code>")
+
+    # Spacing rules:
+    # - Always one blank line after header if we have any body content
+    # - One blank line between preview and attrs when both exist
+    body_chunks: list[str] = []
+    if preview_line:
+        body_chunks.append(preview_line)
+    if attr_lines:
+        if preview_line:
+            body_chunks.append("")  # blank line between input and attrs
+        body_chunks.append("\n".join(attr_lines))
+
+    if body_chunks:
+        parts.append("")  # blank line after header
+        parts.append("\n".join(body_chunks))
     return "\n".join(parts)
 
 def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
