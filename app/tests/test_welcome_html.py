@@ -20,6 +20,7 @@ def test_compose_welcome_html_includes_model_and_preview(monkeypatch):
 
     assert "🔌 <b>FooAgent</b>" in html
     assert "hello world" in html
-    assert "mcp: []" in html
+    # mcp is empty in this test, so the section should be omitted
+    assert "mcp:" not in html
     assert "vs: ['vs_abc']" in html
     assert "model: gpt-5" in html
