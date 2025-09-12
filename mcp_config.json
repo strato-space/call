@@ -16,7 +16,17 @@
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
       "env": {}
      },
-     "gsh": {"serverUrl": "https://gsh-mcp.stratospace.fun"}, 
+     "gsh": {
+      "command": "uvx",
+      "args": [
+        "--env-file",
+        "D:\\home\\strato-space\\call\\.env",
+        "--from",
+        "git+https://github.com/strato-space/mcp-google-sheets@main",
+        "mcp-google-sheets"
+      ],
+      "env": {}
+     }, 
      
      "ev":  {"serverUrl": "https://ev-mcp.stratospace.fun"},
      "fs": {"serverUrl": "https://fs-mcp.stratospace.fun"},

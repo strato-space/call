@@ -35,6 +35,17 @@
         "-m",
         "mcp_voicebot.server"
       ]
+    },
+    "gsh": {
+      "command": "uvx",
+      "args": [
+        "--env-file",
+        "/home/strato-space/call/.env",
+        "--from",
+        "git+https://github.com/strato-space/mcp-google-sheets@main",
+        "mcp-google-sheets"
+      ],
+      "env": {}
     }
   },
   "isDxtAutoUpdatesEnabled": true
