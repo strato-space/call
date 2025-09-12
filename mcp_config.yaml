@@ -9,14 +9,14 @@ mcpServers:
   # ---------------------------------------------------------------------------
   
   # npx -y @modelcontextprotocol/server-filesystem /home/strato-space
-  fs-local:
+  fs:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
     env: {}
 
   # npx -y @modelcontextprotocol/server-sequential-thinking
-  seq-local:
+  seq:
     enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
@@ -33,13 +33,23 @@ mcpServers:
       - run
       - main.py
 
+  # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
+  voice:
+    enabled: true
+    command: uv
+    args:
+      - --directory
+      - /home/strato-space/voice
+      - run
+      - -m
+      - mcp_voicebot.server
 
   # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
   gsh:
     # Google Sheets MCP (remote or local)
     # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
     # If you want to run a local process, provide command/args env like other *-local servers.
-    enabled: false
+    enabled: true
     command: uvx
     args:
       - --env-file
@@ -52,16 +62,7 @@ mcpServers:
     enabled: false
     serverUrl: "https://voice-mcp.stratospace.fun"
 
-  # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
-  voice:
-    enabled: true
-    command: uv
-    args:
-      - --directory
-      - /home/strato-space/voice
-      - run
-      - -m
-      - mcp_voicebot.server
+  
 
   # python -m voice.src.mcp_voicebot.server
   voice-py:
@@ -92,13 +93,6 @@ mcpServers:
     args: ["-m", "mcp_server_time"]
     env: {}
 
-  # uvx --env-file C:/Users/Leader/PycharmProjects/ai/.env --from C:/Users/Leader/PycharmProjects/mcp-google-sheets mcp-google-sheets
-  mcp-google-sheets-local:
-    command: uvx
-    args: ["--env-file", "C:/Users/Leader/PycharmProjects/ai/.env", "--from", "C:/Users/Leader/PycharmProjects/mcp-google-sheets", "mcp-google-sheets"]
-    env:
-      SERVICE_ACCOUNT_PATH: "C:/Users/Leader/PycharmProjects/ai/wallet/service-account-key.json"
-
   # npx -y @modelcontextprotocol/server-github
   github0:
     command: npx
@@ -123,37 +117,37 @@ mcpServers:
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "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"
 
-  ev:
+  ev-s:
     serverUrl: "https://ev-mcp.stratospace.fun"
 
-  fs:
+  fs-s:
     serverUrl: "https://fs-mcp.stratospace.fun"
 
-  fe:
+  fe-s:
     serverUrl: "https://fe-mcp.stratospace.fun"
 
-  git:
+  git-s:
     serverUrl: "https://git-mcp.stratospace.fun"
 
-  git-server:
+  git-server-s:
     serverUrl: "https://git-server-mcp.stratospace.fun"
 
-  git-rms:
+  git-rms-s:
     serverUrl: "https://git-rms-mcp.stratospace.fun"
 
-  git-prompt:
+  git-prompt-s:
     serverUrl: "https://git-prompt-mcp.stratospace.fun"
 
-  mem:
+  mem-s:
     serverUrl: "https://mem-mcp.stratospace.fun"
 
-  seq:
+  seq-s:
     serverUrl: "https://seq-mcp.stratospace.fun"
 
-  tm:
+  tm-s:
     serverUrl: "https://tm-mcp.stratospace.fun"
 
-  tg:
+  tg-s:
     serverUrl: "https://tg-mcp.stratospace.fun"
 
   voice-s:
