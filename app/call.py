@@ -656,6 +656,49 @@ def _normalize_chat_id(v) -> int | None:
     except Exception:
         return None
 
+def github_blob_url(local_path: str | Path) -> str | None:
+    """Best-effort GitHub blob URL from a local path.
+
+    Tries in order:
+      1) GITHUB_REMOTE_URL: a full repo remote URL (ssh or https). Example:
+         git@github.com:org/repo.git → https://github.com/org/repo/blob/<branch>/<rel>
+      2) GITHUB_REMOTE_ORGANIZATION_URL: an org URL + top-level repo name derived
+         from the relative path (first path segment under workspace root).
+         Example: https://github.com/strato-space + rel 'prompt/agents/x' →
+         https://github.com/strato-space/prompt/blob/<branch>/agents/x
+      Branch defaults to 'master' if GITHUB_BRANCH is unset.
+    """
+    try:
+        p = Path(local_path)
+        try:
+            rel = str(Path(p).resolve().relative_to(_repo_root.resolve()).as_posix())
+        except Exception:
+            rel = p.name
+
+        branch = os.getenv("GITHUB_BRANCH", "master")
+
+        # Option A: full remote URL
+        remote = os.getenv("GITHUB_REMOTE_URL", "").strip()
+        if remote:
+            url = remote
+            if url.startswith("git@github.com:"):
+                url = url.replace("git@github.com:", "https://github.com/")
+            if url.endswith(".git"):
+                url = url[:-4]
+            if url.startswith("http"):
+                return f"{url}/blob/{branch}/{rel}"
+
+        # Option B: organization URL + derive repo name from first path segment
+        org = os.getenv("GITHUB_REMOTE_ORGANIZATION_URL", "").strip().rstrip("/")
+        if org and rel and "/" in rel:
+            top, sub = rel.split("/", 1)
+            if top:  # assume top-level folder == repo name
+                return f"{org}/{top}/blob/{branch}/{sub}"
+
+        return None
+    except Exception:
+        return None
+
 def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
     """Extract chat_id and thread_id from various 'output' layouts.
 
