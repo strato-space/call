@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "fs-local": {
+    "fs": {
       "command": "npx",
       "args": [
         "-y",
@@ -9,7 +9,7 @@
       ],
       "env": {}
     },
-    "seq-local": {
+    "seq": {
       "command": "npx",
       "args": [
         "-y",
