@@ -1841,5 +1841,10 @@ if __name__ == "__main__":
     if args:
         agent_name = args[0]
         user_input = " ".join(args[1:]) if len(args) > 1 else ""
+    # Debug print: show agent name parsed from arguments (empty string if absent)
+    try:
+        print(f"[DEBUG] Arg AgentName=\"{agent_name}\"")
+    except Exception:
+        pass
 
     _asyncio.run(main(agent_name=agent_name, user_input=user_input))
