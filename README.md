@@ -22,7 +22,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
-## Library return shape and errors (Updated Sep 7, 2025)
+## Library return shape and errors (Updated Sep 12, 2025)
 
 `call.lib.api.call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
 
@@ -38,7 +38,14 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 }
 ```
 
-- On failure the function currently raises an exception (e.g., `ValueError` when agent not found, or `RuntimeError` on pipeline failure). Callers should catch and convert to their desired envelope. The `echo` flag is included in the success payload for upstream inspection.
+- On failure the sync facade raises (e.g., `ValueError` when agent not found, or runtime errors). The `echo` flag is included in the success payload for upstream inspection.
+
+Also available (async) — supports empty agent name:
+
+`await call.lib.api.call_async(name: str | None, input_text: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
+
+- If `name` is empty/None: discovery is skipped, an Agent with empty instructions is constructed, and only `input_text` is used. In this case, `agent_path` in the response is `null`.
+- If `name` is provided and not found: returns a 404-style error envelope.
 
 Notes:
 - The Voice integration now imports and uses this library directly (no subprocess). See below.
@@ -91,6 +98,28 @@ cd /home/strato-space
 python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
 ```
+
+### CLI usage (Updated Sep 12, 2025)
+
+- Forms supported:
+
+  ```bash
+  # Legacy positional
+  python -m call.app.call <AgentName> [<input>]
+
+  # Named agent (preferred)
+  python -m call.app.call --name <AgentName> [<input...>]
+
+  # Input-only (no agent)
+  python -m call.app.call --input <input...>
+
+  # Echo parsed args without running
+  python -m call.app.call --echo --name <AgentName> --input <input...>
+  ```
+
+- Debug prints at startup show the parsed values:
+  - `[DEBUG] call AgentName="..."`
+  - `[DEBUG] call input="..."`
 
 ### Legacy Agent Addressing (Deprecated)
 
