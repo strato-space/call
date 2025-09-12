@@ -100,7 +100,7 @@ def _error_payload(
 
 
 async def call_async(
-    name: str,
+    name: Optional[str],
     input_text: str,
     *,
     chat_id: Optional[int] = None,
@@ -112,24 +112,30 @@ async def call_async(
     Run the digest pipeline for a given agent name and input text.
     Returns a dict with basic run metadata and the final_output.
 
+    Policy (2025-09-12): name may be empty/None. In that case, we skip agent
+    discovery and construct an Agent with empty instructions, using only the user input.
+
     Notes:
     - This will initialize the Telegram bot (so that downstream utils can publish).
     - No explicit welcome message is sent here to avoid duplicates; the app pipeline will send a single digest.
-    - If agent discovery fails, raises ValueError.
+    - If agent discovery fails (when name is provided), returns 404 error envelope.
     """
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
     await app_call.init_bot()
 
-    # Discover agent profile path using existing logic
-    try:
-        yaml_path = discover_agent_yaml(name)
-    except Exception as e:
-        # Discovery raised an exception; convert to structured error
-        return _error_payload(name, input_text, e, status=404, echo=echo, debug=debug)
-    if yaml_path is None:
-        return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo, debug=debug)
+    # Discover agent profile path using existing logic (only when name provided)
+    yaml_path = None
+    norm_name = (name or "").strip()
+    if norm_name:
+        try:
+            yaml_path = discover_agent_yaml(norm_name)
+        except Exception as e:
+            # Discovery raised an exception; convert to structured error
+            return _error_payload(norm_name, input_text, e, status=404, echo=echo, debug=debug)
+        if yaml_path is None:
+            return _error_payload(norm_name, input_text, ValueError(f"Agent '{norm_name}' not found"), status=404, echo=echo, debug=debug)
 
     # Align with app/main: set effective targets (falling back to env defaults)
     selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
@@ -190,11 +196,11 @@ async def call_async(
             agent, history, final_output = await app_call.run_digest_pipeline(
                 default_samples_dir,
                 user_input=input_text or "",
-                cli_agent_name=name,
+                cli_agent_name=norm_name,
             )
         except Exception as e:
             # Convert pipeline errors to structured error
-            return _error_payload(name, input_text, e, status=500, echo=echo, debug=debug)
+            return _error_payload(norm_name, input_text, e, status=500, echo=echo, debug=debug)
     finally:
         if dump_task is not None:
             try:
@@ -209,8 +215,8 @@ async def call_async(
 
     return {
         "ok": True,
-        "agent": to_pascal_case(name),
-        "agent_path": str(yaml_path),
+        "agent": to_pascal_case(norm_name),
+        "agent_path": (str(yaml_path) if yaml_path else None),
         "final_output": final_output,
         # echo flag included for callers that want to inspect behavior upstream
         "echo": bool(echo),
