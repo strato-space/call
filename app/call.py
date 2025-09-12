@@ -1,4 +1,5 @@
 import os
+import argparse
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
@@ -1835,15 +1836,38 @@ if __name__ == "__main__":
         sys.exit(cli_main())
 
     # No --cli: run our own async main()
-    # Accept legacy invocation: python -m call.app.call <AgentName> [<input>]
-    agent_name = ""
+    # Use argparse to support optional named args and legacy positionals.
+    # Forms supported:
+    #   1) python -m call.app.call <AgentName> [<input>]
+    #   2) python -m call.app.call --name <AgentName> [<input...>]
+    #   3) python -m call.app.call --input <input...>         (no agent)
+    #   4) python -m call.app.call -- <input...>              (no agent)
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument('--name', dest='name', default="", help='Agent name (optional)')
+    # Capture the rest of the command line after --input verbatim
+    parser.add_argument('--input', dest='input_words', nargs=argparse.REMAINDER, help='Input text (optional, multi-word)')
+    # Legacy positionals: agent and optional input (quoted or space-separated)
+    parser.add_argument('positional', nargs='*')
+
+    ns = parser.parse_args(args)
+
+    agent_name = str(ns.name or "")
     user_input = ""
-    if args:
-        agent_name = args[0]
-        user_input = " ".join(args[1:]) if len(args) > 1 else ""
+
+    if ns.input_words is not None:
+        # Everything after --input is input
+        user_input = " ".join(ns.input_words).strip()
+    elif ns.positional:
+        # If agent name already provided via --name, treat all positionals as input
+        if agent_name:
+            user_input = " ".join(ns.positional).strip()
+        else:
+            agent_name = ns.positional[0]
+            user_input = " ".join(ns.positional[1:]).strip()
     # Debug print: show agent name parsed from arguments (empty string if absent)
     try:
-        print(f"[DEBUG] Arg AgentName=\"{agent_name}\"")
+        print(f"[DEBUG] call AgentName=\"{agent_name}\"")
+        print(f"[DEBUG] call input=\"{user_input}\"")
     except Exception:
         pass
 
