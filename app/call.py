@@ -755,19 +755,19 @@ def compose_welcome_html(
     vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
 
     parts = [header]
+    code_lines: list[str] = []
     if preview:
-        parts.append("")
-        parts.append(preview)
+        code_lines.append(f"<code>{preview}</code>")
     if mcp_names:
-        parts.append("")
-        parts.append(f"mcp: {mcp_names}")
+        code_lines.append(f"<code>mcp: {mcp_names}</code>")
     if vs_ids:
-        parts.append("")
-        parts.append(f"vs: {vs_ids}")
+        code_lines.append(f"<code>vs: {vs_ids}</code>")
     if model:
-        parts.append("")
-        parts.append("model: " + str(model))
-    return "\n\n".join(parts)
+        code_lines.append(f"<code>model: {model}</code>")
+    if code_lines:
+        parts.append("")  # single blank line between header and codes
+        parts.append("\n".join(code_lines))
+    return "\n".join(parts)
 
 def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
     """Extract chat_id and thread_id from various 'output' layouts.
