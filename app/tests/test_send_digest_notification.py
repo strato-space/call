@@ -17,8 +17,7 @@ class DummyMsg:
         self.message_thread_id = None
 
 
-@pytest.mark.asyncio
-async def test_send_digest_notification_empty_text_fallback(monkeypatch):
+def test_send_digest_notification_empty_text_fallback(monkeypatch):
     sent = {}
 
     def fake_publish_results(**kwargs):  # should not be called in this case
@@ -34,13 +33,16 @@ async def test_send_digest_notification_empty_text_fallback(monkeypatch):
     monkeypatch.setattr("call.app.call.publish_results", fake_publish_results)
     monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
 
-    msg = await send_digest_notification(
-        text="   ",
-        input_text="hello world",
-        agent_name="Test",
-        chat_id=123,
-        message_thread_id=456,
-    )
+    async def _run():
+        return await send_digest_notification(
+            text="   ",
+            input_text="hello world",
+            agent_name="Test",
+            chat_id=123,
+            message_thread_id=456,
+        )
+
+    msg = asyncio.run(_run())
 
     assert isinstance(msg, DummyMsg)
     assert sent["text"].startswith("📰")
@@ -48,8 +50,7 @@ async def test_send_digest_notification_empty_text_fallback(monkeypatch):
     assert sent["reply_markup"] is None
 
 
-@pytest.mark.asyncio
-async def test_send_digest_notification_publishes_on_long_text(monkeypatch):
+def test_send_digest_notification_publishes_on_long_text(monkeypatch):
     published = {"url": None}
     sent = {}
 
@@ -66,19 +67,21 @@ async def test_send_digest_notification_publishes_on_long_text(monkeypatch):
     monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
 
     long_text = "x" * 5000
-    _ = await send_digest_notification(
-        text=long_text,
-        input_text="inp",
-        agent_name="Test",
-        chat_id=123,
-    )
+    async def _run():
+        return await send_digest_notification(
+            text=long_text,
+            input_text="inp",
+            agent_name="Test",
+            chat_id=123,
+        )
+
+    _ = asyncio.run(_run())
 
     assert published["url"] is not None
     assert "https://example.com/digest" in sent["text"]
 
 
-@pytest.mark.asyncio
-async def test_send_digest_notification_buttons_macro(monkeypatch):
+def test_send_digest_notification_buttons_macro(monkeypatch):
     from telegram import InlineKeyboardMarkup
 
     published = {"url": None}
@@ -109,13 +112,15 @@ async def test_send_digest_notification_buttons_macro(monkeypatch):
         ), encoding="utf-8")
 
         long_text = "y" * 5000
-        _ = await send_digest_notification(
-            text=long_text,
-            input_text="inp",
-            agent_name="Test",
-            agent_path=str(agent_yaml),
-            chat_id=123,
-        )
+        async def _run():
+            return await send_digest_notification(
+                text=long_text,
+                input_text="inp",
+                agent_name="Test",
+                agent_path=str(agent_yaml),
+                chat_id=123,
+            )
+        _ = asyncio.run(_run())
 
         rm = captured["reply_markup"]
         assert isinstance(rm, InlineKeyboardMarkup)

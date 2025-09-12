@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 import tempfile
 import yaml
+import inspect
 import httpx
 from openai import OpenAI
 
@@ -320,7 +321,11 @@ async def send_digest_notification(
     try:
         if (text is not None) and isinstance(text, str) and len(text) >= 4000:
             pub_title = (agent_name or "Agent")
-            local_url = await publish_results(title=pub_title, content=text)
+            # Support both async and sync publish_results in tests/runtime
+            if inspect.iscoroutinefunction(publish_results):
+                local_url = await publish_results(title=pub_title, content=text)
+            else:
+                local_url = publish_results(title=pub_title, content=text)
             text = None  # switch to link mode
     except Exception:
         # On failure to publish, fall back to sending as-is (may get truncated by Telegram)
@@ -1835,15 +1840,24 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 mcp_servers_started=mcp_servers_started,
                 vs_list=cfg.vs_list,
             )
+            # Debug log the welcome HTML (useful for troubleshooting formatting issues)
+            try:
+                print("[DEBUG] welcome_html=\n" + (welcome_html or ""))
+            except Exception:
+                pass
 
             await send_telegram_welcome_message(
                 text=welcome_html,
                 chat_id=selected_chat_id,
                 message_thread_id=selected_thread_id,
             )
-        except Exception:
-            # Do not block run on welcome banner failures
-            pass
+        except Exception as e:
+            # Do not block run on welcome banner failures, but log the exception
+            try:
+                err_text = format_exception_text(e)
+                print("[WARN] welcome message send failed:\n" + err_text)
+            except Exception:
+                pass
 
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")

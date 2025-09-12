@@ -27,14 +27,7 @@ def test_special_case_agentfab_points_to_root_yaml():
     assert Path(p).parent.name == "AgentFab"
 
 
-def test_agentfab_alias_default_resolves_to_business_analytic_agent():
-    # Alias defined in prompt/AgentFab/agents.yaml under BusinessAnalyticAgent
-    m = _mod()
-    p = m.discover_agent_yaml("@Default")
-    assert p is not None, "Alias @Default should resolve via AgentFab index"
-    assert Path(p).name == "agent.yaml"
-    assert Path(p).parent.name == "BusinessAnalyticAgent"
-    assert Path(p).parent.parent.name == "AgentFab"
+# Alias @Default has been removed by policy (Sep 12, 2025). Test deleted.
 
 
 def test_agents_index_name_and_alias_for_ainewsaggr():
