@@ -704,6 +704,53 @@ def github_blob_url(local_path: str | Path) -> str | None:
     except Exception:
         return None
 
+
+def compose_welcome_html(
+    *,
+    agent_name: str,
+    agent_yaml_path: str | Path | None,
+    user_input: str,
+    mcp_servers_started: list[Any] | None,
+    vs_list: list[str] | None,
+    model: str | None = None,
+) -> str:
+    """Compose the Telegram welcome banner HTML.
+
+    Output format:
+      🍴 <b><a href='github-path'>AgentName</a></b>  (falls back to bold if URL missing)
+      <code>input[:3800]</code>
+      <code>mcp: [...]</code>
+      <code>vs: [...]</code>
+    """
+    title = (agent_name or "Agent").strip() or "Agent"
+    gh_url = github_blob_url(agent_yaml_path) if agent_yaml_path else None
+    header = f"🍴 <b><a href='{gh_url}'>{title}</a></b>" if gh_url else f"🍴 <b>{title}</b>"
+
+    preview = (user_input or "").strip()
+    if len(preview) > 3800:
+        preview = preview[:3797] + "..."
+
+    # Collect MCP server names (best-effort)
+    mcp_names: list[str] = []
+    try:
+        for srv in (mcp_servers_started or []):
+            nm = getattr(srv, 'name', None) or getattr(srv, 'id', None) or type(srv).__name__
+            if nm and str(nm) not in mcp_names:
+                mcp_names.append(str(nm))
+    except Exception:
+        pass
+
+    vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
+
+    parts = [header]
+    if model:
+        parts.append(f"\n<code>model: {model}</code>")
+    if preview:
+        parts.append("\n<code>" + preview + "</code>")
+    parts.append(f"\n<code>mcp: {mcp_names}</code>")
+    parts.append(f"\n<code>vs: {vs_ids}</code>")
+    return "\n".join(parts)
+
 def _extract_tg_targets(output_val) -> tuple[int | None, int | None]:
     """Extract chat_id and thread_id from various 'output' layouts.
 
@@ -1839,10 +1886,13 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 user_input=user_input,
                 mcp_servers_started=mcp_servers_started,
                 vs_list=cfg.vs_list,
+                model=cfg.model,
             )
-            # Debug log the welcome HTML (useful for troubleshooting formatting issues)
+            # Debug log the welcome HTML only when CALL_DEBUG is enabled
             try:
-                print("[DEBUG] welcome_html=\n" + (welcome_html or ""))
+                _dbg = str(os.getenv("CALL_DEBUG", "")).strip().lower()
+                if _dbg in ("1", "true", "yes", "on"):
+                    print("[DEBUG] welcome_html=\n" + (welcome_html or ""))
             except Exception:
                 pass
 
