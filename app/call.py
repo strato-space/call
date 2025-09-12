@@ -1772,6 +1772,74 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         print(f"[INFO] Target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
+
+        # Send welcome message with agent link and run context (after config is ready)
+        try:
+            def _github_blob_url(local_path: str | Path) -> str | None:
+                try:
+                    p = Path(local_path)
+                    # Compute path relative to repo root
+                    rel = None
+                    try:
+                        rel = str(Path(p).resolve().relative_to(_repo_root.resolve()).as_posix())
+                    except Exception:
+                        rel = p.name
+                    # Best-effort env-based GitHub URL construction
+                    remote = os.getenv("GITHUB_REMOTE_URL", "")
+                    branch = os.getenv("GITHUB_BRANCH", "main")
+                    if not remote:
+                        return None
+                    url = remote.strip()
+                    if url.startswith("git@github.com:"):
+                        url = url.replace("git@github.com:", "https://github.com/")
+                    if url.endswith(".git"):
+                        url = url[:-4]
+                    if not url.startswith("http"):
+                        return None
+                    return f"{url}/blob/{branch}/{rel}"
+                except Exception:
+                    return None
+
+            # Compose HTML message
+            agent_title = cfg.name or "Agent"
+            gh_url = _github_blob_url(cfg.agent_yaml_path) if cfg.agent_yaml_path else None
+            if gh_url:
+                header = f"🍴 <b><a href='{gh_url}'>{agent_title}</a></b>"
+            else:
+                header = f"🍴 <b>{agent_title}</b>"
+
+            # Prepare input preview and context blocks
+            preview_input = (user_input or "").strip()
+            if len(preview_input) > 3800:
+                preview_input = preview_input[:3797] + "..."
+            mcp_names: list[str] = []
+            try:
+                for srv in mcp_servers_started or []:
+                    nm = getattr(srv, 'name', None) or getattr(srv, 'id', None) or type(srv).__name__
+                    if nm and nm not in mcp_names:
+                        mcp_names.append(str(nm))
+            except Exception:
+                pass
+            vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
+
+            body_lines = [
+                header,
+            ]
+            if preview_input:
+                body_lines.append(f"\n<code>{preview_input}</code>")
+            body_lines.append(f"\n<code>mcp: {mcp_names}</code>")
+            body_lines.append(f"\n<code>vs: {vs_ids}</code>")
+            welcome_html = "\n".join(body_lines)
+
+            await send_telegram_welcome_message(
+                text=welcome_html,
+                chat_id=selected_chat_id,
+                message_thread_id=selected_thread_id,
+            )
+        except Exception:
+            # Do not block run on welcome banner failures
+            pass
+
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
         try:
