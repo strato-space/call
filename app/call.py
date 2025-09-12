@@ -140,6 +140,24 @@ def ensure_env(var: str, default: str = None) -> str:
         value = ''.join(char for char in value if char.isprintable() and not char.isspace())
     return value
 
+
+def debug_print(*parts: str) -> None:
+    """Print a debug message only when CALL_DEBUG is enabled.
+
+    Enabled values (case-insensitive): 1, true, yes, on.
+    Each call prints on a single line, prefixed with [DEBUG].
+    """
+    try:
+        flag = str(os.getenv("CALL_DEBUG", "")).strip().lower()
+        if flag in ("1", "true", "yes", "on"):
+            try:
+                msg = " ".join(str(p) for p in parts if p is not None)
+                print(f"[DEBUG] {msg}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 # Global variable to store the last message object
 telegram_last_message: Optional[Message] = None
 selected_chat_id: Optional[int] = None
@@ -304,17 +322,14 @@ async def send_digest_notification(
     - telegram.Message on success; None on failure (with error logged to stdout).
     """
     # Debug: print incoming args (avoid dumping large payloads)
-    try:
-        print(
-            "[DEBUG] send_digest_notification args: "
-            f"text_len={(len(text) if isinstance(text, str) else 'None')}, "
-            f"chat_id={chat_id}, message_thread_id={message_thread_id}, "
-            f"agent_name={agent_name}, agent_path={agent_path}, "
-            f"input_len={(len(input_text) if isinstance(input_text, str) else 'None')}, "
-            f"image_path={image_path}"
-        )
-    except Exception:
-        pass
+    debug_print(
+        "send_digest_notification args:",
+        f"text_len={(len(text) if isinstance(text, str) else 'None')},",
+        f"chat_id={chat_id}, message_thread_id={message_thread_id},",
+        f"agent_name={agent_name}, agent_path={agent_path},",
+        f"input_len={(len(input_text) if isinstance(input_text, str) else 'None')},",
+        f"image_path={image_path}"
+    )
 
     # If content is too long for Telegram, publish and use resulting URL
     local_url: str | None = None
@@ -350,10 +365,7 @@ async def send_digest_notification(
             except Exception:
                 pass
 
-    try:
-        print(f"[DEBUG] send_digest_notification publish_url={local_url}")
-    except Exception:
-        pass
+    debug_print(f"send_digest_notification publish_url={local_url}")
 
     # Try to load buttons configuration from agent.yaml and perform macro substitution
     keyboard = None
@@ -1889,12 +1901,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 model=cfg.model,
             )
             # Debug log the welcome HTML only when CALL_DEBUG is enabled
-            try:
-                _dbg = str(os.getenv("CALL_DEBUG", "")).strip().lower()
-                if _dbg in ("1", "true", "yes", "on"):
-                    print("[DEBUG] welcome_html=\n" + (welcome_html or ""))
-            except Exception:
-                pass
+            debug_print("welcome_html=\n" + (welcome_html or ""))
 
             await send_telegram_welcome_message(
                 text=welcome_html,
@@ -2062,10 +2069,7 @@ if __name__ == "__main__":
             agent_name = ns.positional[0]
             user_input = " ".join(ns.positional[1:]).strip()
     # Debug print: show agent name parsed from arguments (empty string if absent)
-    try:
-        print(f"[DEBUG] call AgentName=\"{agent_name}\"")
-        print(f"[DEBUG] call input=\"{user_input}\"")
-    except Exception:
-        pass
+    debug_print(f"call AgentName=\"{agent_name}\"")
+    debug_print(f"call input=\"{user_input}\"")
 
     _asyncio.run(main(agent_name=agent_name, user_input=user_input))
