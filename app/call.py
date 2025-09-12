@@ -758,11 +758,14 @@ def compose_welcome_html(
     if preview:
         parts.append("")
         parts.append(preview)
-    parts.append("")
-    parts.append(f"mcp: {mcp_names}")
-    parts.append("")
-    parts.append(f"vs: {vs_ids}")
+    if mcp_names:
+        parts.append("")
+        parts.append(f"mcp: {mcp_names}")
+    if vs_ids:
+        parts.append("")
+        parts.append(f"vs: {vs_ids}")
     if model:
+        parts.append("")
         parts.append("model: " + str(model))
     return "\n\n".join(parts)
 
