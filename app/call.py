@@ -1563,7 +1563,7 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
         dto = AgentDTO(load_yaml(path_obj), base_dir=Path(path_obj).parent)
 
     # Defaults
-    default_model = os.environ.get("LLM_MODEL", "gpt-4.5")
+    default_model = os.environ.get("LLM_MODEL", "gpt-5")
     # Normalize the agent name once, no fallbacks
     raw_name = (dto.name if dto and dto.name else (agent_name or "")).strip()
     name = normalize_agent_name(raw_name)
