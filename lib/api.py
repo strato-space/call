@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import os
 import sys
 import traceback
+import sqlite3
 
 # Discovery helpers are centralized in call.lib.discovery to avoid circular imports
 from call.lib.discovery import (
@@ -354,3 +355,78 @@ def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped:
 
     # Default flat mode exposes only 'agents' entries
     return build_items(agents_ag)
+
+
+async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]) -> Dict[str, Any]:
+    """Clear conversation session(s) for this chat/thread from SQLite.
+
+    Rules:
+    - If `name` is given: delete only that exact session id.
+    - If `name` is empty/None: delete all sessions for this chat/thread by pattern.
+
+    Session id format: "AgentName:chat" or "AgentName:chat:thread".
+    We operate on two tables if present: messages(session_id) and sessions(id).
+    """
+
+    # Validate inputs
+    if not chat_id:
+        return {"ok": False, "error_code": 400, "description": "chat_id is required"}
+
+    def _sid(agent: str, chat: int, thread: Optional[int]) -> str:
+        agent_norm = to_pascal_case(agent or "") if agent else ""
+        return f"{agent_norm}:{chat}:{thread}" if thread is not None else f"{agent_norm}:{chat}"
+
+    db_path = os.getenv("CALL_DB", "call/call.db")
+    cleared: List[str] = []
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+
+        # Detect existing tables once
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        has_messages = bool(cur.fetchone())
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        has_sessions = bool(cur.fetchone())
+
+        # Build candidate session ids
+        sids: List[str] = []
+        if isinstance(name, str) and name.strip():
+            sids = [_sid(name, int(chat_id), thread_id)]
+        else:
+            # Pattern-based lookup in sessions/messages tables
+            pattern = f":{int(chat_id)}:{int(thread_id)}" if thread_id is not None else f":{int(chat_id)}"
+            if has_sessions:
+                cur.execute("SELECT id FROM sessions WHERE id LIKE ?", (f"%{pattern}",))
+                sids += [row[0] for row in cur.fetchall()]
+            if not sids and has_messages:
+                cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id LIKE ?", (f"%{pattern}",))
+                sids += [row[0] for row in cur.fetchall()]
+
+        if not sids:
+            cur.close(); conn.close()
+            return {"ok": True, "cleared": []}
+
+        # Deduplicate and delete
+        for sid in sorted(set(sids)):
+            try:
+                if has_messages:
+                    cur.execute("DELETE FROM messages WHERE session_id = ?", (sid,))
+                if has_sessions:
+                    cur.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+                conn.commit()
+                cleared.append(sid)
+            except Exception:
+                conn.rollback()
+                continue
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": f"clear_session failed: {e}",
+            "error_type": type(e).__name__,
+        }
+
+    return {"ok": True, "cleared": cleared}

@@ -396,6 +396,7 @@ Commands:
 - /call [--echo] @Name <input>
 - /call [--echo] Name <input>  (equivalent to @Name)
 - /list [--aliases] [--q "filter"]
+- /clear [@Name]  (clear conversation session for current chat/thread; all agents if name omitted)
 
 Startup options:
 - --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
@@ -489,8 +490,6 @@ async def _call_task(
             chat_id=chat_id,
             thread_id=thread_id,
         )
-        # Optionally echo a short confirmation
-        agent = res.get("agent")
         log.info("_call_task: done name=%s", name)
     except Exception as e:
         log.exception("_call_task: error name=%s", name)
@@ -557,6 +556,36 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     log.info("handle_call: scheduled task for name=%s", name)
 
+
+@_require_allowed_users
+async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear the SQLite conversation session(s) for this chat/thread."""
+    m = Messenger(context=context, update=update)
+    text = (update.message.text or "").strip() if update.message else ""
+    try:
+        # Parse optional agent name after /clear, allow @Name or Name
+        parts = text.split(None, 1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        if arg.startswith("/clear"):
+            arg = arg[len("/clear"):].strip()
+        if arg.startswith("@"):
+            arg = arg[1:]
+        agent_name = to_pascal_case(arg) if arg else ""
+
+        cid = update.effective_chat.id if update and update.effective_chat else None
+        tid = update.message.message_thread_id if update and update.message else None
+
+        res = await call_api.clear_session(agent_name or None, chat_id=cid, thread_id=tid)
+        if not isinstance(res, dict) or not res.get("ok"):
+            await m.reply(f"Clear failed: {res.get('description', 'unknown error')}", parse_mode=None)
+            return
+
+        cleared = res.get("cleared") or []
+        head = f"Cleared session for @{agent_name}" if agent_name else "Cleared sessions for all agents"
+        body = "<code>" + "\n".join(cleared) + "</code>" if cleared else "(nothing to clear)"
+        await m.reply(f"{head}\n\n{body}", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 @_require_allowed_users
 async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -645,6 +674,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", handle_start))
     app.add_handler(CommandHandler("list", handle_list))
     app.add_handler(CommandHandler("call", handle_call))
+    app.add_handler(CommandHandler("clear", handle_clear))
 
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_plain_text))
     # Log all incoming updates at the end so it doesn't interfere with other handlers
