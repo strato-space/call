@@ -19,7 +19,11 @@ from call.lib import api as call_api
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    items = call_api.list(query=args.q, include_aliases=args.aliases, grouped=bool(getattr(args, 'grouped', False)))
+    items = call_api.list(
+        query=args.q,
+        include_aliases=args.aliases,
+        project_name=(args.project_name or None),
+    )
     print(json.dumps(items, ensure_ascii=False, indent=2))
     return 0
 
@@ -50,7 +54,19 @@ def cmd_call(args: argparse.Namespace) -> int:
                 pass
             faulthandler.dump_traceback_later(delay, repeat=True, file=target)
 
-        result = call_api.call(name=name, input=args.input or "", echo=bool(getattr(args, "echo", False)))
+        # Derive project_name without common Bot suffixes (case-sensitive)
+        def _strip_bot_suffix(s: str) -> str:
+            for suf in ("Bot", "bot", "_bot", "-bot"):
+                if s.endswith(suf):
+                    return s[: -len(suf)]
+            return s
+        proj = _strip_bot_suffix(args.project_name) if args.project_name else None
+        result = call_api.call(
+            name=name,
+            input=args.input or "",
+            echo=bool(getattr(args, "echo", False)),
+            project_name=proj,
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as e:
@@ -79,12 +95,13 @@ def main() -> int:
     p_list = sub.add_parser("list", help="List available agents")
     p_list.add_argument("--aliases", action="store_true", help="Include aliases in output")
     p_list.add_argument("--q", type=str, default=None, help="Filter substring for names/paths")
-    p_list.add_argument("--grouped", action="store_true", help="Group output into AgentFab and agents sections")
+    p_list.add_argument("--project-name", dest="project_name", default="", help="Limit listing to a specific project directory under the prompt repo")
     p_list.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
     p_call.add_argument("name", type=str, help="Agent name or @Alias")
     p_call.add_argument("input", type=str, nargs="?", default="", help="Input text for the agent")
+    p_call.add_argument("--project-name", dest="project_name", default="", help="Telegram bot username to select TELEGRAM_TOKEN.<name> for routing")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
