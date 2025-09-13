@@ -219,8 +219,41 @@ def format_exception_text(e: Exception) -> str:
 global bot
 bot: Bot
 
-async def init_bot():
+def get_project_token(project_name: str) -> str:
+    """Return TELEGRAM_TOKEN.<project_name> from environment.
+
+    KISS: no suffix guessing, no default fallback. Raise if missing.
+    The provided name should already be normalized by the caller (e.g., stripped of 'Bot').
+    """
+    if not project_name or not str(project_name).strip():
+        raise ValueError("project_name is required")
+    key = f"TELEGRAM_TOKEN.{project_name}"
+    token = os.environ.get(key, "").strip()
+    if not token:
+        raise KeyError(f"Missing {key} in environment/.env")
+    return token
+
+
+async def init_bot(*, project_name: str | None = None):
+    """Initialize (or re-initialize) the global Telegram bot using a project-scoped token.
+
+    Requires project_name and uses TELEGRAM_TOKEN.<project_name> exactly (no fallbacks).
+    Reuses the existing instance when token is unchanged.
+    """
     global bot
+    if not project_name:
+        raise ValueError("project_name is required for init_bot()")
+
+    token = get_project_token(project_name)
+
+    # If bot already initialized with the same token, reuse it
+    if "bot" in globals() and isinstance(bot, Bot):
+        try:
+            if bot.token == token:  # type: ignore[attr-defined]
+                return bot
+        except Exception:
+            pass
+
     # Configure PTB to use HTTPX with tuned timeouts and connection pool
     # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
     import os as _os
@@ -231,7 +264,7 @@ async def init_bot():
         read_timeout=120.0,
         write_timeout=60.0,
     )
-    bot = Bot(token=telegram_token, request=request)
+    bot = Bot(token=token, request=request)
     return bot
 
 

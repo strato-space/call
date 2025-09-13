@@ -37,12 +37,12 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
-from call.lib.discovery import to_pascal_case
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
     telegram_prepare_markdown,
 )
+from call.app.call import get_project_token
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -56,6 +56,8 @@ load_dotenv(override=True)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 # Optional selected bot name from CLI (set later in main) or env
 SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
+# Derived project name with common suffixes removed (case-sensitive)
+PROJECT_NAME: str = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
@@ -292,24 +294,11 @@ def _strip_bot_suffix(s: str) -> str:
     return s2
 
 
-def _get_bot_base(update: Update | None = None) -> str:
-    """Return normalized base name of this bot (e.g., 'AgentFab' for 'AgentFabBot') without calling Telegram API.
-
-    Preference:
-    1) Use SELECTED_BOT_NAME if set (e.g., provided via --bot-name)
-    2) Otherwise, cannot reliably infer bot username from Update; return empty string.
-    """
+def _get_bot_project(update: Update | None = None) -> str:
+    """Return base project name derived from --bot-name by stripping Bot suffix (case-sensitive)."""
     if SELECTED_BOT_NAME:
-        return to_pascal_case(_strip_bot_suffix(SELECTED_BOT_NAME))
+        return _strip_bot_suffix(SELECTED_BOT_NAME)
     return ""
-
-
-def _exists_agent(name: str) -> bool:
-    try:
-        items = call_api.list(query=None, include_aliases=False, grouped=False)
-        return any((it.get("name") or "") == name for it in (items or []))
-    except Exception:
-        return False
 
 
 def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple[str, str, bool]:
@@ -335,19 +324,14 @@ def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple
             if not candidate:
                 # '@ <text>' → empty agent, or AgentFab for AgentFabBot
                 return (default_base, rest or "", True)
-            cand_norm = to_pascal_case(candidate)
-            if cand_norm and _exists_agent(cand_norm):
-                return (cand_norm, rest, True)
-            # Unknown agent → treat as no explicit agent, pass full text
-            return (default_base, t, True)
+            # Do not validate here; delegate to call_api
+            return (candidate, rest, True)
         else:
             parts = t.split(maxsplit=1)
             candidate = parts[0]
             rest = parts[1] if len(parts) > 1 else ""
-            cand_norm = to_pascal_case(candidate)
-            if cand_norm and _exists_agent(cand_norm):
-                return (cand_norm, rest, True)
-            return (default_base, t, True)
+            # Treat first token as agent name; let call_api handle unknown agents
+            return (candidate, rest, True)
 
     # Group/supergroup: act only on explicit '@Name ...'
     if not t or not t.startswith("@"):
@@ -357,11 +341,8 @@ def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple
     rest = parts[1] if len(parts) > 1 else ""
     if not candidate:
         return (default_base, rest, True)
-    cand_norm = to_pascal_case(candidate)
-    if cand_norm and _exists_agent(cand_norm):
-        return (cand_norm, rest, True)
-    # Do not handle unknown names in group to reduce noise
-    return ("", t, False)
+    # In groups, handle only explicit '@Name ...'; delegate validation to call_api
+    return (candidate, rest, True)
 
 
 def _parse_call_text(text: str) -> tuple[str, str]:
@@ -496,6 +477,7 @@ async def _call_task(
             echo=echo,
             chat_id=chat_id,
             thread_id=thread_id,
+            project_name=PROJECT_NAME or None,
         )
         log.info("_call_task: done name=%s", name)
     except Exception as e:
@@ -541,7 +523,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await m.reply(str(ve), parse_mode=None)
         return
 
-    base = _get_bot_base(update)
+    base = _get_bot_project(update)
     if base == "AgentFab":
         if name != "AgentFab":
             log.info("handle_call: overriding requested agent %s -> AgentFab due to bot base=%r", name, base)
@@ -634,29 +616,15 @@ def main() -> None:
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
         return
 
-    # Resolve token based on optional bot name
-    global SELECTED_BOT_NAME
-    # Prefer flag over positional if both provided
+    # Resolve project name from optional bot handle by stripping common suffixes
+    global SELECTED_BOT_NAME, PROJECT_NAME
     SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
+    PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else PROJECT_NAME
 
-    selected_token = TELEGRAM_TOKEN
-    if SELECTED_BOT_NAME:
-        key = f"TELEGRAM_TOKEN.{SELECTED_BOT_NAME}"
-        cand = os.environ.get(key, "").strip()
-        if cand:
-            selected_token = cand
-        else:
-            print(
-                (
-                    "Error: bot token not set in environment/.env. "
-                    f"Expected {key}."
-                ),
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-    if not selected_token:
-        raise RuntimeError("TELEGRAM_TOKEN is not set")
+    # KISS: require project name to be provided; call layer will use it to fetch the token
+    if not PROJECT_NAME:
+        print("Error: --bot-name (project name) is required", file=sys.stderr)
+        sys.exit(1)
 
     # Configure HTTPX with sane timeouts to reduce startup/long-poll issues
     # Also bypass system proxies for Telegram domains (common cause of timeouts)
@@ -669,9 +637,11 @@ def main() -> None:
         pool_timeout=30.0,
     )
 
+    # Use the single source of truth to get the token for polling
+    polling_token = get_project_token(PROJECT_NAME)
     app = (
         ApplicationBuilder()
-        .token(selected_token)
+        .token(polling_token)
         .request(request)
         .get_updates_request(request)
         .build()

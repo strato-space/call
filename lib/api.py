@@ -25,7 +25,6 @@ import sqlite3
 
 # Discovery helpers are centralized in call.lib.discovery to avoid circular imports
 from call.lib.discovery import (
-    to_pascal_case,
     discover_prompt_repo,
     _ensure_indices,           # private helper; internal use by the lib facade
     _load_agents_index,        # private helper; internal use by the lib facade
@@ -108,6 +107,7 @@ async def call_async(
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
+    project_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -124,19 +124,19 @@ async def call_async(
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
-    await app_call.init_bot()
+    # Initialize bot with optional override
+    await app_call.init_bot(project_name=project_name)
 
     # Discover agent profile path using existing logic (only when name provided)
     yaml_path = None
-    norm_name = (name or "").strip()
-    if norm_name:
+    if name:
         try:
-            yaml_path = discover_agent_yaml(norm_name)
+            yaml_path = discover_agent_yaml(name)
         except Exception as e:
             # Discovery raised an exception; convert to structured error
-            return _error_payload(norm_name, input_text, e, status=404, echo=echo, debug=debug)
+            return _error_payload(name, input_text, e, status=404, echo=echo, debug=debug)
         if yaml_path is None:
-            return _error_payload(norm_name, input_text, ValueError(f"Agent '{norm_name}' not found"), status=404, echo=echo, debug=debug)
+            return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo, debug=debug)
 
     # Align with app/main: set effective targets (falling back to env defaults)
     selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
@@ -206,11 +206,11 @@ async def call_async(
             agent, history, final_output = await app_call.run_digest_pipeline(
                 default_samples_dir,
                 user_input=input_text or "",
-                cli_agent_name=norm_name,
+                cli_agent_name=(name if isinstance(name, str) else ""),
             )
         except Exception as e:
             # Convert pipeline errors to structured error
-            return _error_payload(norm_name, input_text, e, status=500, echo=echo, debug=debug)
+            return _error_payload((name or ""), input_text, e, status=500, echo=echo, debug=debug)
     finally:
         if dump_task is not None:
             try:
@@ -225,7 +225,7 @@ async def call_async(
 
     return {
         "ok": True,
-        "agent": to_pascal_case(norm_name),
+        "agent": (name if isinstance(name, str) else ""),
         "agent_path": (str(yaml_path) if yaml_path else None),
         "final_output": final_output,
         # echo flag included for callers that want to inspect behavior upstream
@@ -241,6 +241,7 @@ def call(
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
+    project_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Public sync facade for running an agent. Returns a dict with metadata/final_output.
@@ -251,31 +252,25 @@ def call(
     if not isinstance(input, str):
         raise ValueError("input must be a string")
 
-    norm = to_pascal_case(name)
+    norm = name
     try:
-        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo, debug=debug))
+        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo, debug=debug, project_name=project_name))
     except Exception as e:
         # Last-resort guard: never explode to callers that expect JSON; provide structured error
         return _error_payload(norm, input, e, status=500, echo=echo, debug=debug)
 
 
-def _read_indices() -> Dict[str, Dict[str, str]]:
+def _read_indices(project_name: Optional[str] = None) -> Dict[str, Dict[str, str]]:
     """
-    Load both AgentFab/agents.yaml and agents/agents.yaml indices into a combined mapping
-    structure: {"agents": {Name: path}, "aliases": {Alias: path}}.
-    Missing files are tolerated.
+    Load indices of available agents.
+
+    KISS: when project_name is provided, only scan that directory under the prompt repo
+    (exact case-sensitive match) and return those agents. No cross-directory merge.
+    Otherwise, preserve the previous behavior of merging AgentFab/ and agents/.
     """
     repo = discover_prompt_repo()
     _ensure_indices(repo)
-    af = _load_agents_index(repo / 'AgentFab' / 'agents.yaml', repo / 'AgentFab')
-    ag = _load_agents_index(repo / 'agents' / 'agents.yaml', repo / 'agents')
 
-    # We want to preserve canonical names vs aliases. The _load_* function returns a single
-    # name->path map with aliases merged, so we cannot separate after the fact. For /list
-    # we will show unique canonical names by scanning directories as fallback if needed.
-    # To keep behavior predictable, we will:
-    # 1) Build a canonical names set from folder names that contain agent.yaml
-    # 2) Build an alias set as (index entries - canonical names)
     from pathlib import Path
 
     def scan_canon(base: Path) -> Dict[str, str]:
@@ -285,46 +280,28 @@ def _read_indices() -> Dict[str, Dict[str, str]]:
                 if child.is_dir():
                     y = child / 'agent.yaml'
                     if y.exists():
-                        out[to_pascal_case(child.name)] = str(y)
+                        out[child.name] = str(y)
         return out
 
-    canon_af: Dict[str, str] = scan_canon(repo / 'AgentFab')
-    canon_ag: Dict[str, str] = scan_canon(repo / 'agents')
-    canon: Dict[str, str] = {}
-    canon.update(canon_af)
-    canon.update(canon_ag)
+    # Project-scoped listing: only list agents within repo/<project_name>
+    if project_name and str(project_name).strip():
+        base = repo / project_name
+        agents_only = scan_canon(base)
+        return {"agents": agents_only, "aliases": {}, "agents_af": {}, "agents_ag": agents_only}
 
-    # Merge maps for quick lookup
-    # Merge and normalize all paths to strings for consistent comparisons/JSON
-    merged_raw = {**af, **ag}
-    merged: Dict[str, str] = {k: (str(v) if not isinstance(v, str) else v) for k, v in merged_raw.items()}
-
-    # Split into agents (canonical) and aliases (non-canonical keys that still resolve)
-    agents_map: Dict[str, str] = {}
-    aliases_map: Dict[str, str] = {}
-    for k, v in merged.items():
-        if k in canon:
-            agents_map[k] = v
-        else:
-            aliases_map[k] = v
-
-    return {"agents": agents_map, "aliases": aliases_map, "agents_af": canon_af, "agents_ag": canon_ag}
+    # No-merge policy: when project_name is not provided, return empty listing.
+    return {"agents": {}, "aliases": {}, "agents_af": {}, "agents_ag": {}}
 
 
-def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped: bool = False) -> List[Dict[str, Any]] | Dict[str, List[Dict[str, Any]]]:
+def list(query: Optional[str] = None, include_aliases: bool = False, *, project_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Return list of available agents.
+    Return a flat list of available agents.
 
-    Policy (2025-09-07): only expose agents from the 'agents' directory; do not
-    include AgentFab entries in the default flat list.
-
-    When grouped is False (default): returns a flat list of items, each a dict
-    {"name": str, "path": str, "aliases": [str, ...]} from 'agents' only.
-
-    When grouped is True: returns a dict with two lists keyed by registry roots:
-      {"AgentFab": [], "agents": [...]} — AgentFab list is intentionally empty.
+    Provide project_name to scope listing to a specific directory under the prompt repo
+    (KISS: no default cross-project merge). Each item has shape:
+      {"name": str, "path": str, "aliases": [str, ...]?}
     """
-    data = _read_indices()
+    data = _read_indices(project_name)
     agents_map = data.get("agents", {})
     aliases_map = data.get("aliases", {})
     agents_af = data.get("agents_af", {})
@@ -356,13 +333,7 @@ def list(query: Optional[str] = None, include_aliases: bool = False, *, grouped:
             items.append(entry)
         return items
 
-    if grouped:
-        return {
-            "AgentFab": [],  # intentionally empty per policy
-            "agents": build_items(agents_ag),
-        }
-
-    # Default flat mode exposes only 'agents' entries
+    # Flat output: expose only 'agents' entries
     return build_items(agents_ag)
 
 
@@ -382,8 +353,8 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
         return {"ok": False, "error_code": 400, "description": "chat_id is required"}
 
     def _sid(agent: str, chat: int, thread: Optional[int]) -> str:
-        agent_norm = to_pascal_case(agent or "") if agent else ""
-        return f"{agent_norm}:{chat}:{thread}" if thread is not None else f"{agent_norm}:{chat}"
+        agent_raw = (agent or "").strip() if agent else ""
+        return f"{agent_raw}:{chat}:{thread}" if thread is not None else f"{agent_raw}:{chat}"
 
     db_path = os.getenv("CALL_DB", "call/call.db")
     cleared: List[str] = []

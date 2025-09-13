@@ -10,7 +10,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 ### Simplified Agent Discovery (Updated Aug 31, 2025)
 
-- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/AgentFab/` and `prompt/agents/` (AgentFab takes precedence)
+- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/AgentFab/` and `prompt/UxFab/` (AgentFab takes precedence)
 - **Case-insensitive matching**: Agent names are normalized to PascalCase but matched case-insensitively
 - **No registry scanning**: Removed complex metadata matching and registry file processing
 - **Simple syntax**: `@AgentName` or just `AgentName`
@@ -62,25 +62,28 @@ Notes:
 
 You can enumerate available agents discovered in the Prompt repository via the library, the Actions API, or the MCP server.
 
+- Important (KISS): agent names are exact and case-sensitive across CLI and Telegram. No automatic normalization; use the exact names shown by `list`.
+
 - Library (Python):
 
   ```python
   from call.lib.api import list as list_agents
 
-  flat = list_agents()  # [{"name": "...", "path": "..."}, ...]
-  with_aliases = list_agents(include_aliases=True)
-  filtered = list_agents(query="news")
+  # Project-scoped (recommended):
+  flat = list_agents(project_name="agents")  # [{"name": "...", "path": "..."}, ...]
+  with_aliases = list_agents(project_name="agents", include_aliases=True)
+  filtered = list_agents(project_name="agents", query="news")
   ```
 
 - Voice Actions API (requires bearer):
 
   - GET `/agents`
-  - Query params: `query`, `include_aliases` (bool), `grouped` (bool)
+  - Query params: `query`, `include_aliases` (bool), `project_name` (string)
 
 - MCP (mcp-voicebot):
 
   - Tool name: `agents`
-  - Args: `query?: string`, `include_aliases?: boolean`, `grouped?: boolean`
+  - Args: `query?: string`, `include_aliases?: boolean`, `project_name?: string`
 
 ### Running with local virtual environment
 
@@ -99,22 +102,19 @@ python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
 ```
 
-### CLI usage (Updated Sep 12, 2025)
+### CLI usage (Updated Sep 13, 2025)
 
 - Forms supported:
 
   ```bash
-  # Legacy positional
+  # List agents within a project directory
+  python -m call.cli.main list --project-name agents [--aliases] [--q "filter"]
+
+  # Call an agent (exact name, case-sensitive)
+  python -m call.cli.main call --project-name agents @AgentName "input text"
+
+  # Legacy positional (still available for app module)
   python -m call.app.call <AgentName> [<input>]
-
-  # Named agent (preferred)
-  python -m call.app.call --name <AgentName> [<input...>]
-
-  # Input-only (no agent)
-  python -m call.app.call --input <input...>
-
-  # Echo parsed args without running
-  python -m call.app.call --echo --name <AgentName> --input <input...>
   ```
 
 - Debug prints at startup show the parsed values:
@@ -190,8 +190,8 @@ See also the strategy doc:
 - Discovery order (creator → execution):
   - `prompt/AgentFab/<AgentName>.yaml`
   - `prompt/AgentFab/<AgentName>/agent.yaml`
-  - `prompt/agents/<AgentName>/agent.yaml`
-- Output artifacts (runnable): `prompt/agents/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
+  - `prompt/UxFab/<AgentName>/agent.yaml`
+- Output artifacts (runnable): `prompt/UxFab/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
 - Reference: `prompt/AgentFab/agent.yaml` and .
 
 - AgentFab card fields:
@@ -277,18 +277,28 @@ Notes:
 - On startup, `call.app.call` will copy `../.env` into local `.env` if `.env` is missing.
 - All mandatory envs are sanitized by `ensure_env()`; missing required ones will raise.
 
-### Telegram bot tokens (call/telegram_bot)
+### Telegram tokens (project_name only)
 
-For running the Telegram bot (`call/telegram_bot/bot.py`) with multiple bot identities, use a single naming convention in `.env`:
+> 2025-09-13: Token resolution was simplified. We now use a single function `get_project_token(project_name)` in `call/app/call.py` and a single bot factory `init_bot(project_name=...)`. There are no fallbacks or env mutations.
+
+Configure `.env` with project-scoped keys (no `Bot` suffix):
 
 ```
-# Default token (used when no --bot-name provided)
-TELEGRAM_TOKEN=123456:ABCDEF
-
-# Named tokens (one line per bot)
-TELEGRAM_TOKEN.StratoSpaceAiBot=111111:AAAAAA
-TELEGRAM_TOKEN.AgentFabBot=222222:BBBBBB
+# Project-scoped tokens
+TELEGRAM_TOKEN.StratoSpaceAi=111111:AAAAAA
+TELEGRAM_TOKEN.AgentFab=222222:BBBBBB
 ```
+
+How selection works:
+
+- Telegram runner: `python -m call.telegram_bot.bot --bot-name StratoSpaceAiBot`
+  - The runner derives `project_name = StratoSpaceAi` by stripping common suffixes (`Bot`, `_bot`, `-bot`).
+  - It retrieves the token via `get_project_token(project_name)` and starts polling with that token.
+- Library/CLI: pass `project_name` explicitly.
+  - CLI: `python -m call.cli.main call --project-name AgentFab @AgentFab "hello"`
+  - Library: `call.lib.api.call(name, input, project_name="AgentFab")`
+
+There is no fallback to `TELEGRAM_TOKEN` and no suffix guessing during token lookup. If `TELEGRAM_TOKEN.<project_name>` is missing, an error will be raised.
 
 Start the bot with a specific identity:
 
@@ -299,7 +309,9 @@ python -m call.telegram_bot.bot --bot-name StratoSpaceAiBot
 Notes:
 - Only the dot notation `TELEGRAM_TOKEN.Name` is supported for named bots.
 
-### Telegram formatting and routing (Updated Sep 12, 2025)
+### Telegram formatting and routing (Updated Sep 13, 2025)
+
+- KISS policy: the Telegram bot does not validate agent names. It forwards the name exactly as typed to `call.lib.api.call_async`, which performs discovery/validation and returns a structured error when an agent is unknown.
 
 - Formatting:
   - HTML mode is used for all rich messages. Sanitization is centralized in `call/app/utils/html_sanitizer.py` (via `telegram_prepare_html()`).
