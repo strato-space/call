@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-13
+- Feat: project_name-only token routing. Added `get_project_token(project_name)` and made `init_bot(project_name=...)` mandatory. Removed fallbacks and any env mutation of `TELEGRAM_TOKEN`.
+- Change: case-sensitive agent names (KISS). Removed `to_pascal_case` normalization from bot/CLI/API; names are used exactly as provided.
+- Change: Telegram bot no longer validates agent existence; validation/discovery happens centrally in `call.lib.api.call_async()` which returns structured errors for unknown agents.
+- Feat: project-scoped listing. `list(..., project_name=...)` scopes to a single directory under the prompt repo. No default cross-project merge; removed `grouped` output from library and CLI. CLI `list` now supports `--project-name`.
+- Docs: updated README to reflect project_name-only tokens, KISS naming, bot validation policy, and project-scoped listing; replaced `prompt/agents` → `prompt/UxFab` in discovery/order examples.
+- Config: updated `.env` guidance to use `TELEGRAM_TOKEN.<ProjectName>` keys (e.g., `TELEGRAM_TOKEN.StratoSpaceAi`, `TELEGRAM_TOKEN.AgentFab`).
+
 ## 2025-09-12
 - Fix: Telegram chat routing — preserve caller-provided `chat_id`/`thread_id` passed via `call.lib.api.call(...)`. The pipeline no longer overwrites targets with Agent YAML or `.env` defaults; explicit values are propagated through final notifications to avoid global-state races. (files: `call/app/call.py`, `call/lib/api.py`)
 - Refactor: Centralize Telegram HTML prep per Bot API — introduce `sanitize_telegram_html()`, `truncate_telegram_html_safe()`, and `prepare_telegram_html()` in `call/app/utils/html_sanitizer.py`. Route `telegram_prepare_html()` and HTML truncation through the centralized implementation. (files: `call/app/utils/html_sanitizer.py`, `call/app/utils/telegram_text.py`)

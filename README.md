@@ -70,9 +70,9 @@ You can enumerate available agents discovered in the Prompt repository via the l
   from call.lib.api import list as list_agents
 
   # Project-scoped (recommended):
-  flat = list_agents(project_name="agents")  # [{"name": "...", "path": "..."}, ...]
-  with_aliases = list_agents(project_name="agents", include_aliases=True)
-  filtered = list_agents(project_name="agents", query="news")
+  flat = list_agents(project_name="UxFab")  # [{"name": "...", "path": "..."}, ...]
+  with_aliases = list_agents(project_name="UxFab", include_aliases=True)
+  filtered = list_agents(project_name="UxFab", query="news")
   ```
 
 - Voice Actions API (requires bearer):
@@ -108,10 +108,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
   ```bash
   # List agents within a project directory
-  python -m call.cli.main list --project-name agents [--aliases] [--q "filter"]
+  python -m call.cli.main list --project-name UxFab [--aliases] [--q "filter"]
 
   # Call an agent (exact name, case-sensitive)
-  python -m call.cli.main call --project-name agents @AgentName "input text"
+  python -m call.cli.main call --project-name UxFab @AgentName "input text"
 
   # Legacy positional (still available for app module)
   python -m call.app.call <AgentName> [<input>]
