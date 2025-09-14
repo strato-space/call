@@ -440,15 +440,19 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         lines: list[str] = []
         for node in tree[:8]:
-            # Project header as bold link to t.me/<ProjectName>Bot; visible text = plain project name
+            # Project header as bold link to t.me/<ProjectName>Bot
             pname = (node.get("name") or "").strip()
             _at, url = _project_to_bot_link(pname)
+            visible = f"@{pname} Bot"
             if url:
-                lines.append(f"<b><a href=\"{url}\">{py_html.escape(pname)}</a></b>")
+                lines.append(f"<b><a href=\"{url}\">{py_html.escape(visible)}</a></b> ({py_html.escape(url)})")
             else:
-                lines.append(f"<b>{py_html.escape(pname)}</b>")
-            # Each agent as a list item
-            for ag in (node.get("agents") or [])[:100]:
+                lines.append(f"<b>{py_html.escape(visible)}</b>")
+            # Each agent as a list item (skip the first one if present)
+            agents = (node.get("agents") or [])[:100]
+            for idx, ag in enumerate(agents):
+                if idx == 0:
+                    continue
                 nm = (ag.get("name") or "").strip()
                 if nm:
                     lines.append(f"• @{nm}")
