@@ -157,7 +157,7 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
 
 def _ensure_indices(rep: Path) -> None:
-    """Create minimal indices agents.yaml in AgentFab/ and agents/ if missing.
+    """Create minimal indices agents.yaml for all known projects (from projects.yaml) and legacy 'agents/'.
 
     Structure:
       name: <string>
@@ -165,16 +165,35 @@ def _ensure_indices(rep: Path) -> None:
       aliases: { AgentName: [Alias1, Alias2] }
     """
     import yaml
-    for sub in ('AgentFab', 'agents'):
-        base = rep / sub
+
+    # Collect projects from projects.yaml (if present) + legacy folders
+    projects: list[Path] = []
+    # From projects.yaml
+    try:
+        proj_idx = rep / 'projects.yaml'
+        if proj_idx.exists():
+            data = load_yaml(proj_idx) or {}
+            for pname in (data.get('projects') or {}).keys():
+                p = rep / str(pname)
+                if p.exists():
+                    projects.append(p)
+    except Exception:
+        pass
+    # Always include legacy folders
+    for legacy in ('AgentFab', 'agents'):
+        p = rep / legacy
+        if p.exists() and p not in projects:
+            projects.append(p)
+
+    for base in projects:
         index = base / 'agents.yaml'
         if index.exists():
             continue
         scanned = _scan_agents_dir(base)
         agents_map = {name: '' for name in scanned.keys()}
         aliases_map = {name: aliases for name, (_, aliases) in scanned.items() if aliases}
-        if not agents_map and sub == 'AgentFab':
-            # Try to derive from AgentFab root agent.yaml 'agents' section
+        # Special enrichment from AgentFab root agent.yaml if base is AgentFab and no items were found
+        if not agents_map and base.name == 'AgentFab':
             af = rep / 'AgentFab' / 'agent.yaml'
             if af.exists():
                 try:
@@ -188,7 +207,7 @@ def _ensure_indices(rep: Path) -> None:
                 except Exception:
                     pass
         content = {
-            'name': f'{sub} Agents Index',
+            'name': f'{base.name} Agents Index',
             'agents': agents_map,
         }
         if aliases_map:
@@ -237,20 +256,32 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
         except Exception:
             pass
 
-    # Ensure indices exist (best-effort)
+    # Ensure indices exist (best-effort) for all known projects
     _ensure_indices(repo)
 
-    # 1) Index lookup AgentFab
-    af_index_map = _load_agents_index(repo / 'AgentFab' / 'agents.yaml', repo / 'AgentFab')
-    if query_norm in af_index_map:
-        return af_index_map[query_norm]
+    # 1) Index lookup across all project indices (projects.yaml + legacy)
+    index_candidates: list[tuple[Path, Path]] = []
+    # from projects.yaml
+    try:
+        proj_idx = repo / 'projects.yaml'
+        if proj_idx.exists():
+            data = load_yaml(proj_idx) or {}
+            for pname in (data.get('projects') or {}).keys():
+                base = repo / str(pname)
+                index_candidates.append((base / 'agents.yaml', base))
+    except Exception:
+        pass
+    # legacy indices
+    for legacy in ('AgentFab', 'agents'):
+        base = repo / legacy
+        index_candidates.append((base / 'agents.yaml', base))
 
-    # 2) Index lookup agents
-    agents_index_map = _load_agents_index(repo / 'agents' / 'agents.yaml', repo / 'agents')
-    if query_norm in agents_index_map:
-        return agents_index_map[query_norm]
+    for idx_path, base in index_candidates:
+        m = _load_agents_index(idx_path, base)
+        if query_norm in m:
+            return m[query_norm]
 
-    # 3–4) Fallback directory scan with case-insensitive match
+    # 2) Fallback directory scan with case-insensitive match across all projects
     def find_in_dir(base: Path) -> Path | None:
         if not base.exists():
             return None
@@ -266,7 +297,21 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
                     return cand
         return None
 
-    agentfab_path = find_in_dir(repo / 'AgentFab')
-    if agentfab_path:
-        return agentfab_path
-    return find_in_dir(repo / 'agents')
+    # Search through all project directories
+    search_bases: list[Path] = []
+    try:
+        proj_idx = repo / 'projects.yaml'
+        if proj_idx.exists():
+            data = load_yaml(proj_idx) or {}
+            for pname in (data.get('projects') or {}).keys():
+                search_bases.append(repo / str(pname))
+    except Exception:
+        pass
+    # legacy fallback order
+    search_bases += [repo / 'AgentFab', repo / 'agents']
+
+    for base in search_bases:
+        p = find_in_dir(base)
+        if p:
+            return p
+    return None
