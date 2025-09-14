@@ -440,16 +440,14 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         lines: list[str] = []
         for node in tree[:8]:
-            pname = node.get("name")
-            at_handle, url = _project_to_bot_link(pname)
-            if at_handle and url:
-                lines.append(f'<b><a href="{url}">{py_html.escape(at_handle)}</a></b>')
-            else:
-                lines.append(f"<b>{py_html.escape(str(pname or ''))}</b>")
+            # Plain project name (no @, no Bot suffix)
+            pname = (node.get("name") or "").strip()
+            lines.append(f"<b>{py_html.escape(pname)}</b>")
+            # Each agent as a list item
             for ag in (node.get("agents") or [])[:100]:
                 nm = (ag.get("name") or "").strip()
                 if nm:
-                    lines.append(f"@{nm}")
+                    lines.append(f"• @{nm}")
             lines.append("")
         await m.reply("\n".join(lines).strip(), parse_mode=ParseMode.HTML)
     except Exception as e:
