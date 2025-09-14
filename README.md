@@ -102,20 +102,22 @@ python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
 ```
 
-### CLI usage (Updated Sep 13, 2025)
+### CLI usage (Updated Sep 14, 2025)
 
-- Forms supported:
+- **Command Reference**:
 
   ```bash
-  # List agents within a project directory
   python -m call.cli.main list --project-name UxFab [--aliases] [--q "filter"]
-
-  # Call an agent (exact name, case-sensitive)
-  python -m call.cli.main call --project-name UxFab @AgentName "input text"
-
-  # Legacy positional (still available for app module)
-  python -m call.app.call <AgentName> [<input>]
+  python -m call.cli.main call --project-name UxFab @AgentName "input text" [--echo] [--trace SECONDS] [--trace-file PATH]
   ```
+
+- **Project Name Handling**:
+  - When using `--project-name`, common Bot suffixes (`Bot`, `bot`, `_bot`, `-bot`) are automatically stripped
+  - Example: `--project-name StratoSpaceAiBot` becomes `StratoSpaceAi` for token lookup
+
+- **Debugging Features**:
+  - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
+  - `--trace-file PATH`: Writes stack dumps to specified file
 
 - Debug prints at startup show the parsed values:
   - `[DEBUG] call AgentName="..."`
@@ -370,7 +372,7 @@ Behavior and arguments:
 Notes:
 
 - The helper prints concise debug lines: `[DEBUG] send_digest_notification args: ...` and `[DEBUG] send_digest_notification publish_url=...`.
-- Empty/whitespace-only `text` is normalized to `None` to avoid Telegram errors about empty messages.
+- Empty/whitespace-only `text` is normalized to `None` to avoid Telegram errors.
 
 ### Python dependencies
 

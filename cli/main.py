@@ -5,6 +5,27 @@ Usage examples:
   python -m call.cli.main list
   python -m call.cli.main list --aliases --q "ux"
   python -m call.cli.main call @AgentFab "Build a new agent"
+
+Command Reference:
+  # Basic agent listing
+  python -m call.cli.main list --project-name UxFab
+
+  # Filtered listing with aliases
+  python -m call.cli.main list --project-name AgentFab --aliases --q "analytics"
+
+  # Agent invocation with input
+  python -m call.cli.main call --project-name StratoSpaceAi @BusinessAnalyticAgent \
+    "Analyze Q3 sales data" --echo
+
+  # Debugging a stuck agent call
+  python -m call.cli.main call @DiscoveryAgent "Long running task" \
+    --trace 30 --trace-file debug.log
+
+Key Parameters:
+  --project-name : Auto-strips Bot/bot suffixes (e.g. 'MyBot' → 'My')
+  --trace       : Periodic stack dumps (seconds between dumps)
+  --trace-file  : Redirect stack dumps to file
+  --echo        : Include metadata in response
 """
 from __future__ import annotations
 
