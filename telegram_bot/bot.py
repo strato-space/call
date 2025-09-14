@@ -569,11 +569,12 @@ async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         lines: list[str] = []
         for pname in projects:
-            at_handle, url = _project_to_bot_link(pname)
-            if at_handle and url:
-                lines.append(f'<a href="{url}">{py_html.escape(at_handle)}</a>')
+            _at, url = _project_to_bot_link(pname)
+            visible = f"@{(pname or '').strip()} Bot"
+            if url:
+                lines.append(f'<b><a href="{url}">{py_html.escape(visible)}</a></b>')
             else:
-                lines.append(py_html.escape(str(pname or "")))
+                lines.append(f"<b>{py_html.escape(visible)}</b>")
         await m.reply("\n".join(lines), parse_mode=ParseMode.HTML)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
