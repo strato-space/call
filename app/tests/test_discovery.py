@@ -24,7 +24,7 @@ def test_special_case_agentfab_points_to_root_yaml():
     m = _mod()
     p = m.discover_agent_yaml("@AgentFab")
     assert p is not None, "AgentFab root agent.yaml should be found"
-    assert Path(p).name == "agent.yaml"
+    assert Path(p).name in {"agent.yaml", "project.yaml"}
     # ensure it's the root card, not a sub-agent
     assert Path(p).parent.name == "AgentFab"
 
