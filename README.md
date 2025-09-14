@@ -279,7 +279,7 @@ See also the strategy doc:
   - `prompt/AgentFab/<AgentName>/agent.yaml`
   - `prompt/UxFab/<AgentName>/agent.yaml`
 - Output artifacts (runnable): `prompt/UxFab/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
-- Reference: `prompt/AgentFab/agent.yaml` and .
+- Reference: `prompt/AgentFab/project.yaml` and .
 
 - AgentFab card fields:
   - `agents`: map of `AgentName: goal` (names only, without `@`). This replaces the old list format.
