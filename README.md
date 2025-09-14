@@ -161,9 +161,41 @@ Call integrates with and executes artifacts produced by:
   - rms sample custromer's of project repo, 
   - voice - voicebot backed lib, mcp, actions, cli interfaces   
 
+### Repo sync helper (repos.sh)
+
+Use the `call/repos.sh` script to keep local clones of our primary repositories up to date. It works in Git Bash, WSL, and Linux.
+
+- Behavior:
+  - `repo <git-url> [dir]` clones into `dir` if it doesn’t exist.
+  - If `dir` exists and is a Git repository, it runs `git -C dir pull --ff-only`.
+  - If `dir` exists but is not a Git repository, the script skips to avoid overwriting.
+  - When `dir` is omitted, it’s derived from the last path component of the URL (with optional `.git` removed), e.g., `.../voice.git` → `voice`.
+
+- Default working directory resolution:
+  - Prefers `/home/strato-space`, then `/d/home/strato-space`, otherwise uses the current directory.
+
+- Examples:
+
+  ```bash
+  # Git Bash or WSL
+  bash d:/home/strato-space/call/repos.sh
+
+  # Or run specific repos
+  bash d:/home/strato-space/call/repos.sh && \
+    repo https://github.com/strato-space/prompt && \
+    repo https://github.com/strato-space/server custom-server-dir
+  ```
+
+  ```powershell
+  # From PowerShell using Git Bash
+  "C:\Program Files\Git\bin\bash.exe" d:/home/strato-space/call/repos.sh
+  ```
+
+The script defines a backward-compatible alias `ensure_repo()` which calls `repo "$@"`.
+
 See also the strategy doc: 
- - `org/strato/context/01. strato stategy/process-agents.md`;
- - `prompt/plan/`
+  - `org/strato/context/01. strato stategy/process-agents.md`;
+  - `prompt/plan/`
 
 ## AgentFab (Group Agent) — Quick Start
 
