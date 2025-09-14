@@ -32,6 +32,7 @@ from call.lib.discovery import (
     _ensure_indices,           # private helper; internal use by the lib facade
     _load_agents_index,        # private helper; internal use by the lib facade
     discover_agent_yaml,
+    load_yaml,
 )
 
 
@@ -298,6 +299,40 @@ def _scan_project_agents(project_dir) -> list[dict]:
     out: list[dict] = []
     if not _Path(project_dir).exists():
         return out
+    # Include root project agent if present (e.g., AgentFab/agent.yaml)
+    try:
+        root_ay = _Path(project_dir) / 'agent.yaml'
+        if root_ay.exists():
+            try:
+                y = load_yaml(root_ay) or {}
+            except Exception:
+                y = {}
+            name = _Path(project_dir).name
+            try:
+                id_or_name = y.get('id') or y.get('name')
+                if isinstance(id_or_name, str) and id_or_name.strip():
+                    name = id_or_name.strip()
+            except Exception:
+                pass
+            aliases: list[str] = []
+            raw_aliases = y.get('aliases') or []
+            if isinstance(raw_aliases, list):
+                aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
+            prompts_list: list[str] = []
+            raw_prompts = y.get('prompts') or {}
+            if isinstance(raw_prompts, dict):
+                prompts_list = [str(k) for k in raw_prompts.keys()]
+            out.append({
+                "type": "agent",
+                "id": "",
+                "name": name,
+                "aliases": aliases,
+                "prompts": prompts_list,
+                "path": str(root_ay),
+            })
+    except Exception:
+        # best-effort only
+        pass
     for child in _Path(project_dir).iterdir():
         if not child.is_dir():
             continue
