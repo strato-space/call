@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
   - Recognize new project `FanFab` in `prompt/projects.yaml`.
 - Fix: Avoid builtins shadowing — use `_builtins.list` in `isinstance` checks inside `call/lib/api.py` where a module-level `list()` function exists.
 - Change: Telegram bot `/list` handler no longer falls back to listing all projects when scoped list is empty; it now returns a concise "No agents found".
+- UX: Telegram bot now renders project headers as clickable bot handles (e.g., `@AgentFabBot`) in `/list`, and `/projects` prints clickable `t.me/<ProjectName>Bot` links.
 - Breaking/API: keyword-only public API
   - `call(*, project, agent, prompt=None, input=None, ...)` (sync wrapper over `call_async`)
   - `list(*, project=None, agent=None, prompt=None)` returns hierarchical projects→agents with aliases/prompts
