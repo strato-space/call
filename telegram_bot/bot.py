@@ -301,6 +301,26 @@ def _get_bot_project(update: Update | None = None) -> str:
     return ""
 
 
+def _project_to_bot_handle(project_name: str) -> str:
+    """Map canonical ProjectName to its Telegram bot handle.
+
+    Example: AgentFab -> AgentFabBot
+    """
+    name = (project_name or "").strip()
+    if not name:
+        return ""
+    # If already ends with Bot, assume it's a handle-like name
+    return name if name.endswith("Bot") else f"{name}Bot"
+
+
+def _project_to_bot_link(project_name: str) -> tuple[str, str]:
+    """Return (handle_with_at, absolute_t_me_url)."""
+    handle = _project_to_bot_handle(project_name)
+    if not handle:
+        return ("", "")
+    return (f"@{handle}", f"https://t.me/{handle}")
+
+
 def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple[str, str, bool]:
     """Resolve (agent_name, input_text, should_handle) from a free-text message.
 
@@ -421,7 +441,11 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         lines: list[str] = []
         for node in tree[:8]:
             pname = node.get("name")
-            lines.append(f"<b>{pname}</b>")
+            at_handle, url = _project_to_bot_link(pname)
+            if at_handle and url:
+                lines.append(f'<b><a href="{url}">{py_html.escape(at_handle)}</a></b>')
+            else:
+                lines.append(f"<b>{py_html.escape(str(pname or ''))}</b>")
             for ag in (node.get("agents") or [])[:100]:
                 nm = (ag.get("name") or "").strip()
                 if nm:
@@ -537,7 +561,14 @@ async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not projects:
             await m.reply("No projects", parse_mode=None)
             return
-        await m.reply("\n".join(projects), parse_mode=None)
+        lines: list[str] = []
+        for pname in projects:
+            at_handle, url = _project_to_bot_link(pname)
+            if at_handle and url:
+                lines.append(f'<a href="{url}">{py_html.escape(at_handle)}</a>')
+            else:
+                lines.append(py_html.escape(str(pname or "")))
+        await m.reply("\n".join(lines), parse_mode=ParseMode.HTML)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
