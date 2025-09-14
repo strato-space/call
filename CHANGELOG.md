@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 - Feat: Added `repo(url, [dir])` helper that clones when missing and performs `git -C dir pull --ff-only` when the repository exists.
 - Change: `ensure_repo` renamed to `repo`; kept a backward-compatible alias `ensure_repo()` that delegates to `repo`.
 - Docs: Updated `README.md` with a new section “Repo sync helper (repos.sh)” including usage, behavior, examples for Git Bash/WSL and PowerShell.
+- Docs: Enhanced CLI documentation in README.md with:
+  - Detailed `--project-name` behavior (Bot suffix stripping)
+  - `--trace` debugging features
 
 ## 2025-09-13
 - Feat: project_name-only token routing. Added `get_project_token(project_name)` and made `init_bot(project_name=...)` mandatory. Removed fallbacks and any env mutation of `TELEGRAM_TOKEN`.
