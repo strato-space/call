@@ -192,18 +192,27 @@ def _ensure_indices(rep: Path) -> None:
         scanned = _scan_agents_dir(base)
         agents_map = {name: '' for name in scanned.keys()}
         aliases_map = {name: aliases for name, (_, aliases) in scanned.items() if aliases}
-        # Special enrichment from AgentFab root agent.yaml if base is AgentFab and no items were found
-        if not agents_map and base.name == 'AgentFab':
-            af = rep / 'AgentFab' / 'agent.yaml'
-            if af.exists():
+        # Enrichment from project.yaml when directory scan finds nothing
+        if not agents_map:
+            proj_yaml = base / 'project.yaml'
+            fallback_yaml = (rep / 'AgentFab' / 'agent.yaml') if base.name == 'AgentFab' else None
+            src = proj_yaml if proj_yaml.exists() else fallback_yaml
+            if src and src.exists():
                 try:
-                    data = load_yaml(af) or {}
-                    section = data.get('agents') or {}
+                    data = load_yaml(src) or {}
+                    # agents may live under project.agents or top-level agents
+                    root_block = data.get('project') or {}
+                    section = root_block.get('agents', data.get('agents', {}))
                     if isinstance(section, dict):
-                        for group_val in section.values():
-                            if isinstance(group_val, dict):
-                                for nm, desc in group_val.items():
-                                    agents_map[to_pascal_case(str(nm))] = str(desc or '')
+                        # section may be { name: desc } or { name: { desc, aliases, prompts } }
+                        for nm, spec in section.items():
+                            agents_map[to_pascal_case(str(nm))] = '' if not isinstance(spec, str) else str(spec or '')
+                        # Try to enrich aliases_map from nested specs
+                        for nm, spec in section.items():
+                            if isinstance(spec, dict):
+                                av = spec.get('aliases') or []
+                                if isinstance(av, list) and av:
+                                    aliases_map[to_pascal_case(str(nm))] = [to_pascal_case(str(a)) for a in av if str(a).strip()]
                 except Exception:
                     pass
         content = {
@@ -237,24 +246,24 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
 
-    # 0) Special-case: AgentFab root card and its aliases listed in AgentFab/agent.yaml
-    root_yaml = repo / 'AgentFab' / 'agent.yaml'
-    if root_yaml.exists():
-        if query_norm.lower() == 'agentfab':
-            return root_yaml
-        # Consider aliases from root card, e.g., "Agent Fab", "Factory", and custom entries like "AgentFabBot"
-        try:
-            data = load_yaml(root_yaml) or {}
-            root_aliases = data.get('aliases') or []
-            # Normalize and compare
-            for al in root_aliases:
-                if to_pascal_case(str(al)) == query_norm:
-                    return root_yaml
-            # Also accept a few common derived handles
-            if query_norm in {to_pascal_case('Agent Fab'), to_pascal_case('Factory'), to_pascal_case('AgentFabBot')}:
-                return root_yaml
-        except Exception:
-            pass
+    # 0) Special-case: AgentFab root card; support agent.yaml or project.yaml (new schema)
+    for root_file in [repo / 'AgentFab' / 'agent.yaml', repo / 'AgentFab' / 'project.yaml']:
+        if root_file.exists():
+            if query_norm.lower() == 'agentfab':
+                return root_file
+            # Consider aliases from root card under either top-level or 'project' block
+            try:
+                data = load_yaml(root_file) or {}
+                root_block = data.get('project') or {}
+                aliases = root_block.get('aliases') or data.get('aliases') or []
+                for al in (aliases or []):
+                    if to_pascal_case(str(al)) == query_norm:
+                        return root_file
+                # Also accept a few common derived handles
+                if query_norm in {to_pascal_case('Agent Fab'), to_pascal_case('Factory'), to_pascal_case('AgentFabBot')}:
+                    return root_file
+            except Exception:
+                pass
 
     # Ensure indices exist (best-effort) for all known projects
     _ensure_indices(repo)

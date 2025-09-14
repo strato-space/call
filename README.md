@@ -131,24 +131,44 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
   - `--trace-file PATH`: Writes stack dumps to specified file
 
-### Projects-aware discovery
+### Projects-aware discovery (Updated Sep 14, 2025)
 
 - **Project index**
   - The canonical list of projects is defined in `prompt/projects.yaml`.
   - Each project corresponds to a subdirectory under the prompt repo, for example: `prompt/UxFab/`.
+
+- **Project manifest: project.yaml**
+  - Each project may define a `project.yaml` manifest in `prompt/<Project>/project.yaml`.
+  - Preferred flattened structure:
+
+    ```yaml
+    name: UxFab
+    aliases: [UxFab]
+    agents:
+      AiNewsAggr:
+        desc: "..."
+        aliases: ["AI News", "ai-news-aggr"]
+        prompts: [DailyDigest, ...]
+      DialogSummary: "Сгенерировать summary ..."  # short form allowed
+    ```
+  - Backward compatibility: a nested `project:` block is also supported by the library.
 
 - **Agent location**
   - Agents live under their project directory: `prompt/<Project>/<Agent>/agent.yaml`.
   - Example: `prompt/UxFab/AiNewsAggr/agent.yaml`.
 
 - **Per‑project indices**
-  - The library maintains per‑project indices: `prompt/<Project>/agents.yaml`.
-  - Legacy folders `prompt/AgentFab/` and `prompt/agents/` are also supported for backward compatibility.
+  - The library can auto-generate `prompt/<Project>/agents.yaml` when missing.
+  - Generation sources, in order:
+    1) Directory scan of `prompt/<Project>/*/agent.yaml`
+    2) If empty, enrich from `prompt/<Project>/project.yaml` (top‑level `agents` or nested `project.agents`)
+    3) For `AgentFab`, fallback enrich from `prompt/AgentFab/agent.yaml` when present
+  - Legacy folders `prompt/AgentFab/` and `prompt/agents/` remain supported.
 
 - **Library API behavior**
   - `list(project, agent, prompt)` returns hierarchical projects → agents with fields: `name`, `aliases`, `prompts`, `path`.
   - `resolve_agent(project, agent, prompt)` returns `{ ok: true, resolved: { project, name, path, aliases, prompts } }` on success.
-  - `discover_agent_yaml(name)` looks up per‑project indices first, then falls back to scanning all project folders.
+  - `discover_agent_yaml(name)` looks up indices first, then scans all project folders. It also resolves the root `AgentFab` agent from `AgentFab/project.yaml` or `AgentFab/agent.yaml`.
 
 - **Wildcards & errors**
   - Wildcards `*` are supported for `project`, `agent`, and `prompt` filters.
