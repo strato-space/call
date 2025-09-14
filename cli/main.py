@@ -1,31 +1,18 @@
 """
 CLI for the call subsystem.
 
-Usage examples:
-  python -m call.cli.main list
-  python -m call.cli.main list --aliases --q "ux"
-  python -m call.cli.main call @AgentFab "Build a new agent"
+Command Reference (one-line):
+  # List projects/agents/prompts (hierarchical JSON)
+  python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
 
-Command Reference:
-  # Basic agent listing
-  python -m call.cli.main list --project-name UxFab
+  # Call an agent with optional prompt override
+  python -m call.cli.main call --project UxFab --agent BusinessAnalyticAgent --input "Analyze Q3"
+  python -m call.cli.main call --project UxFab --agent BusinessAnalyticAgent --prompt Draft --input "Analyze Q3"
 
-  # Filtered listing with aliases
-  python -m call.cli.main list --project-name AgentFab --aliases --q "analytics"
-
-  # Agent invocation with input
-  python -m call.cli.main call --project-name StratoSpaceAi @BusinessAnalyticAgent \
-    "Analyze Q3 sales data" --echo
-
-  # Debugging a stuck agent call
-  python -m call.cli.main call @DiscoveryAgent "Long running task" \
-    --trace 30 --trace-file debug.log
-
-Key Parameters:
-  --project-name : Auto-strips Bot/bot suffixes (e.g. 'MyBot' → 'My')
-  --trace       : Periodic stack dumps (seconds between dumps)
-  --trace-file  : Redirect stack dumps to file
-  --echo        : Include metadata in response
+Debug flags:
+  --trace SECONDS       Dump all thread stacks every N seconds
+  --trace-file PATH     Write stack dumps to a file instead of stderr
+  --echo                Include echo metadata in response
 """
 from __future__ import annotations
 
@@ -41,18 +28,16 @@ from call.lib import api as call_api
 
 def cmd_list(args: argparse.Namespace) -> int:
     items = call_api.list(
-        query=args.q,
-        include_aliases=args.aliases,
-        project_name=(args.project_name or None),
+        project=(args.project or None),
+        agent=(args.agent or None),
+        prompt=(args.prompt or None),
     )
     print(json.dumps(items, ensure_ascii=False, indent=2))
     return 0
 
 
 def cmd_call(args: argparse.Namespace) -> int:
-    name = args.name
-    if name.startswith("@"):
-        name = name[1:]
+    agent = (args.agent or "").lstrip("@") if isinstance(args.agent, str) else (args.agent or None)
     trace_fp = None
     try:
         # Optional periodic stack dumps for debugging long runs
@@ -75,18 +60,12 @@ def cmd_call(args: argparse.Namespace) -> int:
                 pass
             faulthandler.dump_traceback_later(delay, repeat=True, file=target)
 
-        # Derive project_name without common Bot suffixes (case-sensitive)
-        def _strip_bot_suffix(s: str) -> str:
-            for suf in ("Bot", "bot", "_bot", "-bot"):
-                if s.endswith(suf):
-                    return s[: -len(suf)]
-            return s
-        proj = _strip_bot_suffix(args.project_name) if args.project_name else None
         result = call_api.call(
-            name=name,
-            input=args.input or "",
+            project=(args.project or None),
+            agent=agent or None,
+            prompt=(args.prompt or None),
+            input=(args.input or None),
             echo=bool(getattr(args, "echo", False)),
-            project_name=proj,
         )
         print(json.dumps(result, ensure_ascii=False))
         return 0
@@ -109,20 +88,21 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="call — CLI for listing and invoking agents",
+        description="call — CLI for listing and invoking agents (keyword-only API)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_list = sub.add_parser("list", help="List available agents")
-    p_list.add_argument("--aliases", action="store_true", help="Include aliases in output")
-    p_list.add_argument("--q", type=str, default=None, help="Filter substring for names/paths")
-    p_list.add_argument("--project-name", dest="project_name", default="", help="Limit listing to a specific project directory under the prompt repo")
+    p_list = sub.add_parser("list", help="List projects and agents (hierarchical)")
+    p_list.add_argument("--project", default="", help="Project filter (supports * wildcard)")
+    p_list.add_argument("--agent", default="", help="Agent filter (supports * and aliases)")
+    p_list.add_argument("--prompt", default="", help="Prompt filter (supports *)")
     p_list.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
-    p_call.add_argument("name", type=str, help="Agent name or @Alias")
-    p_call.add_argument("input", type=str, nargs="?", default="", help="Input text for the agent")
-    p_call.add_argument("--project-name", dest="project_name", default="", help="Telegram bot username to select TELEGRAM_TOKEN.<name> for routing")
+    p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard)")
+    p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard)")
+    p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
+    p_call.add_argument("--input", default="", help="Input text for the agent")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
