@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, Optional
+import builtins as _builtins
 import os
 import sys
 import traceback
@@ -288,7 +289,7 @@ def _load_projects_index() -> list[str]:
         data = {"projects": {}}
     pr = data.get("projects") or {}
     if isinstance(pr, dict):
-        return list(pr.keys())
+        return _builtins.list(pr.keys())
     return []
 
 def _scan_project_agents(project_dir) -> list[dict]:
