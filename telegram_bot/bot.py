@@ -445,7 +445,7 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             _at, url = _project_to_bot_link(pname)
             visible = f"@{pname} Bot"
             if url:
-                lines.append(f"<b><a href=\"{url}\">{py_html.escape(visible)}</a></b> ({py_html.escape(url)})")
+                lines.append(f"<b><a href=\"{url}\">{py_html.escape(visible)}</a></b>")
             else:
                 lines.append(f"<b>{py_html.escape(visible)}</b>")
             # Each agent as a list item (skip the first one if present)
