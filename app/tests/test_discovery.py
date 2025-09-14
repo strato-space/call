@@ -11,6 +11,8 @@ def _ensure_test_env():
     os.environ.setdefault("TELEGRAM_THREAD_ID", "10")
     os.environ.setdefault("TELEGRAPH_TOKEN", "test-telegraph")
     os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+    # Ensure discovery uses the workspace prompt repo regardless of cwd
+    os.environ.setdefault("PROMPT_REPO", str(Path(__file__).resolve().parents[3] / "prompt"))
 
 
 def _mod():

@@ -1,3 +1,8 @@
+# Thin wrapper to expose discovery to tests: call.app.call.discover_agent_yaml
+def discover_agent_yaml(agent_name: str):
+    from call.lib.discovery import discover_agent_yaml as _discover
+    return _discover(agent_name)
+
 import os
 import argparse
 import asyncio

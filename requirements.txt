@@ -23,3 +23,6 @@ beautifulsoup4
 mcp>=1.9.4,<2
 pydantic>=2,<3
 pydantic-settings[dotenv]>=2.5.2,<3
+fastapi
+uvicorn
+pytest

@@ -131,6 +131,31 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
   - `--trace-file PATH`: Writes stack dumps to specified file
 
+### Projects-aware discovery
+
+- **Project index**
+  - The canonical list of projects is defined in `prompt/projects.yaml`.
+  - Each project corresponds to a subdirectory under the prompt repo, for example: `prompt/UxFab/`.
+
+- **Agent location**
+  - Agents live under their project directory: `prompt/<Project>/<Agent>/agent.yaml`.
+  - Example: `prompt/UxFab/AiNewsAggr/agent.yaml`.
+
+- **Per‑project indices**
+  - The library maintains per‑project indices: `prompt/<Project>/agents.yaml`.
+  - Legacy folders `prompt/AgentFab/` and `prompt/agents/` are also supported for backward compatibility.
+
+- **Library API behavior**
+  - `list(project, agent, prompt)` returns hierarchical projects → agents with fields: `name`, `aliases`, `prompts`, `path`.
+  - `resolve_agent(project, agent, prompt)` returns `{ ok: true, resolved: { project, name, path, aliases, prompts } }` on success.
+  - `discover_agent_yaml(name)` looks up per‑project indices first, then falls back to scanning all project folders.
+
+- **Wildcards & errors**
+  - Wildcards `*` are supported for `project`, `agent`, and `prompt` filters.
+  - When selection is ambiguous or empty, errors include machine‑readable `code` and `options`:
+    - `TOO_MANY_ROWS` with `options: [...]` for candidate agents
+    - `NO_DATA_FOUND` when nothing matches
+
 ### Legacy Agent Addressing (Deprecated)
 
 - Agent addressing syntax (canonical): `@[OrgName][AgentName][:PipelineName][:PromptName]`

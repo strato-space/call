@@ -3,11 +3,11 @@ CLI for the call subsystem.
 
 Command Reference (one-line):
   # List projects/agents/prompts (hierarchical JSON)
-  python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
+  python -m call.cli.main list [--project UxFab] [--agent Agent*] [--prompt Draft]
 
   # Call an agent with optional prompt override
-  python -m call.cli.main call --project UxFab --agent BusinessAnalyticAgent --input "Analyze Q3"
-  python -m call.cli.main call --project UxFab --agent BusinessAnalyticAgent --prompt Draft --input "Analyze Q3"
+  python -m call.cli.main call --agent BusinessAnalyticAgent --input "Analyze Q3" [--project UxFab]
+  python -m call.cli.main call --agent BusinessAnalyticAgent --prompt Draft --input "Analyze Q3" [--project UxFab]
 
 Debug flags:
   --trace SECONDS       Dump all thread stacks every N seconds

@@ -10,6 +10,21 @@ All notable changes to this project will be documented in this file.
 - Docs: Enhanced CLI documentation in README.md with:
   - Detailed `--project-name` behavior (Bot suffix stripping)
   - `--trace` debugging features
+  - Multi-line command examples
+- Feat: Projects-aware discovery across `prompt/projects.yaml` (e.g., `UxFab/`).
+  - `_ensure_indices()` now generates `agents.yaml` for all projects + legacy `AgentFab/` and `agents/`.
+  - `discover_agent_yaml()` searches per-project indices and falls back to scanning all project folders.
+  - Migrated agents under `prompt/UxFab/` (e.g., `AiNewsAggr`, `Stratoslav`) are now properly resolved by name and alias.
+- Breaking/API: keyword-only public API
+  - `call(*, project, agent, prompt=None, input=None, ...)` (sync wrapper over `call_async`)
+  - `list(*, project=None, agent=None, prompt=None)` returns hierarchical projects→agents with aliases/prompts
+  - New `resolve_agent()` helper and structured error envelopes with `code` and `options`
+- Feat: Prompt override is wired through the pipeline
+  - `run_digest_pipeline(..., prompt_override=, project_name=)`
+  - `build_agent_config(..., prompt_override=)` selects the named prompt if provided
+- CLI: switched to `--project/--agent/--prompt/--input`; prints hierarchical JSON for `list`
+  - Bot: derives project from bot name; `@StratoSpaceAiBot` lists all projects and adds `/projects`
+- Tests: added selection and prompt-override tests; updated discovery tests for projects-aware indices
 
 ## 2025-09-13
 - Feat: project_name-only token routing. Added `get_project_token(project_name)` and made `init_bot(project_name=...)` mandatory. Removed fallbacks and any env mutation of `TELEGRAM_TOKEN`.
