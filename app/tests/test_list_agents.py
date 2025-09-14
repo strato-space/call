@@ -1,58 +1,62 @@
-import types
 import importlib
 
 
-def test_list_flat_and_filtered(monkeypatch):
+def test_list_hierarchical(monkeypatch):
     mod = importlib.import_module("call.lib.api")
 
-    # Fake indices
-    fake = {
-        "agents": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml", "DialogSummary": "/p/agents/DialogSummary/agent.yaml"},
-        "aliases": {"NA": "/p/agents/NewsAggr/agent.yaml"},
-        # AgentFab section intentionally not used in flat mode
-        "agents_af": {},
-        "agents_ag": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml", "DialogSummary": "/p/agents/DialogSummary/agent.yaml"},
-    }
+    # Fake projects.yaml index and scans
+    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["AgentFab", "UxFab"])  # two projects
 
-    monkeypatch.setattr(mod, "_read_indices", lambda: fake)
+    def _scan(dirpath):
+        if str(dirpath).endswith("AgentFab"):
+            return [
+                {"type": "agent", "id": "", "name": "AgentFab", "aliases": ["Factory"], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"}
+            ]
+        return [
+            {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+            {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": [], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+        ]
 
-    # Flat default
-    items = mod.list()
-    assert isinstance(items, list)
-    names = [x["name"] for x in items]
-    assert "NewsAggr" in names
-    assert "DialogSummary" in names
+    monkeypatch.setattr(mod, "_scan_project_agents", _scan)
 
-    # Filter query
-    filtered = mod.list(query="news")
-    assert all("news" in x["name"].lower() or "news" in x["path"].lower() for x in filtered)
-    assert any(x["name"] == "NewsAggr" for x in filtered)
-
-    # Include aliases adds aliases field
-    with_aliases = mod.list(include_aliases=True)
-    for x in with_aliases:
-        assert "aliases" in x
-        if x["name"] == "NewsAggr":
-            assert "NA" in x["aliases"]
+    tree = mod.list()
+    assert isinstance(tree, list)
+    proj_names = {n["name"] for n in tree}
+    assert {"AgentFab", "UxFab"}.issubset(proj_names)
+    ux = next(n for n in tree if n["name"] == "UxFab")
+    ag_names = {a["name"] for a in ux["agents"]}
+    assert {"NewsAggr", "DialogSummary"}.issubset(ag_names)
 
 
-def test_list_grouped(monkeypatch):
+def test_list_filters_and_wildcards(monkeypatch):
     mod = importlib.import_module("call.lib.api")
 
-    fake = {
-        "agents": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml"},
-        "aliases": {},
-        "agents_af": {},
-        "agents_ag": {"NewsAggr": "/p/agents/NewsAggr/agent.yaml"},
-    }
+    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["UxFab"])  # one project
+    monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
+        {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+        {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+    ])
 
-    monkeypatch.setattr(mod, "_read_indices", lambda: fake)
+    # Filter by agent wildcard
+    tree = mod.list(project="UxFab", agent="News*")
+    assert len(tree) == 1
+    agents = tree[0]["agents"]
+    assert len(agents) == 1 and agents[0]["name"] == "NewsAggr"
 
-    grouped = mod.list(grouped=True)
-    assert isinstance(grouped, dict)
-    assert set(grouped.keys()) == {"AgentFab", "agents"}
-    af = grouped["AgentFab"]
-    ag = grouped["agents"]
-    # AgentFab list is intentionally empty in grouped output policy
-    assert af == []
-    assert any(x["name"] == "NewsAggr" for x in ag)
+    # Filter by prompt wildcard
+    tree2 = mod.list(project="UxFab", prompt="Week*")
+    assert any(a["name"] == "NewsAggr" for a in tree2[0]["agents"])
+
+
+def test_resolve_agent(monkeypatch):
+    mod = importlib.import_module("call.lib.api")
+    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["UxFab"])  # one project
+    monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
+        {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+    ])
+
+    ok = mod.resolve_agent(project="UxFab", agent="NewsAggr")
+    assert ok.get("ok") is True
+    resolved = ok.get("resolved") or {}
+    assert resolved.get("project") == "UxFab"
+    assert resolved.get("name") == "NewsAggr"

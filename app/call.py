@@ -1712,7 +1712,7 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
         return items
 
 
-async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
+async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None) -> AgentConfig:
     """Build AgentConfig by discovering/loading YAML via normalized agent name."""
     norm = to_pascal_case(agent_name or "") if agent_name else ""
     path_obj: Path | None = discover_agent_yaml(norm) if norm else None
@@ -1732,6 +1732,18 @@ async def build_agent_config(agent_name: str | None = None) -> AgentConfig:
     instructions = ""
     if dto:
         try:
+            # If prompt_override is provided, switch default prompt if available (case-insensitive)
+            if isinstance(prompt_override, str) and prompt_override.strip():
+                try:
+                    pkeys = dto.getPromptNames() if hasattr(dto, 'getPromptNames') else []
+                    target = prompt_override.strip()
+                    # Case-insensitive match over keys
+                    match = next((k for k in pkeys if k.lower() == target.lower()), None)
+                    if match:
+                        # Overwrite default prompt selection for this run
+                        setattr(dto, '_default_prompt_name', match)
+                except Exception:
+                    pass
             instr, attrs = await dto.getInstructions()
             instructions = instr or ""
             if isinstance(attrs, dict):
@@ -1833,7 +1845,7 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
 
 
 @asynccontextmanager
-async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = ""):
+async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
     Usage:
@@ -1861,8 +1873,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         # Start ALL enabled servers from YAML via helper (lifecycle bound to astack)
         mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
 
-        # Build agent
-        cfg = await build_agent_config(agent_name)
+        # Build agent (respect optional prompt override)
+        cfg = await build_agent_config(agent_name, prompt_override=prompt_override)
         tools = [WebSearchTool()]
         if cfg.vs_list:
             try:
@@ -1890,7 +1902,12 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
 
-        await init_bot()
+        # Initialize bot only when project_name provided (lib already initialized it upstream)
+        if project_name:
+            try:
+                await init_bot(project_name=project_name)
+            except Exception:
+                pass
         
         merged_output = _merge_outputs(
             (load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
@@ -2009,9 +2026,9 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         yield agent, cfg, session
         
 
-async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None):
+async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None):
 
-    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input) as (agent, cfg, session):
+    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name) as (agent, cfg, session):
         # Return simplified triple: no history, just final output from cfg attribute
         final_output = getattr(cfg, "_last_final_output", None)
         return agent, [], final_output

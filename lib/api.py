@@ -1,18 +1,20 @@
 """
 Library API for the call subsystem.
 
-Public surface:
-- call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict
-- list(query: str | None = None, include_aliases: bool = False) -> list[dict]
+Public surface (keyword-only):
+- call(*, project: str | None, agent: str | None, prompt: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False) -> dict
+- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False) -> dict
+- list(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> list[dict]  # hierarchical
+- resolve_agent(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> dict
 
 Behavior:
-- On success, returns: { ok: true, agent, agent_path, final_output, echo }
-- On operational failure, returns Telegram Bot API–style error envelope:
-  { ok: false, error_code: <int>, description: <str>, error_type: <str>, agent, final_output: null, echo }
-  * 404 for missing/unknown agent; 500 for internal pipeline errors.
+- Success: { ok: true, agent, agent_path, final_output, echo, resolved }
+- Failure: { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [...], agent, project, final_output: null, echo }
+  Codes: INTERNAL_ERROR, NOT_FOUND, NO_DATA_FOUND, TOO_MANY_ROWS, PIPELINE_ERROR
 
-This module intentionally reuses discovery and pipeline utilities from `call/app/call.py` to
-avoid duplication. It focuses on a stable facade for the CLI and the Telegram bot.
+This module reuses discovery and pipeline utilities from `call/app/call.py`. It focuses on a
+stable facade for the CLI and Telegram bot, including selection, wildcard filtering, and structured
+errors suitable for LLM consumption.
 """
 from __future__ import annotations
 
@@ -34,25 +36,26 @@ from call.lib.discovery import (
 
 
 def _error_payload(
-    name: str,
-    input_text: str,
-    exc: BaseException,
+    agent: str,
+    input: str,
+    exc: BaseException | str,
     *,
     status: int | None = None,
     echo: bool = False,
     debug: bool = False,
+    code: Optional[str] = None,
+    options: Optional[List[Dict[str, Any]]] = None,
+    project: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a Telegram Bot API–style error payload.
+    """Build a consistent error payload for API/CLI/Bot.
 
     Shape:
-    {"ok": false, "error_code": <int>, "description": <str>, ...}
-    Additional fields preserved for our clients: agent, final_output, echo, error_type.
+    { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [..], agent, final_output: null, echo }
     """
     try:
         msg = str(exc)
     except Exception:
         msg = ""
-    err_type = type(exc).__name__
     # Heuristic mapping for Not Found
     if status is None and isinstance(exc, (KeyError, FileNotFoundError, ValueError)) and "not found" in msg.lower():
         status = 404
@@ -60,12 +63,15 @@ def _error_payload(
         "ok": False,
         "error_code": int(status or 400),
         "description": msg,
-        # extra context for our ecosystem
-        "error_type": err_type,
-        "agent": name,
+        "agent": agent,
+        "project": (project or ""),
         "final_output": None,
         "echo": bool(echo),
     }
+    if code:
+        payload["code"] = code
+    if options is not None:
+        payload["options"] = options
 
     # Optional debug details (file/line/stack) for CLI usage
     try:
@@ -100,14 +106,15 @@ def _error_payload(
 
 
 async def call_async(
-    name: Optional[str],
-    input_text: str,
     *,
+    project: Optional[str],
+    agent: Optional[str],
+    prompt: Optional[str] = None,
+    input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
-    project_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -124,19 +131,23 @@ async def call_async(
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
-    # Initialize bot with optional override
-    await app_call.init_bot(project_name=project_name)
+    # Initialize bot: use provided project or default to StratoSpaceAi when not set
+    try:
+        eff_project = (project or "").strip() or "StratoSpaceAi"
+        await app_call.init_bot(project_name=eff_project)
+    except Exception as _e:
+        # If bot init fails, continue; downstream may still function without telegram
+        pass
 
-    # Discover agent profile path using existing logic (only when name provided)
-    yaml_path = None
-    if name:
-        try:
-            yaml_path = discover_agent_yaml(name)
-        except Exception as e:
-            # Discovery raised an exception; convert to structured error
-            return _error_payload(name, input_text, e, status=404, echo=echo, debug=debug)
-        if yaml_path is None:
-            return _error_payload(name, input_text, ValueError(f"Agent '{name}' not found"), status=404, echo=echo, debug=debug)
+    # Resolve agent selection first
+    resolved_env = resolve_agent(project=project, agent=agent, prompt=prompt)
+    if not resolved_env.get("ok"):
+        # Error envelope already prepared
+        return resolved_env
+    resolved = resolved_env.get("resolved") or {}
+    chosen_name = resolved.get("name")
+    chosen_project = resolved.get("project") or (project or "")
+    yaml_path = resolved.get("path")
 
     # Align with app/main: set effective targets (falling back to env defaults)
     selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
@@ -203,14 +214,16 @@ async def call_async(
             dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
 
         try:
-            agent, history, final_output = await app_call.run_digest_pipeline(
+            agent_obj, history, final_output = await app_call.run_digest_pipeline(
                 default_samples_dir,
-                user_input=input_text or "",
-                cli_agent_name=(name if isinstance(name, str) else ""),
+                user_input=(input or ""),
+                cli_agent_name=(chosen_name if isinstance(chosen_name, str) else ""),
+                prompt_override=(prompt or None),
+                project_name=(project or None),
             )
         except Exception as e:
             # Convert pipeline errors to structured error
-            return _error_payload((name or ""), input_text, e, status=500, echo=echo, debug=debug)
+            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=500, echo=echo, debug=debug, code="PIPELINE_ERROR", project=chosen_project)
     finally:
         if dump_task is not None:
             try:
@@ -225,116 +238,174 @@ async def call_async(
 
     return {
         "ok": True,
-        "agent": (name if isinstance(name, str) else ""),
+        "agent": (chosen_name if isinstance(chosen_name, str) else ""),
         "agent_path": (str(yaml_path) if yaml_path else None),
         "final_output": final_output,
         # echo flag included for callers that want to inspect behavior upstream
         "echo": bool(echo),
+        "resolved": resolved,
     }
 
 
 def call(
-    name: str,
-    input: str,
     *,
+    project: Optional[str],
+    agent: Optional[str],
+    prompt: Optional[str] = None,
+    input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
-    project_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Public sync facade for running an agent. Returns a dict with metadata/final_output.
-    Intended for use by CLI and Telegram bot.
+    Thin sync wrapper over call_async. All selection and error handling is in call_async.
     """
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("name must be a non-empty string")
-    if not isinstance(input, str):
-        raise ValueError("input must be a string")
-
-    norm = name
     try:
-        return asyncio.run(call_async(norm, input, chat_id=chat_id, thread_id=thread_id, echo=echo, debug=debug, project_name=project_name))
+        return asyncio.run(
+            call_async(
+                project=project,
+                agent=agent,
+                prompt=prompt,
+                input=input,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                echo=echo,
+                debug=debug,
+            )
+        )
     except Exception as e:
-        # Last-resort guard: never explode to callers that expect JSON; provide structured error
-        return _error_payload(norm, input, e, status=500, echo=echo, debug=debug)
+        return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project)
 
 
-def _read_indices(project_name: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+def _load_projects_index() -> list[str]:
+    """Return list of project names from prompt/projects.yaml (exact, case-sensitive)."""
+    repo = discover_prompt_repo()
+    index = repo / 'projects.yaml'
+    try:
+        data = load_yaml(index) if index.exists() else {"projects": {}}
+    except Exception:
+        data = {"projects": {}}
+    pr = data.get("projects") or {}
+    if isinstance(pr, dict):
+        return list(pr.keys())
+    return []
+
+def _scan_project_agents(project_dir) -> list[dict]:
+    """Scan a project directory for agents and extract aliases and prompts from agent.yaml."""
+    from pathlib import Path as _Path
+    out: list[dict] = []
+    if not _Path(project_dir).exists():
+        return out
+    for child in _Path(project_dir).iterdir():
+        if not child.is_dir():
+            continue
+        ay = child / 'agent.yaml'
+        if not ay.exists():
+            continue
+        try:
+            y = load_yaml(ay) or {}
+        except Exception:
+            y = {}
+        name = child.name
+        try:
+            id_or_name = y.get('id') or y.get('name')
+            if isinstance(id_or_name, str) and id_or_name.strip():
+                name = id_or_name.strip()
+        except Exception:
+            pass
+        aliases: list[str] = []
+        raw_aliases = y.get('aliases') or []
+        if isinstance(raw_aliases, list):
+            aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
+        prompts_list: list[str] = []
+        raw_prompts = y.get('prompts') or {}
+        if isinstance(raw_prompts, dict):
+            prompts_list = [str(k) for k in raw_prompts.keys()]
+        out.append({
+            "type": "agent",
+            "id": "",
+            "name": name,
+            "aliases": aliases,
+            "prompts": prompts_list,
+            "path": str(ay),
+        })
+    return out
+
+
+def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Load indices of available agents.
+    Return hierarchical structure of projects and agents with prompts/aliases.
 
-    KISS: when project_name is provided, only scan that directory under the prompt repo
-    (exact case-sensitive match) and return those agents. No cross-directory merge.
-    Otherwise, preserve the previous behavior of merging AgentFab/ and agents/.
+    - If project is None or empty: return all projects as a list of { name, type:"project", agents:[...] }.
+    - If project provided: return a single-element list with that project's structure if found (filtered by agent/prompt patterns when provided).
+    - Supports wildcard '*' in project/agent/prompt (treated as '.*', case-insensitive).
+    - Removes legacy 'query' and 'include_aliases'. Aliases are always included from agent.yaml when present.
     """
     repo = discover_prompt_repo()
-    _ensure_indices(repo)
 
-    from pathlib import Path
+    # Prepare matchers
+    import re as _re
+    def _compile(pat: Optional[str]):
+        if not pat:
+            return None
+        s = str(pat)
+        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
 
-    def scan_canon(base: Path) -> Dict[str, str]:
-        out: Dict[str, str] = {}
-        if base.exists():
-            for child in base.iterdir():
-                if child.is_dir():
-                    y = child / 'agent.yaml'
-                    if y.exists():
-                        out[child.name] = str(y)
-        return out
+    m_proj = _compile(project)
+    m_agent = _compile(agent)
+    m_prompt = _compile(prompt)
 
-    # Project-scoped listing: only list agents within repo/<project_name>
-    if project_name and str(project_name).strip():
-        base = repo / project_name
-        agents_only = scan_canon(base)
-        return {"agents": agents_only, "aliases": {}, "agents_af": {}, "agents_ag": agents_only}
+    projects = _load_projects_index()
+    result: list[dict] = []
+    for proj_name in projects:
+        if m_proj and not m_proj.match(proj_name):
+            continue
+        agents = _scan_project_agents(repo / proj_name)
+        # Apply agent filter
+        if m_agent:
+            agents = [a for a in agents if m_agent.match(a.get('name', '')) or any(m_agent.match(al) for al in (a.get('aliases') or []))]
+        # Apply prompt filter
+        if m_prompt:
+            agents = [a for a in agents if any(m_prompt.match(pr) for pr in (a.get('prompts') or []))]
+        result.append({
+            "name": proj_name,
+            "type": "project",
+            "agents": agents,
+        })
 
-    # No-merge policy: when project_name is not provided, return empty listing.
-    return {"agents": {}, "aliases": {}, "agents_af": {}, "agents_ag": {}}
+    # If a specific project name without wildcard was provided and not found, return empty list
+    if project and not ("*" in project):
+        result = [r for r in result if r.get("name") == project]
+
+    return result
 
 
-def list(query: Optional[str] = None, include_aliases: bool = False, *, project_name: Optional[str] = None) -> List[Dict[str, Any]]:
+def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
+    """Resolve a single agent using list() filters.
+
+    Returns on success:
+      { ok: true, resolved: { project, name, path, aliases, prompts } }
+
+    On error/ambiguity, returns _error_payload with code and optional options.
     """
-    Return a flat list of available agents.
+    try:
+        projects = list(project=project, agent=agent, prompt=prompt)
+    except Exception as e:
+        return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
-    Provide project_name to scope listing to a specific directory under the prompt repo
-    (KISS: no default cross-project merge). Each item has shape:
-      {"name": str, "path": str, "aliases": [str, ...]?}
-    """
-    data = _read_indices(project_name)
-    agents_map = data.get("agents", {})
-    aliases_map = data.get("aliases", {})
-    agents_af = data.get("agents_af", {})
-    agents_ag = data.get("agents_ag", {})
+    matches: list[dict] = []
+    for pr in (projects or []):
+        for a in pr.get("agents", []) or []:
+            matches.append({"project": pr.get("name"), **a})
 
-    # Build reverse alias listing per canonical name
-    alias_by_agent: Dict[str, List[str]] = {k: [] for k in agents_map.keys()}
-    for alias, path in aliases_map.items():
-        path_s = str(path)
-        for name, apath in agents_map.items():
-            if str(apath) == path_s:
-                alias_by_agent[name].append(alias)
-                break
+    if not matches:
+        return _error_payload(agent=(agent or ""), input="", exc="no data found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+    if len(matches) > 1:
+        return _error_payload(agent=(agent or ""), input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=matches)
 
-    def match(s: str) -> bool:
-        if not query:
-            return True
-        q = query.lower()
-        return q in s.lower()
-
-    def build_items(src: Dict[str, str]) -> List[Dict[str, Any]]:
-        items: List[Dict[str, Any]] = []
-        for name, path in sorted(src.items()):
-            if not match(name) and not match(path):
-                continue
-            entry: Dict[str, Any] = {"name": name, "path": str(path)}
-            if include_aliases:
-                entry["aliases"] = sorted(alias_by_agent.get(name, []))
-            items.append(entry)
-        return items
-
-    # Flat output: expose only 'agents' entries
-    return build_items(agents_ag)
+    m = matches[0]
+    return {"ok": True, "resolved": {"project": m.get("project"), "name": m.get("name"), "path": m.get("path"), "aliases": m.get("aliases"), "prompts": m.get("prompts")}}
 
 
 async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]) -> Dict[str, Any]:

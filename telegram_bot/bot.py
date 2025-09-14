@@ -409,47 +409,27 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     log.debug("handle_list: incoming text=%r", getattr(update.message, 'text', None))
     m = Messenger(context=context, update=update)
 
-    # Parse flags from arguments (supports both /list and plain 'list ...')
-    text = (update.message.text or "") if update.message else ""
-    args = text.split()[1:] if text.startswith("/list") else text.split()[1:] if text.lower().startswith("list") else []
-    include_aliases = False
-    query = None
-    # very light parser for --aliases and --q VALUE
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--aliases" or a == "--all":
-            include_aliases = True
-            i += 1
-        elif a == "--q" and i + 1 < len(args):
-            query = args[i + 1]
-            i += 2
-        else:
-            i += 1
-
-    # Run list via library API (no direct OpenAI calls here)
+    # Scope by project (derive from bot); StratoSpaceAiBot lists all projects
+    proj = PROJECT_NAME or None
+    if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot":
+        proj = None
     try:
-        log.debug("handle_list: query=%r include_aliases=%s", query, include_aliases)
-        flat = call_api.list(query=query, include_aliases=include_aliases, grouped=False)
-        if not isinstance(flat, list) or not flat:
-            await m.reply("No agents found")
+        tree = call_api.list(project=proj)
+        if not tree:
+            await m.reply("No agents found", parse_mode=None)
             return
         lines: list[str] = []
-        seen: set[str] = set()
-        for it in flat[:400]:
-            name = (it.get("name") or "").strip()
-            if name and name not in seen:
-                lines.append(f"@{name}")
-                seen.add(name)
-            if include_aliases:
-                for al in (it.get("aliases") or []):
-                    al = (al or "").strip()
-                    if al and al not in seen:
-                        lines.append(f"  @{al}")
-                        seen.add(al)
-        await m.reply("\n".join(lines), parse_mode="HTML")
+        for node in tree[:8]:
+            pname = node.get("name")
+            lines.append(f"<b>{pname}</b>")
+            for ag in (node.get("agents") or [])[:100]:
+                nm = (ag.get("name") or "").strip()
+                if nm:
+                    lines.append(f"@{nm}")
+            lines.append("")
+        await m.reply("\n".join(lines).strip(), parse_mode=ParseMode.HTML)
     except Exception as e:
-        await m.reply(f"Error: {type(e).__name__}: {str(e)}")
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
 async def _call_task(
@@ -471,13 +451,15 @@ async def _call_task(
             thread_id,
         )
         # Delegate to lib; it will publish to Telegram via its own utilities
+        proj = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
         res = await call_api.call_async(
-            name=name,
-            input_text=input_text,
+            project=proj,
+            agent=name,
+            prompt=None,
+            input=input_text,
             echo=echo,
             chat_id=chat_id,
             thread_id=thread_id,
-            project_name=PROJECT_NAME or None,
         )
         log.info("_call_task: done name=%s", name)
     except Exception as e:
@@ -523,11 +505,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await m.reply(str(ve), parse_mode=None)
         return
 
-    base = _get_bot_project(update)
-    if base == "AgentFab":
-        if name != "AgentFab":
-            log.info("handle_call: overriding requested agent %s -> AgentFab due to bot base=%r", name, base)
-        name = "AgentFab"
+    # No special-case for AgentFab; project is derived from bot name
 
     # Kick off a background task and pass the exact chat/thread where the command was received.
     # These values should take precedence over any Agent card defaults or env variables downstream.
@@ -544,6 +522,24 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     )
     log.info("handle_call: scheduled task for name=%s", name)
+
+
+@_require_allowed_users
+async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List projects (StratoSpaceAiBot only)."""
+    m = Messenger(context=context, update=update)
+    if (SELECTED_BOT_NAME or "").strip() != "StratoSpaceAiBot":
+        await m.reply("/projects is available only for StratoSpaceAiBot", parse_mode=None)
+        return
+    try:
+        tree = call_api.list(project=None)
+        projects = [n.get("name") for n in (tree or [])]
+        if not projects:
+            await m.reply("No projects", parse_mode=None)
+            return
+        await m.reply("\n".join(projects), parse_mode=None)
+    except Exception as e:
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
 @_require_allowed_users
@@ -650,6 +646,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("help", handle_start))
     app.add_handler(CommandHandler("list", handle_list))
+    app.add_handler(CommandHandler("projects", handle_projects))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
 

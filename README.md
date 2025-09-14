@@ -107,21 +107,29 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Command Reference**:
 
   ```bash
-  python -m call.cli.main list --project-name UxFab [--aliases] [--q "filter"]
-  python -m call.cli.main call --project-name UxFab @AgentName "input text" [--echo] [--trace SECONDS] [--trace-file PATH]
+  # List projects/agents/prompts (hierarchical JSON)
+  python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
+
+  # Call an agent (keyword-only API)
+  python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt Draft] [--echo] [--trace SECONDS] [--trace-file PATH]
+
+  # Legacy positional (app module still supports):
+  python -m call.app.call <AgentName> [<input>]
   ```
 
-- **Project Name Handling**:
-  - When using `--project-name`, common Bot suffixes (`Bot`, `bot`, `_bot`, `-bot`) are automatically stripped
-  - Example: `--project-name StratoSpaceAiBot` becomes `StratoSpaceAi` for token lookup
+- **Listing Output (hierarchical)**:
+  - `list()` returns an array of projects; each project has `name`, `type: "project"`, and `agents`.
+  - Each agent item has `type: "agent"`, `name`, `aliases` (from agent.yaml), `prompts` (from agent.yaml), and `path`.
+  - Wildcards `*` are supported in `--project`, `--agent`, and `--prompt` (case-insensitive).
+
+- **Selection Behavior**:
+  - If multiple agents match: the API returns an error envelope with `code: "TOO_MANY_ROWS"` and an `options` list of candidates.
+  - If nothing matches: `code: "NO_DATA_FOUND"`.
+  - On success, responses include `resolved` with `{ project, name, path, aliases, prompts }`.
 
 - **Debugging Features**:
   - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
   - `--trace-file PATH`: Writes stack dumps to specified file
-
-- Debug prints at startup show the parsed values:
-  - `[DEBUG] call AgentName="..."`
-  - `[DEBUG] call input="..."`
 
 ### Legacy Agent Addressing (Deprecated)
 
