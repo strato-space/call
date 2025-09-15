@@ -1,3 +1,15 @@
+def _debug_print(*parts: str) -> None:
+    """Lightweight debug print gated by CALL_DEBUG to avoid importing app layer."""
+    try:
+        flag = str(os.environ.get("CALL_DEBUG", "")).strip().lower()
+        if flag in ("1", "true", "yes", "on"):
+            try:
+                msg = " ".join(str(p) for p in parts if p is not None)
+                print(f"[DEBUG][discovery] {msg}")
+            except Exception:
+                pass
+    except Exception:
+        pass
 """
 Shared discovery and YAML helper utilities for the call subsystem.
 
@@ -230,7 +242,7 @@ def _ensure_indices(rep: Path) -> None:
             pass
 
 
-def discover_agent_yaml(agent_name: str) -> Path | None:
+def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | None:
     """Discover agent YAML with index-first strategy and fallbacks.
 
     Priority:
@@ -245,6 +257,7 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     repo = discover_prompt_repo()
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
+    _debug_print("discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
 
     # 0) Special-case: AgentFab root card; support agent.yaml or project.yaml (new schema)
     for root_file in [repo / 'AgentFab' / 'agent.yaml', repo / 'AgentFab' / 'project.yaml']:
@@ -286,9 +299,15 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
         index_candidates.append((base / 'agents.yaml', base))
 
     for idx_path, base in index_candidates:
-        m = _load_agents_index(idx_path, base)
-        if query_norm in m:
-            return m[query_norm]
+        try:
+            if project and base.name != project:
+                continue
+            m = _load_agents_index(idx_path, base)
+            if query_norm in m:
+                _debug_print("index hit:", f"base={base.name}", f"path={m[query_norm]}")
+                return m[query_norm]
+        except Exception:
+            pass
 
     # 2) Fallback directory scan with case-insensitive match across all projects
     def find_in_dir(base: Path) -> Path | None:
@@ -328,8 +347,18 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     except Exception:
         pass
 
+    # If project is set, restrict the search to that single project directory only
+    if project:
+        proj_dir = repo / project
+        search_bases = [proj_dir]
+        _debug_print("project restricted search:", f"base={proj_dir}")
+
     for base in search_bases:
-        p = find_in_dir(base)
-        if p:
-            return p
+        try:
+            p = find_in_dir(base)
+            if p:
+                _debug_print("fallback hit:", f"base={base.name}", f"path={p}")
+                return p
+        except Exception:
+            pass
     return None
