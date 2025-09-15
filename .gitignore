@@ -39,6 +39,5 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
 .venv/
-ENV/
+app/__pycache__/
