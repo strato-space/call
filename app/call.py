@@ -240,16 +240,26 @@ def get_project_token(project_name: str) -> str:
 
 
 async def init_bot(*, project_name: str | None = None):
-    """Initialize (or re-initialize) the global Telegram bot using a project-scoped token.
+    """Initialize (or re-initialize) the global Telegram bot.
 
-    Requires project_name and uses TELEGRAM_TOKEN.<project_name> exactly (no fallbacks).
-    Reuses the existing instance when token is unchanged.
+    Behavior:
+      - If project_name is provided, use TELEGRAM_TOKEN.<project_name>
+      - Otherwise, fall back to TELEGRAM_TOKEN
+      - If already initialized with the same token, reuse existing instance
     """
     global bot
-    if not project_name:
-        raise ValueError("project_name is required for init_bot()")
-
-    token = get_project_token(project_name)
+    # Resolve token based on preference order
+    token: str | None = None
+    if project_name:
+        try:
+            token = get_project_token(project_name)
+        except Exception:
+            # If project-scoped token missing, fall back to default env token
+            token = None
+    if not token:
+        token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    if not token:
+        raise EnvironmentError("No Telegram token found: set TELEGRAM_TOKEN or TELEGRAM_TOKEN.<ProjectName>")
 
     # If bot already initialized with the same token, reuse it
     if "bot" in globals() and isinstance(bot, Bot):
@@ -559,6 +569,9 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
     eff_chat_id = chat_id if chat_id is not None else selected_chat_id
     eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
 
+    # Ensure bot is ready before attempting to send
+    await init_bot()
+
     async def _op():
         return await bot.send_message(
             chat_id=eff_chat_id,
@@ -631,6 +644,7 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
         pass
 
     async def _op():
+        await init_bot()
         with open(image_path, 'rb') as f:
             return await bot.send_photo(
                 chat_id=eff_chat_id,
@@ -2058,6 +2072,8 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
     # Choose chat: prefer explicit override; else use selected_* initialized from .env and possibly overridden by agent
     if chat_id is None:
         chat_id = selected_chat_id or TELEGRAM_CHAT_ID
+    # Ensure bot exists before sending welcome
+    await init_bot()
     # Send clean welcome banner without any progress bar
     telegram_last_message = await telegram_send_message(
         chat_id=chat_id,
