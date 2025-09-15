@@ -3,6 +3,22 @@ def discover_agent_yaml(agent_name: str, project: str | None = None):
     from call.lib.discovery import discover_agent_yaml as _discover
     return _discover(agent_name, project=project)
 
+def _discover_agent_yaml_compat(agent_name: str, project: str | None = None):
+    """Call call.lib.discovery.discover_agent_yaml trying new signature first, then fallback."""
+    try:
+        from call.lib.discovery import discover_agent_yaml as _discover
+    except Exception:
+        return None
+    try:
+        return _discover(agent_name, project=project)
+    except TypeError:
+        try:
+            return _discover(agent_name)
+        except Exception:
+            return None
+    except Exception:
+        return None
+
 import os
 import argparse
 import asyncio
@@ -1734,7 +1750,7 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
 async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None) -> AgentConfig:
     """Build AgentConfig by discovering/loading YAML via normalized agent name."""
     norm = to_pascal_case(agent_name or "") if agent_name else ""
-    path_obj: Path | None = discover_agent_yaml(norm, project=project_name) if norm else None
+    path_obj: Path | None = _discover_agent_yaml_compat(norm, project=project_name) if norm else None
 
     try:
         debug_print("discovery input:", f"agent={norm}", f"project={(project_name or '')}")
