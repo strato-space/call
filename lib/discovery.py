@@ -1,15 +1,3 @@
-def _debug_print(*parts: str) -> None:
-    """Lightweight debug print gated by CALL_DEBUG to avoid importing app layer."""
-    try:
-        flag = str(os.environ.get("CALL_DEBUG", "")).strip().lower()
-        if flag in ("1", "true", "yes", "on"):
-            try:
-                msg = " ".join(str(p) for p in parts if p is not None)
-                print(f"[DEBUG][discovery] {msg}")
-            except Exception:
-                pass
-    except Exception:
-        pass
 """
 Shared discovery and YAML helper utilities for the call subsystem.
 
@@ -36,6 +24,20 @@ from typing import Any, Dict, List, Optional, Tuple
 # Keep the same default used previously in app layer so callers can reuse it
 # for samples/memory root resolution when needed by the pipeline.
 default_samples_dir: str = str(Path(__file__).resolve().parents[2])
+
+
+def _debug_print(*parts: str) -> None:
+    """Lightweight debug print gated by CALL_DEBUG to avoid importing app layer."""
+    try:
+        flag = str(os.environ.get("CALL_DEBUG", "")).strip().lower()
+        if flag in ("1", "true", "yes", "on"):
+            try:
+                msg = " ".join(str(p) for p in parts if p is not None)
+                print(f"[DEBUG][discovery] {msg}")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def to_pascal_case(name: str) -> str:
