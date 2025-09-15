@@ -616,7 +616,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
-    base = _get_bot_base(update)
+    base = _get_bot_project(update)
     chat_type = getattr(getattr(update, "effective_chat", None), "type", "") or ""
     is_private = (chat_type == "private")
     name, inp, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)

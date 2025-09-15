@@ -32,7 +32,7 @@ def test_list_filters_and_wildcards(monkeypatch):
     mod = importlib.import_module("call.lib.api")
 
     monkeypatch.setattr(mod, "load_projects_index", lambda: ["UxFab"])  # one project
-    monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
+    monkeypatch.setattr(mod, "scan_project_agents", lambda _: [
         {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
         {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
     ])
