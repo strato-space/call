@@ -163,7 +163,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
     1) Directory scan of `prompt/<Project>/*/agent.yaml`
     2) If empty, enrich from `prompt/<Project>/project.yaml` (top‑level `agents` or nested `project.agents`)
     3) For `AgentFab`, fallback enrich from `prompt/AgentFab/agent.yaml` when present
-  - Legacy folders `prompt/AgentFab/` and `prompt/agents/` remain supported.
+  - Compatibility: `prompt/AgentFab/` remains supported as the creator area. The legacy `prompt/agents/` layout is no longer supported.
 
 - **Library API behavior**
   - `list(project, agent, prompt)` returns hierarchical projects → agents with fields: `name`, `aliases`, `prompts`, `path`.
@@ -204,7 +204,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 Call integrates with and executes artifacts produced by:
 
 - Agent Fab — a factory of early analytical agnets cards and there prompts stored in repo `prompt` directory `AgentFab`.
-- Prompt Repository — canonical storage of prompts, schemas, tests, and metadata stored in repo `prompt` directory `agents`.
+- Prompt Repository — canonical storage of prompts, schemas, tests, and metadata stored under project directories (e.g., `prompt/UxFab`, `prompt/FanFab`).
 - RAG and MCP servers — optional data access and tool affordances:
   - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice []   
 - Voice Bot, AI News Aggregator, Telegram, Google Sheets/Pages — integration touchpoints.

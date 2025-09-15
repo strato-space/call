@@ -749,8 +749,8 @@ def github_blob_url(local_path: str | Path) -> str | None:
          git@github.com:org/repo.git → https://github.com/org/repo/blob/<branch>/<rel>
       2) GITHUB_REMOTE_ORGANIZATION_URL: an org URL + top-level repo name derived
          from the relative path (first path segment under workspace root).
-         Example: https://github.com/strato-space + rel 'prompt/agents/x' →
-         https://github.com/strato-space/prompt/blob/<branch>/agents/x
+         Example: https://github.com/strato-space + rel 'prompt/UxFab/x' →
+         https://github.com/strato-space/prompt/blob/<branch>/UxFab/x
       Branch defaults to 'master' if GITHUB_BRANCH is unset.
     """
     try:

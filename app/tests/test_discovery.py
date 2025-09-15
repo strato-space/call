@@ -52,12 +52,12 @@ def test_agents_index_alias_for_stratoslav():
         assert Path(p).parent.name == "Stratoslav"
 
 
-def test_fallback_scan_still_works_for_known_agent_dirs():
-    # Pick an agent that exists under prompt/agents/ to validate fallback path shape
+def test_fallback_scan_still_works_for_known_project_agent_dirs():
+    # Pick an agent that exists under a project (e.g., UxFab) to validate fallback path shape
     m = _mod()
     repo = m.discover_prompt_repo()
-    candidate = repo / "agents" / "DialogChunk" / "agent.yaml"
+    candidate = repo / "UxFab" / "StratoSummarizer2" / "agent.yaml"
     if candidate.exists():
-        p = m.discover_agent_yaml("dialogchunk")  # lower-case to force normalization
+        p = m.discover_agent_yaml("StratoSummarizer2")
         assert p is not None
         assert Path(p) == candidate
