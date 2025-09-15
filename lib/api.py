@@ -33,6 +33,7 @@ from call.lib.discovery import (
     _load_agents_index,        # private helper; internal use by the lib facade
     discover_agent_yaml,
     load_yaml,
+    load_projects_index,
 )
 
 
@@ -280,18 +281,7 @@ def call(
         return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project)
 
 
-def _load_projects_index() -> list[str]:
-    """Return list of project names from prompt/projects.yaml (exact, case-sensitive)."""
-    repo = discover_prompt_repo()
-    index = repo / 'projects.yaml'
-    try:
-        data = load_yaml(index) if index.exists() else {"projects": {}}
-    except Exception:
-        data = {"projects": {}}
-    pr = data.get("projects") or {}
-    if isinstance(pr, dict):
-        return _builtins.list(pr.keys())
-    return []
+# No local wrapper for projects index; use discovery.load_projects_index() directly
 
 def _scan_project_agents(project_dir) -> list[dict]:
     """Scan a project directory for agents and extract aliases and prompts from agent.yaml."""
@@ -455,7 +445,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     m_agent = _compile(agent)
     m_prompt = _compile(prompt)
 
-    projects = _load_projects_index()
+    projects = load_projects_index()
     result: list[dict] = []
     for proj_name in projects:
         if m_proj and not m_proj.match(proj_name):

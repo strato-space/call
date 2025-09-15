@@ -95,6 +95,50 @@ def load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def load_projects_index(repo: Path | None = None) -> list[str]:
+    """Return list of project names from prompt/projects.yaml (exact, case-sensitive).
+
+    Strict policy:
+    - If projects.yaml exists: require a non-empty top-level 'projects' mapping; otherwise raise ValueError with guidance.
+    - If projects.yaml is missing: fall back to scanning repo root for plausible project directories.
+    """
+    if repo is None:
+        repo = discover_prompt_repo()
+    index = repo / 'projects.yaml'
+    if index.exists():
+        try:
+            data = load_yaml(index) or {}
+        except Exception as e:
+            raise ValueError(f"Failed to parse {index}: {e}")
+        pr = data.get('projects')
+        if not isinstance(pr, dict) or not pr:
+            keys = ", ".join(sorted(list(data.keys()))) if isinstance(data, dict) else "<non-dict>"
+            example = "projects:\n  UxFab: { description: ... }\n  FanFab: { description: ... }\n"
+            raise ValueError(
+                f"Malformed {index}: expected a non-empty top-level 'projects' mapping. Found keys: [{keys}].\n"
+                f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
+            )
+        return list(pr.keys())
+    # Fallback: scan repo root
+    names: list[str] = []
+    try:
+        for child in repo.iterdir():
+            if not child.is_dir() or child.name.startswith('.'):
+                continue
+            if (child / 'project.yaml').exists():
+                names.append(child.name)
+                continue
+            try:
+                has_agent = any((p.is_dir() and (p / 'agent.yaml').exists()) for p in child.iterdir())
+            except Exception:
+                has_agent = False
+            if has_agent:
+                names.append(child.name)
+    except Exception:
+        pass
+    return names
+
+
 def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
     """Load per-project agents index which may contain 'agents' and optional 'aliases'.
 
@@ -182,17 +226,14 @@ def _ensure_indices(rep: Path) -> None:
 
     # Collect projects from projects.yaml (if present) + legacy folders
     projects: list[Path] = []
-    # From projects.yaml
     try:
-        proj_idx = rep / 'projects.yaml'
-        if proj_idx.exists():
-            data = load_yaml(proj_idx) or {}
-            for pname in (data.get('projects') or {}).keys():
-                p = rep / str(pname)
-                if p.exists():
-                    projects.append(p)
+        names = load_projects_index(rep)
     except Exception:
-        pass
+        names = []
+    for pname in names:
+        p = rep / str(pname)
+        if p.exists():
+            projects.append(p)
     # Always include AgentFab
     for legacy in ('AgentFab',):
         p = rep / legacy
@@ -284,16 +325,13 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
 
     # 1) Index lookup across all project indices (projects.yaml + AgentFab)
     index_candidates: list[tuple[Path, Path]] = []
-    # from projects.yaml
     try:
-        proj_idx = repo / 'projects.yaml'
-        if proj_idx.exists():
-            data = load_yaml(proj_idx) or {}
-            for pname in (data.get('projects') or {}).keys():
-                base = repo / str(pname)
-                index_candidates.append((base / 'agents.yaml', base))
+        names = load_projects_index(repo)
     except Exception:
-        pass
+        names = []
+    for pname in names:
+        base = repo / str(pname)
+        index_candidates.append((base / 'agents.yaml', base))
     # AgentFab index (creator area)
     for legacy in ('AgentFab',):
         base = repo / legacy

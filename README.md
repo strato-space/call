@@ -136,6 +136,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Project index**
   - The canonical list of projects is defined in `prompt/projects.yaml`.
   - Each project corresponds to a subdirectory under the prompt repo, for example: `prompt/UxFab/`.
+  - Loader is centralized: `call.lib.discovery.load_projects_index()` reads `projects.yaml` once and is used by the API and discovery paths.
 
 - **Project manifest: project.yaml**
   - Each project may define a `project.yaml` manifest in `prompt/<Project>/project.yaml`.
@@ -170,6 +171,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `resolve_agent(project, agent, prompt)` returns `{ ok: true, resolved: { project, name, path, aliases, prompts } }` on success.
   - `discover_agent_yaml(name)` looks up indices first, then scans all project folders. It also resolves the root `AgentFab` agent from `AgentFab/project.yaml` or `AgentFab/agent.yaml`.
   - App layer note: `call.app.call.discover_agent_yaml()` is a thin wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. The legacy `_discover_agent_yaml_compat` helper was removed.
+  - Strict schema: when `prompt/projects.yaml` exists, it must contain a non-empty top-level `projects` mapping. Otherwise a clear error is raised with a fix suggestion. If the file is missing, a fallback scans the repo for plausible project directories.
 
 - **Wildcards & errors**
   - Wildcards `*` are supported for `project`, `agent`, and `prompt` filters.
