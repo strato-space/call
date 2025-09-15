@@ -319,6 +319,15 @@ def discover_agent_yaml(agent_name: str) -> Path | None:
     # legacy fallback order
     search_bases += [repo / 'AgentFab', repo / 'agents']
 
+    # Broad fallback: include all top-level directories under repo as potential projects
+    # This allows discovery in folders like 'FanFab', 'MediaGenFab', 'UxFab', etc.
+    try:
+        for child in repo.iterdir():
+            if child.is_dir() and child not in search_bases:
+                search_bases.append(child)
+    except Exception:
+        pass
+
     for base in search_bases:
         p = find_in_dir(base)
         if p:
