@@ -172,6 +172,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `discover_agent_yaml(name)` looks up indices first, then scans all project folders. It also resolves the root `AgentFab` agent from `AgentFab/project.yaml` or `AgentFab/agent.yaml`.
   - App layer note: `call.app.call.discover_agent_yaml()` is a thin wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. The legacy `_discover_agent_yaml_compat` helper was removed.
   - Strict schema: when `prompt/projects.yaml` exists, it must contain a non-empty top-level `projects` mapping. Otherwise a clear error is raised with a fix suggestion. If the file is missing, a fallback scans the repo for plausible project directories.
+  - Cross-project discovery: when `project=None`, selection functions (`list`, `resolve_agent`, `discover_agent_yaml`) scan all known projects discovered via `projects.yaml` (or repo scan fallback) until a unique match is found.
 
 - **Wildcards & errors**
   - Wildcards `*` are supported for `project`, `agent`, and `prompt` filters.
