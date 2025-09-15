@@ -4,11 +4,11 @@ call - call agent: @name <input>
 
 [x] преобразуй app/call раздели на lib и cli; в lib один метод call с аргументами (name, input)
   
- [x] метод list напиши на оновании индексов в AngentFab и agents; добавь его в lib и cli  
+ [x] метод list напиши на основании индексов в AgentFab и в per‑project индексах; добавь его в lib и cli  
   
  [ ] создание нового агента и модернизация существующего производится через вызов @AgentFab и не требует отдельного метода
  
- [ ] Модернизируй AgentFab/agent.yaml, чтобы после создания/удаления агента он обновлял индекс `agents/agents.yaml` (секции `agents` и `aliases`) — см. поддержку алиасов в индексации.
+ [ ] Модернизируй AgentFab/agent.yaml, чтобы после создания/удаления агента он обновлял индексы (`prompt/<Project>/agents.yaml` и `AgentFab/agents.yaml`) — см. поддержку алиасов в индексации.
  
  [ ] Используй структуру `.env` по аналогии с `summary-gpt-bot`, но адаптируй под подсистему call (бот не ходит в LLM напрямую):
      - TELEGRAM_TOKEN — токен Telegram‑бота (только из окружения/.env; секреты в репозиторий не коммитим).
@@ -35,9 +35,9 @@ call - call agent: @name <input>
  
  - Индексация и поиск агентов:
    - Реализовать стратегию «сначала индексы, затем сканирование» на основе `call/app/call.py`:
-     - Сначала читать `AgentFab/agents.yaml`, затем `agents/agents.yaml` (учитывая секции `agents` и `aliases`).
+     - Сначала читать `AgentFab/agents.yaml`, затем per‑project `prompt/<Project>/agents.yaml` (учитывая секции `agents` и `aliases`).
      - Использовать нормализацию имени, аналогичную `to_pascal_case()`.
-     - Фоллбэк: поиск `agent.yaml` в `AgentFab/<Name>/` и `agents/<Name>/` (без учёта регистра).
+     - Фоллбэк: поиск `agent.yaml` в `AgentFab/<Name>/` и `prompt/<Project>/<Name>/` (без учёта регистра).
    - В выдаче `/list` показывать по одному имени на строку в формате `@Name`. При `--aliases` — после `@Name` выводить алиасы, каждый с двумя пробелами перед `@` (например, `␠␠@Alias`).
  
  - Обработка ошибок и UX:

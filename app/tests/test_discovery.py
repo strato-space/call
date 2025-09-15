@@ -38,7 +38,7 @@ def test_agents_index_name_and_alias_for_ainewsaggr():
     p1 = m.discover_agent_yaml("AiNewsAggr")
     assert p1 is not None, "AiNewsAggr should resolve via agents index"
     assert Path(p1).parent.name == "AiNewsAggr"
-    # Alias from agents/agents.yaml
+    # Alias from per-project index
     p2 = m.discover_agent_yaml("ai-news")
     assert p2 is not None, "Alias ai-news should resolve via agents index"
     assert Path(p2).parent.name == "AiNewsAggr"
