@@ -169,6 +169,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `list(project, agent, prompt)` returns hierarchical projects → agents with fields: `name`, `aliases`, `prompts`, `path`.
   - `resolve_agent(project, agent, prompt)` returns `{ ok: true, resolved: { project, name, path, aliases, prompts } }` on success.
   - `discover_agent_yaml(name)` looks up indices first, then scans all project folders. It also resolves the root `AgentFab` agent from `AgentFab/project.yaml` or `AgentFab/agent.yaml`.
+  - App layer note: `call.app.call.discover_agent_yaml()` is a thin wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. The legacy `_discover_agent_yaml_compat` helper was removed.
 
 - **Wildcards & errors**
   - Wildcards `*` are supported for `project`, `agent`, and `prompt` filters.
@@ -403,6 +404,7 @@ Notes:
 - Formatting:
   - HTML mode is used for all rich messages. Sanitization is centralized in `call/app/utils/html_sanitizer.py` (via `telegram_prepare_html()`).
   - Only Bot API–supported tags/attrs are emitted (headers mapped to bold + newline; lists flattened; spoilers, `tg-emoji`, code/pre, blockquotes preserved).
+  - Welcome banner spacing: one blank line after the header and one blank line between the user input preview and the attributes block (`mcp`, `vs`, `model`).
 - Routing precedence:
   - Incoming Telegram update chat/thread id (passed to `call.lib.api.call(chat_id=..., thread_id=...)`) → highest priority.
   - Agent YAML `output.tg.chat_id/thread_id` → used only if no explicit chat/thread was provided.
