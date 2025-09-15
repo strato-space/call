@@ -83,3 +83,30 @@ def test_resolve_agent_across_projects_when_project_none(monkeypatch):
     resolved = ok.get("resolved") or {}
     assert resolved.get("project") == "AgentFab"
     assert resolved.get("name") == "BusinessAnalyticAgent"
+
+
+def test_list_agentfab_contains_core_agents(monkeypatch):
+    import importlib
+    mod = importlib.import_module("call.lib.api")
+
+    # Force only AgentFab project and return a deterministic agent list
+    monkeypatch.setattr(mod, "load_projects_index", lambda: ["AgentFab"])  # one project
+
+    def _scan(dirpath):
+        # Simulate AgentFab agents inventory
+        return [
+            {"type": "agent", "id": "", "name": "AgentFab", "aliases": ["Factory"], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"},
+            {"type": "agent", "id": "", "name": "BusinessAnalyticAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"},
+            {"type": "agent", "id": "", "name": "SelfReflection", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/SelfReflection/agent.yaml"},
+            {"type": "agent", "id": "", "name": "DiscoveryAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/DiscoveryAgent/agent.yaml"},
+            {"type": "agent", "id": "", "name": "StratoFormater", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.yaml"},
+        ]
+
+    monkeypatch.setattr(mod, "scan_project_agents", _scan)
+
+    tree = mod.list(project="AgentFab")
+    assert len(tree) == 1
+    agents = {a["name"] for a in (tree[0].get("agents") or [])}
+    expected = {"BusinessAnalyticAgent", "SelfReflection", "DiscoveryAgent", "StratoFormater"}
+    # At least 4 required agents present
+    assert expected.issubset(agents)
