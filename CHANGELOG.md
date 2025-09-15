@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-15
+- Fix: eliminate `NameError` by removing last usage of legacy `_discover_agent_yaml_compat`; app now calls the unified `discover_agent_yaml(agent, project)` wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. (file: `call/app/call.py`)
+- Refactor: complete discovery consolidation in app layer — removed duplicate internal discovery and legacy `_ensure_indices` path from `call/app/call.py`; kept a single thin wrapper to the library. (files: `call/app/call.py`)
+- Fix/UX: Telegram welcome banner spacing — ensured a blank line between user input preview and attributes (`mcp`, `vs`, `model`) and a blank line after the header. (file: `call/app/call.py`)
+- Chore: ignore compiled artifacts — added explicit `app/__pycache__/` to `.gitignore` (already ignoring global `__pycache__/` and `*.py[cod]`), and removed tracked `*.pyc` files from index. (file: `call/.gitignore`)
+- Docs: updated `README.md` to document discovery wrapper delegation and the Telegram banner spacing behavior.
+- Tests: full suite green — 22 passed.
+
 ## 2025-09-14
 - Feat: Introduced `call/repos.sh` script for managing local clones of primary repositories.
 - Feat: Added `repo(url, [dir])` helper that clones when missing and performs `git -C dir pull --ff-only` when the repository exists.
