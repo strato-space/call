@@ -1,7 +1,7 @@
 # Thin wrapper to expose discovery to tests: call.app.call.discover_agent_yaml
-def discover_agent_yaml(agent_name: str):
+def discover_agent_yaml(agent_name: str, project: str | None = None):
     from call.lib.discovery import discover_agent_yaml as _discover
-    return _discover(agent_name)
+    return _discover(agent_name, project=project)
 
 import os
 import argparse
@@ -1731,10 +1731,16 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
         return items
 
 
-async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None) -> AgentConfig:
+async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None) -> AgentConfig:
     """Build AgentConfig by discovering/loading YAML via normalized agent name."""
     norm = to_pascal_case(agent_name or "") if agent_name else ""
-    path_obj: Path | None = discover_agent_yaml(norm) if norm else None
+    path_obj: Path | None = discover_agent_yaml(norm, project=project_name) if norm else None
+
+    try:
+        debug_print("discovery input:", f"agent={norm}", f"project={(project_name or '')}")
+        debug_print("discovery path:", str(path_obj) if path_obj else "<None>")
+    except Exception:
+        pass
 
     dto: AgentDTO | None = None
     if path_obj and Path(path_obj).exists():
@@ -1893,7 +1899,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
 
         # Build agent (respect optional prompt override)
-        cfg = await build_agent_config(agent_name, prompt_override=prompt_override)
+        cfg = await build_agent_config(agent_name, prompt_override=prompt_override, project_name=project_name)
         tools = [WebSearchTool()]
         if cfg.vs_list:
             try:
@@ -2061,12 +2067,13 @@ async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_
         final_output = getattr(cfg, "_last_final_output", None)
         return agent, [], final_output
 
-async def main(agent_path: str = None, user_input: str = "", agent_name: str = ""):
+async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = ""):
     samples_dir = default_samples_dir
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir,
         user_input=user_input,
         cli_agent_name=agent_name,
+        project_name=(project_name or None),
     )
 
 
@@ -2143,6 +2150,7 @@ if __name__ == "__main__":
     #   4) python -m call.app.call -- <input...>              (no agent)
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument('--name', dest='name', default="", help='Agent name (optional)')
+    parser.add_argument('--project', dest='project', default="", help='Project name (optional, restrict discovery to this project)')
     # Capture the rest of the command line after --input verbatim
     parser.add_argument('--input', dest='input_words', nargs=argparse.REMAINDER, help='Input text (optional, multi-word)')
     # Legacy positionals: agent and optional input (quoted or space-separated)
@@ -2151,6 +2159,7 @@ if __name__ == "__main__":
     ns = parser.parse_args(args)
 
     agent_name = str(ns.name or "")
+    project_name = str(ns.project or "")
     user_input = ""
 
     if ns.input_words is not None:
@@ -2166,5 +2175,7 @@ if __name__ == "__main__":
     # Debug print: show agent name parsed from arguments (empty string if absent)
     debug_print(f"call AgentName=\"{agent_name}\"")
     debug_print(f"call input=\"{user_input}\"")
+    if project_name:
+        debug_print(f"call project=\"{project_name}\"")
 
-    _asyncio.run(main(agent_name=agent_name, user_input=user_input))
+    _asyncio.run(main(agent_name=agent_name, user_input=user_input, project_name=project_name))
