@@ -1,23 +1,12 @@
 # Thin wrapper to expose discovery to tests: call.app.call.discover_agent_yaml
 def discover_agent_yaml(agent_name: str, project: str | None = None):
+    """Delegate to call.lib.discovery.discover_agent_yaml(agent_name, project=None).
+
+    - Supports project-scoped search when `project` is provided.
+    - Falls back to cross-project indices and directory scan when `project` is None.
+    """
     from call.lib.discovery import discover_agent_yaml as _discover
     return _discover(agent_name, project=project)
-
-def _discover_agent_yaml_compat(agent_name: str, project: str | None = None):
-    """Call call.lib.discovery.discover_agent_yaml trying new signature first, then fallback."""
-    try:
-        from call.lib.discovery import discover_agent_yaml as _discover
-    except Exception:
-        return None
-    try:
-        return _discover(agent_name, project=project)
-    except TypeError:
-        try:
-            return _discover(agent_name)
-        except Exception:
-            return None
-    except Exception:
-        return None
 
 import os
 import argparse
@@ -49,29 +38,15 @@ except ImportError:
     from agent_utils import extract_agent_attributes, get_agent_instructions
 import shutil
 
-# Import HTML/Telegram/Telegraph utilities from utils with script fallback
-try:
-    from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from .utils.telegram_text import (
-        telegram_truncate_html_safe,
-        telegram_truncate_markdown_safe,
-        telegram_prepare_html,
-        telegram_prepare_markdown,
-    )
-    from .utils.telegraph_utils import publish_results, create_telegrath_account
-except ImportError:
-    # Fallback for when running as a plain script
-    import sys
-    import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
-    from html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
-    from telegram_text import (
-        telegram_truncate_html_safe,
-        telegram_truncate_markdown_safe,
-        telegram_prepare_html,
-        telegram_prepare_markdown,
-    )
-    from telegraph_utils import publish_results, create_telegrath_account
+# Import HTML/Telegram text utilities from package-relative utils
+from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+from .utils.telegram_text import (
+    telegram_truncate_html_safe,
+    telegram_truncate_markdown_safe,
+    telegram_prepare_html,
+    telegram_prepare_markdown,
+)
+from .utils.telegraph_utils import publish_results, create_telegrath_account
 
 
 from mcp.types import CallToolResult
@@ -1250,106 +1225,9 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
                 result[child.name] = (ay, [])
     return result
 
+# legacy _ensure_indices removed; centralized in call.lib.discovery._ensure_indices
 
-def _ensure_indices(rep: Path) -> None:
-    """Create minimal indices agents.yaml in AgentFab/ and agents/ if missing.
-
-    Structure:
-      name: <string>
-      agents: { AgentName: <short description or empty> }
-      aliases: { AgentName: [Alias1, Alias2] }
-    """
-    import yaml
-    for sub in ('AgentFab', 'agents'):
-        base = rep / sub
-        index = base / 'agents.yaml'
-        if index.exists():
-            continue
-        scanned = _scan_agents_dir(base)
-        agents_map = {name: '' for name in scanned.keys()}
-        aliases_map = {name: aliases for name, (_, aliases) in scanned.items() if aliases}
-        if not agents_map and sub == 'AgentFab':
-            # Try to derive from AgentFab root agent.yaml 'agents' section
-            af = rep / 'AgentFab' / 'agent.yaml'
-            if af.exists():
-                try:
-                    data = load_yaml(af) or {}
-                    section = data.get('agents') or {}
-                    if isinstance(section, dict):
-                        for group_val in section.values():
-                            if isinstance(group_val, dict):
-                                for nm, desc in group_val.items():
-                                    agents_map[to_pascal_case(str(nm))] = str(desc or '')
-                except Exception:
-                    pass
-        content = {
-            'name': f'{sub} Agents Index',
-            'agents': agents_map,
-        }
-        if aliases_map:
-            content['aliases'] = aliases_map
-        try:
-            with open(index, 'w', encoding='utf-8') as f:
-                yaml.safe_dump(content, f, allow_unicode=True, sort_keys=False)
-        except Exception:
-            # best-effort; ignore failures
-            pass
-
-
-def discover_agent_yaml(agent_name: str) -> Path | None:
-    """Discover agent YAML with index-first strategy and fallbacks.
-
-    Priority:
-    0) Special-case AgentFab -> prompt/AgentFab/agent.yaml
-    1) Index lookup in AgentFab/agents.yaml (by name or alias)
-    2) Index lookup in agents/agents.yaml (by name or alias)
-    3) Directory scan in AgentFab/<AgentName>/agent.yaml
-    4) Directory scan in agents/<AgentName>/agent.yaml
-    """
-    if not agent_name:
-        return None
-    repo = discover_prompt_repo()
-    query_raw = str(agent_name).strip().lstrip('@')
-    query_norm = to_pascal_case(query_raw)
-
-    # 0) Special-case: AgentFab root card
-    if query_norm.lower() == 'agentfab':
-        root_yaml = repo / 'AgentFab' / 'agent.yaml'
-        return root_yaml if root_yaml.exists() else None
-
-    # Ensure indices exist (best-effort)
-    _ensure_indices(repo)
-
-    # 1) Index lookup AgentFab
-    af_index_map = _load_agents_index(repo / 'AgentFab' / 'agents.yaml', repo / 'AgentFab')
-    if query_norm in af_index_map:
-        return af_index_map[query_norm]
-
-    # 2) Index lookup agents
-    agents_index_map = _load_agents_index(repo / 'agents' / 'agents.yaml', repo / 'agents')
-    if query_norm in agents_index_map:
-        return agents_index_map[query_norm]
-
-    # 3–4) Fallback directory scan with case-insensitive match
-    def find_in_dir(base: Path) -> Path | None:
-        if not base.exists():
-            return None
-        # Try exact
-        direct = base / query_norm / 'agent.yaml'
-        if direct.exists():
-            return direct
-        # Case-insensitive directory match
-        for child in base.iterdir():
-            if child.is_dir() and child.name.lower() == query_norm.lower():
-                cand = child / 'agent.yaml'
-                if cand.exists():
-                    return cand
-        return None
-
-    agentfab_path = find_in_dir(repo / 'AgentFab')
-    if agentfab_path:
-        return agentfab_path
-    return find_in_dir(repo / 'agents')
+"""Centralized discovery is provided by call.lib.discovery.discover_agent_yaml; use the top-of-file wrapper."""
 
 
 def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> Path:

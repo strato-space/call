@@ -107,7 +107,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Command Reference**:
 
   ```bash
-  # List projects/agents/prompts (hierarchical JSON)
+  # List projects, agents, prompts (hierarchical JSON)
   python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
 
   # Call an agent (keyword-only API)
@@ -299,7 +299,7 @@ See also the strategy doc:
 ## Typical Use Cases
 
 - Invoke a named agent pipeline on a payload and route the result to a file/Google Sheet/Telegram.
-- Chain multiple agents/prompts by addressing the next destination as `@Agent`.
+- Chain multiple agents and prompts by addressing the next destination as `@Agent`.
 - Run org-specific ai-team pipelines by prefixing with org name (e.g., `@Ural...`).
 
 ## CLI (planned minimal interface)
