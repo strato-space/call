@@ -388,6 +388,9 @@ def _ensure_indices(rep: Path) -> None:
 
     for base in projects:
         index = base / 'agents.yaml'
+        # Policy: do not auto-generate AgentFab/agents.yaml (maintained manually)
+        if base.name == 'AgentFab':
+            continue
         if index.exists():
             continue
         scanned = _scan_agents_dir(base)
