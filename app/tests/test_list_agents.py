@@ -17,7 +17,7 @@ def test_list_hierarchical(monkeypatch):
             {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": [], "path": "/p/UxFab/DialogSummary/agent.yaml"},
         ]
 
-    monkeypatch.setattr(mod, "_scan_project_agents", _scan)
+    monkeypatch.setattr(mod, "scan_project_agents", _scan)
 
     tree = mod.list()
     assert isinstance(tree, list)
@@ -51,7 +51,7 @@ def test_list_filters_and_wildcards(monkeypatch):
 def test_resolve_agent(monkeypatch):
     mod = importlib.import_module("call.lib.api")
     monkeypatch.setattr(mod, "load_projects_index", lambda: ["UxFab"])  # one project
-    monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
+    monkeypatch.setattr(mod, "scan_project_agents", lambda _: [
         {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
     ])
 

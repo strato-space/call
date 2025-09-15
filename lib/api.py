@@ -34,7 +34,7 @@ from call.lib.discovery import (
     discover_agent_yaml,
     load_yaml,
     load_projects_index,
-    scan_project_agents as _scan_project_agents,
+    scan_project_agents,
 )
 
 
@@ -313,7 +313,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     for proj_name in projects:
         if m_proj and not m_proj.match(proj_name):
             continue
-        agents = _scan_project_agents(repo / proj_name)
+        agents = scan_project_agents(repo / proj_name)
         # Apply agent filter
         if m_agent:
             agents = [a for a in agents if m_agent.match(a.get('name', '')) or any(m_agent.match(al) for al in (a.get('aliases') or []))]
