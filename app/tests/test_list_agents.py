@@ -5,7 +5,7 @@ def test_list_hierarchical(monkeypatch):
     mod = importlib.import_module("call.lib.api")
 
     # Fake projects.yaml index and scans
-    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["AgentFab", "UxFab"])  # two projects
+    monkeypatch.setattr(mod, "load_projects_index", lambda: ["AgentFab", "UxFab"])  # two projects
 
     def _scan(dirpath):
         if str(dirpath).endswith("AgentFab"):
@@ -31,7 +31,7 @@ def test_list_hierarchical(monkeypatch):
 def test_list_filters_and_wildcards(monkeypatch):
     mod = importlib.import_module("call.lib.api")
 
-    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["UxFab"])  # one project
+    monkeypatch.setattr(mod, "load_projects_index", lambda: ["UxFab"])  # one project
     monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
         {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
         {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
@@ -50,7 +50,7 @@ def test_list_filters_and_wildcards(monkeypatch):
 
 def test_resolve_agent(monkeypatch):
     mod = importlib.import_module("call.lib.api")
-    monkeypatch.setattr(mod, "_load_projects_index", lambda: ["UxFab"])  # one project
+    monkeypatch.setattr(mod, "load_projects_index", lambda: ["UxFab"])  # one project
     monkeypatch.setattr(mod, "_scan_project_agents", lambda _: [
         {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
     ])

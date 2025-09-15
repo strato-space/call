@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Chore: ignore compiled artifacts — added explicit `app/__pycache__/` to `.gitignore` (already ignoring global `__pycache__/` and `*.py[cod]`), and removed tracked `*.pyc` files from index. (file: `call/.gitignore`)
 - Docs: updated `README.md` to document discovery wrapper delegation and the Telegram banner spacing behavior.
 - Tests: full suite green — 22 passed.
+- Refactor: centralized projects index loader — added `call.lib.discovery.load_projects_index()` (strict schema), refactored `call.lib.api.list()` to call it directly, removed local wrappers. (files: `call/lib/discovery.py`, `call/lib/api.py`, tests)
 
 ## 2025-09-14
 - Feat: Introduced `call/repos.sh` script for managing local clones of primary repositories.
