@@ -1908,6 +1908,15 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         final_model = yaml_model or env_model or "gpt-5"
         debug_print(f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
+        # Debug: print instructions length and a short preview
+        try:
+            _instr = getattr(cfg, "instructions", "") or ""
+            _instr_preview = _instr[:600] + ("…" if len(_instr) > 600 else "")
+            debug_print("Agent instructions len=", str(len(_instr)))
+            debug_print("Agent instructions preview=\n" + _instr_preview)
+        except Exception:
+            pass
+
         agent = Agent(
             name=f"{cfg.name} [agent]",
             instructions=cfg.instructions,
