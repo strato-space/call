@@ -60,3 +60,26 @@ def test_resolve_agent(monkeypatch):
     resolved = ok.get("resolved") or {}
     assert resolved.get("project") == "UxFab"
     assert resolved.get("name") == "NewsAggr"
+
+
+def test_resolve_agent_across_projects_when_project_none(monkeypatch):
+    mod = importlib.import_module("call.lib.api")
+    # Simulate two projects where the target agent lives under AgentFab
+    monkeypatch.setattr(mod, "load_projects_index", lambda: ["AgentFab", "UxFab"])  # two projects
+
+    def _scan(dirpath):
+        if str(dirpath).endswith("AgentFab"):
+            return [
+                {"type": "agent", "id": "", "name": "BusinessAnalyticAgent", "aliases": ["BAA"], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"}
+            ]
+        return [
+            {"type": "agent", "id": "", "name": "NewsAggr", "aliases": ["NA"], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"}
+        ]
+
+    monkeypatch.setattr(mod, "scan_project_agents", _scan)
+
+    ok = mod.resolve_agent(project=None, agent="BusinessAnalyticAgent")
+    assert ok.get("ok") is True
+    resolved = ok.get("resolved") or {}
+    assert resolved.get("project") == "AgentFab"
+    assert resolved.get("name") == "BusinessAnalyticAgent"
