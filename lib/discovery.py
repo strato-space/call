@@ -196,6 +196,22 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     result: dict[str, tuple[Path, list[str]]] = {}
     if not base_dir.exists():
         return result
+    for child in base_dir.iterdir():
+        if not child.is_dir():
+            continue
+        ay = child / 'agent.yaml'
+        if ay.exists():
+            try:
+                y = load_yaml(ay) or {}
+                name = to_pascal_case(str(y.get('id') or y.get('name') or child.name))
+                aliases: list[str] = []
+                raw_aliases = y.get('aliases') or []
+                if isinstance(raw_aliases, list):
+                    aliases = [to_pascal_case(str(a)) for a in raw_aliases if str(a).strip()]
+                result[name] = (ay, aliases)
+            except Exception:
+                result[child.name] = (ay, [])
+    return result
 
 
 def scan_project_agents(project_dir) -> list[dict]:
@@ -342,22 +358,6 @@ def scan_project_agents(project_dir) -> list[dict]:
             "path": str(ay),
         })
     return out
-    for child in base_dir.iterdir():
-        if not child.is_dir():
-            continue
-        ay = child / 'agent.yaml'
-        if ay.exists():
-            try:
-                y = load_yaml(ay) or {}
-                name = to_pascal_case(str(y.get('id') or y.get('name') or child.name))
-                aliases: list[str] = []
-                raw_aliases = y.get('aliases') or []
-                if isinstance(raw_aliases, list):
-                    aliases = [to_pascal_case(str(a)) for a in raw_aliases if str(a).strip()]
-                result[name] = (ay, aliases)
-            except Exception:
-                result[child.name] = (ay, [])
-    return result
 
 
 def _ensure_indices(rep: Path) -> None:
