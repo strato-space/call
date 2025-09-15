@@ -96,7 +96,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
-    """Load agents index file which may contain 'agents' and optional 'aliases'.
+    """Load per-project agents index which may contain 'agents' and optional 'aliases'.
 
     Returns a mapping from agent name and all aliases (PascalCase) to full agent.yaml Path.
     """
@@ -145,7 +145,7 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
 
 
 def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
-    """Scan a directory for subfolders with agent.yaml.
+    """Scan a project directory for subfolders with agent.yaml.
 
     Returns mapping: AgentName -> (agent_yaml_path, aliases[])
     """
@@ -171,7 +171,7 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
 
 def _ensure_indices(rep: Path) -> None:
-    """Create minimal indices agents.yaml for all known projects (from projects.yaml) and legacy 'agents/'.
+    """Create minimal indices agents.yaml for all known projects (from projects.yaml) and AgentFab.
 
     Structure:
       name: <string>
@@ -193,8 +193,8 @@ def _ensure_indices(rep: Path) -> None:
                     projects.append(p)
     except Exception:
         pass
-    # Always include legacy folders
-    for legacy in ('AgentFab', 'agents'):
+    # Always include AgentFab
+    for legacy in ('AgentFab',):
         p = rep / legacy
         if p.exists() and p not in projects:
             projects.append(p)
@@ -249,10 +249,9 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
 
     Priority:
     0) Special-case AgentFab -> prompt/AgentFab/agent.yaml
-    1) Index lookup in AgentFab/agents.yaml (by name or alias)
-    2) Index lookup in agents/agents.yaml (by name or alias)
-    3) Directory scan in AgentFab/<AgentName>/agent.yaml
-    4) Directory scan in agents/<AgentName>/agent.yaml
+    1) Index lookup in per-project agents.yaml and AgentFab/agents.yaml (by name or alias)
+    2) Directory scan in AgentFab/<AgentName>/agent.yaml
+    3) Directory scan in <Project>/<AgentName>/agent.yaml across known projects
     """
     if not agent_name:
         return None
@@ -283,7 +282,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
     # Ensure indices exist (best-effort) for all known projects
     _ensure_indices(repo)
 
-    # 1) Index lookup across all project indices (projects.yaml + legacy)
+    # 1) Index lookup across all project indices (projects.yaml + AgentFab)
     index_candidates: list[tuple[Path, Path]] = []
     # from projects.yaml
     try:
@@ -295,8 +294,8 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
                 index_candidates.append((base / 'agents.yaml', base))
     except Exception:
         pass
-    # legacy indices
-    for legacy in ('AgentFab', 'agents'):
+    # AgentFab index (creator area)
+    for legacy in ('AgentFab',):
         base = repo / legacy
         index_candidates.append((base / 'agents.yaml', base))
 
@@ -337,8 +336,8 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
                 search_bases.append(repo / str(pname))
     except Exception:
         pass
-    # legacy fallback order
-    search_bases += [repo / 'AgentFab', repo / 'agents']
+    # include AgentFab as a special creator base
+    search_bases += [repo / 'AgentFab']
 
     # Broad fallback: include all top-level directories under repo as potential projects
     # This allows discovery in folders like 'FanFab', 'MediaGenFab', 'UxFab', etc.

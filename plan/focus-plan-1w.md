@@ -93,7 +93,7 @@
 ### E1. @AgentFab
 **Что:** по команде `@AgentFab @AgentName <input>` создаём/разворачиваем посредством @AgentFab нового агента. Например команда `@AgentFab @UxDesigner создавать дизайн по спецификациям от @UxResearcher` порождает нового агента @UxDesigner в prompt/agent.  Здесь `<input>` = создавать дизайн по спецификациям от @UxResearcher: это строка‑goal. Так же доспустимы ссылка на файл с агентом/заготовкой; блок текста в формате Yaml.   
 **Выходы:**
-Сохранённый или обновлённый агент в каталоге `prompt/agents/`. См. подробности: `prompt/AgentFab/agent.md`.
+Сохранённый или обновлённый агент в каталоге `prompt/<Project>/<AgentName>/`. См. подробности: `prompt/AgentFab/agent.md`.
 
 ### E2. @StratoFormater (неразрушительное форматирование)
 **Что:** агент-форматер приводит сырой промпт к Strato-схеме, **ничего не теряя** (содержимое + атрибуты), умеет пакетно прогонять набор файлов.   
@@ -113,7 +113,7 @@
 **DoD:** MCP-методы возвращают структуры в соответствии с клиентом; экспорт в RMS по команде выше создаёт группировку по проектам и индекс `index.md` согласно README.
 
 ### E4. PresentMaker: цепочки + артефакты на ФС
-**Что:** связать стадии презентера и сохранить промежуточные/финальные артефакты через FS‑MCP. Для стадии Strategymark используем контракт из `prompt/agents/PresentMaker/34-Strategymark.md`.   
+**Что:** связать стадии презентера и сохранить промежуточные/финальные артефакты через FS‑MCP. Для стадии Strategymark используем контракт из `prompt/<Project>/PresentMaker/34-Strategymark.md`.   
 **FS-макет (минимум):**
 ```text
 [ ] todo
@@ -142,7 +142,7 @@
     - Порядок поиска (creator → execution):
       1) `prompt/AgentFab/<AgentName>.yaml`
       2) `prompt/AgentFab/<AgentName>/agent.yaml`
-      3) `prompt/agents/<AgentName>/agent.yaml`
+      3) `prompt/<Project>/<AgentName>/agent.yaml`
   - `input` (string) → `inputObj`
   - `output` (string) → `outputObj`
 - FS‑MCP: `fs.save(path, content)` / `fs.read(path)` / `fs.list(dir)` — все промежуточные/финальные артефакты под `rms/output/`.
@@ -150,7 +150,7 @@
 ## 5) Рабочая область RMS, репо и ссылки
 Рабочая зона (артефакты): `rms/output/` (presentations/, tech-docs/, ui-docs/).  
 - Дамп диалогов: `rms/docs/voicebot/` (экспорт через CLI, см. E3).  
-- Карточки/агенты (execution): `prompt/agents/`; карточки‑создатели (creator): `prompt/AgentFab/`.  
+- Карточки/агенты (execution): `prompt/<Project>/`; карточки‑создатели (creator): `prompt/AgentFab/`.  
 - MCP-конфиг: `prompt/mcp_config.json`.
 
 ## 6) Риски и меры
