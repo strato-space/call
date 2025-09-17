@@ -43,6 +43,8 @@ from call.app.utils.telegram_text import (
     telegram_prepare_markdown,
 )
 from call.app.call import get_project_token
+from call.app.call import prompts_ready as _format_prompts_ready
+from call.app.call import prompts_draft as _format_prompts_draft
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -462,6 +464,77 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
+@_require_allowed_users
+async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List ready prompts. Usage: /prompts_ready [<project>] [<agent>|@Agent]"""
+    m = Messenger(context=context, update=update)
+    try:
+        text = (update.message.text or "").strip() if update.message else ""
+        tokens = text.split()
+        # Drop the leading command token even if it has a @Bot suffix
+        if tokens and tokens[0].startswith("/prompts_ready"):
+            tokens = tokens[1:]
+        args = tokens
+        # Derive defaults: if a specific bot is used, default project from bot name
+        proj_default = _get_bot_project(update) or None
+        project = None
+        agent = None
+        for tok in args:
+            t = tok.strip()
+            if not t:
+                continue
+            if t.startswith("@"):
+                agent = t[1:]
+            elif project is None:
+                project = t
+            else:
+                # If project already set, treat the next token as agent if not prefixed
+                agent = t
+        # Use default project if none provided
+        project = project or proj_default
+        md = _format_prompts_ready(project=project, agent=agent)
+        # Fallback: if empty with defaulted project, retry without project filter
+        if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
+            md = _format_prompts_ready(project=None, agent=agent)
+        await m.reply(md, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+
+
+@_require_allowed_users
+async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List draft prompts. Usage: /prompts_draft [<project>] [<agent>|@Agent]"""
+    m = Messenger(context=context, update=update)
+    try:
+        text = (update.message.text or "").strip() if update.message else ""
+        tokens = text.split()
+        # Drop the leading command token even if it has a @Bot suffix
+        if tokens and tokens[0].startswith("/prompts_draft"):
+            tokens = tokens[1:]
+        args = tokens
+        proj_default = _get_bot_project(update) or None
+        project = None
+        agent = None
+        for tok in args:
+            t = tok.strip()
+            if not t:
+                continue
+            if t.startswith("@"):
+                agent = t[1:]
+            elif project is None:
+                project = t
+            else:
+                agent = t
+        project = project or proj_default
+        md = _format_prompts_draft(project=project, agent=agent)
+        # Fallback: if empty with defaulted project, retry without project filter
+        if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
+            md = _format_prompts_draft(project=None, agent=agent)
+        await m.reply(md, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+
+
 async def _call_task(
     m: Messenger,
     name: str,
@@ -685,6 +758,8 @@ def main() -> None:
     app.add_handler(CommandHandler("help", handle_start))
     app.add_handler(CommandHandler("list", handle_list))
     app.add_handler(CommandHandler("projects", handle_projects))
+    app.add_handler(CommandHandler("prompts_ready", handle_prompts_ready))
+    app.add_handler(CommandHandler("prompts_draft", handle_prompts_draft))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
 
