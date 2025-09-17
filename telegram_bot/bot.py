@@ -467,8 +467,9 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def _format_prompt_markdown_row(item: dict) -> str:
     name = str(item.get('name') or item.get('prompt_id') or '').strip()
-    # Show only plain name; no links
-    title = name or '(untitled)'
+    url = item.get('url')
+    # Prefer Markdown link when URL is available; fallback to plain title
+    title = f"[{name}]({url})" if (url and name) else (name or '(untitled)')
     return f"- {title}"
 
 
