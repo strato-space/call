@@ -312,6 +312,29 @@ async def call_async(
             except Exception:
                 pass
 
+    # If the pipeline returned a plain-text error (e.g., "Error: ...\n\nTraceback ..."),
+    # convert it to a structured error envelope to avoid printing stack traces to users.
+    if isinstance(final_output, str) and final_output.strip().lower().startswith("error:"):
+        msg = final_output.strip()
+        # Derive a concise description (first line without "Error: ")
+        first_line = msg.splitlines()[0]
+        desc = first_line[len("Error:"):].strip() if first_line.lower().startswith("error:") else first_line
+        status = 502
+        err_code = "PIPELINE_ERROR"
+        if "connection error" in msg.lower():
+            err_code = "UPSTREAM_CONNECT_ERROR"
+            status = 502
+        return _error_payload(
+            agent=(chosen_name or ""),
+            input=(input or ""),
+            exc=desc or msg,
+            status=status,
+            echo=echo,
+            debug=debug,
+            code=err_code,
+            project=chosen_project,
+        )
+
     return {
         "ok": True,
         "agent": (chosen_name if isinstance(chosen_name, str) else ""),

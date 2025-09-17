@@ -562,7 +562,7 @@ async def send_digest_notification(
         debug_print(f"Digest notification sent id={message_obj.message_id} chat={message_obj.chat_id}")
         return message_obj
     except Exception as e:
-        print(f"Error sending Telegram message/photo: {e}")
+        debug_print(f"Error sending Telegram message/photo: {e}")
         return None
 
 
@@ -1961,10 +1961,10 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             pass
 
         session = SQLiteSession(session_id, db_path)
-        print(f"[INFO] Session id: {session_id} @ {db_path}")
+        debug_print(f"[INFO] Session id: {session_id} @ {db_path}")
 
-        print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
-        print(f"[INFO] Target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
+        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+        debug_print(f"[INFO] Target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
 
         # Send welcome message with agent link and run context (after config is ready)
         try:
@@ -1985,10 +1985,10 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 message_thread_id=selected_thread_id,
             )
         except Exception as e:
-            # Do not block run on welcome banner failures, but log the exception
+            # Do not block run on welcome banner failures, but log the exception in debug mode
             try:
                 err_text = format_exception_text(e)
-                print("[WARN] welcome message send failed:\n" + err_text)
+                debug_print("[WARN] welcome message send failed:\n" + err_text)
             except Exception:
                 pass
 
@@ -2004,7 +2004,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             step1_output = getattr(result1, "final_output", None)
         except Exception as e:
             err_text = format_exception_text(e)
-            print("Error during main agent run:\n" + err_text)
+            # Only print stack in debug mode; still return the error text as final_output for downstream handling
+            debug_print("Error during main agent run:\n" + err_text)
             step1_output = f"Error: {err_text}"
 
         # Notify digest (no image) and push
@@ -2072,7 +2073,7 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
         text=text,
         message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None))
     )
-    print(
+    debug_print(
         f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
 
 
