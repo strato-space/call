@@ -91,3 +91,25 @@ def test_cli_exec_print_instructions_dialogpostanalysis():
     ], env=env)
     assert code == 0, err
     assert "DialogPostAnalysis" in out or "Формирует вопросы" in out
+
+
+def test_cli_exec_tracing_403_error_json():
+    env = os.environ.copy()
+    env.update(essential_env)
+    env["CALL_FAKE_TRACING_403"] = "1"
+    code, out, err = _run_cli([
+        "exec",
+        "--project", "UxFab",
+        "--agent", "DialogPostAnalysis",
+        "--content-item", "Hello",
+    ], env=env)
+    # Should return non-zero exit and JSON error envelope
+    assert code == 1, out + "\n" + err
+    data = json.loads(out)
+    assert data.get("ok") is False
+    assert data.get("error_code") == 403
+    assert data.get("code") == "REQUEST_FORBIDDEN"
+    det = data.get("details") or {}
+    if isinstance(det, dict):
+        inner = det.get("error") or {}
+        assert inner.get("type") == "request_forbidden"

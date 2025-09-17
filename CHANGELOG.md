@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-17
+- Change: enforce strict case-sensitive agent and prompt names across discovery, API, CLI, and Telegram bot (KISS). Removed `to_pascal_case` normalization and any case-insensitive fallbacks. Files updated: `call/lib/discovery.py`, `call/app/call.py`, `call/telegram_bot/bot.py`.
+- Feat (CLI): added `prompts` subcommand to list prompts in flat form (table or JSON) with fields `prompt_id`, `name`, `agent`, `project`, `state`, `url`, `path`. File: `call/cli/main.py`.
+- Feat (CLI): added `exec` subcommand to execute with structured context items via repeated `--content-item` flags (text, URL, or JSON). Extracts Google Docs file id when present. Supports `--output-type` and `--print-instructions`. File: `call/cli/main.py`.
+- Feat (CLI): `--print-instructions` for `call` and `exec` to print merged instructions and exit.
+- UX (CLI): safe UTF‑8 printing on Windows consoles (CP‑1251) via `_safe_print()`; all table/JSON outputs routed through it. Returns exit code `0` on success and `1` when library returns `{ ok:false }` envelopes. File: `call/cli/main.py`.
+- Feat (API): robust pipeline invocation — introspects `run_digest_pipeline` and only passes `merge` kwarg when supported (compatibility with monkeypatched tests). File: `call/lib/api.py`.
+- Feat (API): map Tracing client errors to structured envelopes — messages containing `request_forbidden`/`unsupported_country_region_territory` are returned with `error_code: 403`, `code: "REQUEST_FORBIDDEN"`, and a parsed `details` object when available. Added an early test hook `CALL_FAKE_TRACING_403=1` to simulate this path. File: `call/lib/api.py`.
+- Refactor (discovery): indices and scans now use exact names and also enrich alias mappings from each agent’s local `agent.yaml`. File: `call/lib/discovery.py`.
+- Tests: added CLI integration tests for `prompts` table/JSON, `call/exec --print-instructions`, JSON shape for `list` (aliases/prompts), and error propagation for Tracing 403 via the new test hook. All tests pass under `.venv` — 40 passed.
+- Docs: updated `README.md` to reflect KISS case-sensitive policy, new CLI subcommands, `--print-instructions`, Windows-safe printing, error envelopes and exit codes.
+
 ## 2025-09-15
 - Fix: eliminate `NameError` by removing last usage of legacy `_discover_agent_yaml_compat`; app now calls the unified `discover_agent_yaml(agent, project)` wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. (file: `call/app/call.py`)
 - Refactor: complete discovery consolidation in app layer — removed duplicate internal discovery and legacy `_ensure_indices` path from `call/app/call.py`; kept a single thin wrapper to the library. (files: `call/app/call.py`)
