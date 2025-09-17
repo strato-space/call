@@ -66,6 +66,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             prompt=(args.prompt or None),
             input=(args.input or None),
             echo=bool(getattr(args, "echo", False)),
+            merge=not bool(getattr(args, "no_merge", False)),
         )
         print(json.dumps(result, ensure_ascii=False))
         return 0
@@ -104,6 +105,7 @@ def main() -> int:
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
     p_call.add_argument("--input", default="", help="Input text for the agent")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
+    p_call.add_argument("--no-merge", dest="no_merge", action="store_true", help="Disable attribute/instructions merge (use prompt/agent/project only)")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
     p_call.set_defaults(func=cmd_call)

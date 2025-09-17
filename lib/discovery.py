@@ -130,17 +130,22 @@ def load_projects_index(repo: Path | None = None) -> list[str]:
     if index.exists():
         try:
             data = load_yaml(index) or {}
+        except ModuleNotFoundError:
+            # PyYAML not installed in this environment: fall back to scanning
+            _debug_print(f"PyYAML is not available to parse {index}; falling back to scanning directories")
+            data = None
         except Exception as e:
             raise ValueError(f"Failed to parse {index}: {e}")
-        pr = data.get('projects')
-        if not isinstance(pr, dict) or not pr:
-            keys = ", ".join(sorted(list(data.keys()))) if isinstance(data, dict) else "<non-dict>"
-            example = "projects:\n  UxFab: { description: ... }\n  FanFab: { description: ... }\n"
-            raise ValueError(
-                f"Malformed {index}: expected a non-empty top-level 'projects' mapping. Found keys: [{keys}].\n"
-                f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
-            )
-        return list(pr.keys())
+        if data is not None:
+            pr = data.get('projects')
+            if not isinstance(pr, dict) or not pr:
+                keys = ", ".join(sorted(list(data.keys()))) if isinstance(data, dict) else "<non-dict>"
+                example = "projects:\n  UxFab: { description: ... }\n  FanFab: { description: ... }\n"
+                raise ValueError(
+                    f"Malformed {index}: expected a non-empty top-level 'projects' mapping. Found keys: [{keys}].\n"
+                    f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
+                )
+            return list(pr.keys())
     # Fallback: scan agent repo root
     names: list[str] = []
     try:
