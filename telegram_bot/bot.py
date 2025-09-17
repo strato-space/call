@@ -43,8 +43,7 @@ from call.app.utils.telegram_text import (
     telegram_prepare_markdown,
 )
 from call.app.call import get_project_token
-from call.app.call import prompts_ready as _format_prompts_ready
-from call.app.call import prompts_draft as _format_prompts_draft
+from call.lib.discovery import prompts as _lib_prompts
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -492,10 +491,10 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
                 agent = t
         # Use default project if none provided
         project = project or proj_default
-        md = _format_prompts_ready(project=project, agent=agent)
+        md = _format_prompts_markdown(_lib_prompts(project=project, agent=agent, state='ready'))
         # Fallback: if empty with defaulted project, retry without project filter
         if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
-            md = _format_prompts_ready(project=None, agent=agent)
+            md = _format_prompts_markdown(_lib_prompts(project=None, agent=agent, state='ready'))
         await m.reply(md, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
@@ -526,10 +525,10 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 agent = t
         project = project or proj_default
-        md = _format_prompts_draft(project=project, agent=agent)
+        md = _format_prompts_markdown(_lib_prompts(project=project, agent=agent, state='draft'))
         # Fallback: if empty with defaulted project, retry without project filter
         if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
-            md = _format_prompts_draft(project=None, agent=agent)
+            md = _format_prompts_markdown(_lib_prompts(project=None, agent=agent, state='draft'))
         await m.reply(md, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
