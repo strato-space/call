@@ -10,10 +10,10 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 ### Simplified Agent Discovery (Updated Sep 17, 2025)
 
-- **Directory-based lookup**: Agents are discovered by directory name only under `agent/AgentFab/` and `agent/UxFab/` (AgentFab takes precedence)
-- **Case-insensitive matching**: Agent names are normalized to PascalCase but matched case-insensitively
-- **No registry scanning**: Removed complex metadata matching and registry file processing
-- **Simple syntax**: `@AgentName` or just `AgentName`
+- **Directory-based lookup**: Agents are discovered by directory name only under `agent/<Project>/`.
+- **Case-sensitive matching (KISS)**: No normalization. Use the exact agent names and aliases as defined in YAML and directories.
+- **No registry scanning**: Removed complex metadata matching and registry file processing.
+- **Simple syntax**: `@AgentName` or just `AgentName`.
 
 ### Agent Loading Logic
 
@@ -22,7 +22,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
-## Library return shape and errors (Updated Sep 12, 2025)
+## Library return shape and errors (Updated Sep 17, 2025)
 
 `call.lib.api.call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
 
@@ -38,7 +38,22 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 }
 ```
 
-- On failure the sync facade raises (e.g., `ValueError` when agent not found, or runtime errors). The `echo` flag is included in the success payload for upstream inspection.
+- On failure returns an error envelope:
+
+  ```json
+  {
+    "ok": false,
+    "error_code": 404,
+    "description": "no data found",
+    "code": "NO_DATA_FOUND",
+    "agent": "...",
+    "project": "...",
+    "final_output": null,
+    "echo": false
+  }
+  ```
+
+  Standard codes: `NO_DATA_FOUND`, `TOO_MANY_ROWS`, `INTERNAL_ERROR`, `PIPELINE_ERROR`. Certain upstream errors are mapped, for example Tracing 403 → `error_code: 403`, `code: "REQUEST_FORBIDDEN"`, and `details` with provider payload when available.
 
 Also available (async) — supports empty agent name:
 
@@ -102,7 +117,7 @@ python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
 ```
 
-### CLI usage (Updated Sep 14, 2025)
+### CLI usage (Updated Sep 17, 2025)
 
 - **Command Reference**:
 
@@ -110,8 +125,17 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   # List projects, agents, prompts (hierarchical JSON)
   python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
 
-  # Call an agent (keyword-only API)
-  python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt Draft] [--echo] [--trace SECONDS] [--trace-file PATH]
+  # Call an agent (keyword-only API). Use exact case-sensitive names.
+  python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
+
+  # List prompts (flat). Format: table|json
+  python -m call.cli.main prompts --project FanFab --format json
+
+  # Execute with structured context (content items). Extracts Google Docs file id from URLs.
+  python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
+      --content-item "https://docs.google.com/document/d/FILE_ID/edit" \
+      --content-item '{"type":"text","text":"Hello"}' \
+      [--output-type html] [--print-instructions]
 
   # Legacy positional (app module still supports):
   python -m call.app.call <AgentName> [<input>]
@@ -130,6 +154,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Debugging Features**:
   - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
   - `--trace-file PATH`: Writes stack dumps to specified file
+
+- **Windows console**:
+  - The CLI uses UTF‑8‑safe printing to avoid encoding errors on CP‑1251 consoles.
+  - Exit code is `0` on success (`ok: true`) and `1` on error envelopes (`ok: false`).
 
 ### Projects-aware discovery (Updated Sep 17, 2025)
 

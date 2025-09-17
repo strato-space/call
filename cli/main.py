@@ -125,7 +125,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             merge=not bool(getattr(args, "no_merge", False)),
         )
         _safe_print(json.dumps(result, ensure_ascii=False))
-        return 0
+        return 0 if (isinstance(result, dict) and result.get("ok")) else 1
     except Exception as e:
         err = {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}
         print(json.dumps(err, ensure_ascii=False))
@@ -265,7 +265,7 @@ def main() -> int:
             echo=bool(getattr(args, "echo", False)),
         )
         _safe_print(json.dumps(result, ensure_ascii=False))
-        return 0
+        return 0 if (isinstance(result, dict) and result.get("ok")) else 1
 
     p_exec = sub.add_parser("exec", help="Execute with context items (JSON input)")
     p_exec.add_argument("--project", default="", help="Project name (optional)")

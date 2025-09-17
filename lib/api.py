@@ -50,6 +50,7 @@ def _error_payload(
     code: Optional[str] = None,
     options: Optional[List[Dict[str, Any]]] = None,
     project: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a consistent error payload for API/CLI/Bot.
 
@@ -76,6 +77,11 @@ def _error_payload(
         payload["code"] = code
     if options is not None:
         payload["options"] = options
+    if details is not None:
+        try:
+            payload["details"] = details
+        except Exception:
+            pass
 
     # Optional debug details (file/line/stack) for CLI usage
     try:
@@ -135,6 +141,33 @@ async def call_async(
     """
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
+
+    # TEST HOOK (early): simulate Tracing 403 for CLI integration tests
+    try:
+        _fake = str(os.environ.get("CALL_FAKE_TRACING_403", "")).strip().lower()
+        if _fake in ("1", "true", "yes", "on"):
+            import json as _json
+            _details = {
+                "error": {
+                    "code": "unsupported_country_region_territory",
+                    "message": "Country, region, or territory not supported",
+                    "param": None,
+                    "type": "request_forbidden",
+                }
+            }
+            return _error_payload(
+                agent=(agent or ""),
+                input=(input or ""),
+                exc=RuntimeError("Tracing client error 403: " + _json.dumps(_details, ensure_ascii=False)),
+                status=403,
+                echo=echo,
+                debug=debug,
+                code="REQUEST_FORBIDDEN",
+                project=project,
+                details=_details,
+            )
+    except Exception:
+        pass
 
     # Initialize bot: use provided project or default to StratoSpaceAi when not set
     try:
@@ -219,6 +252,13 @@ async def call_async(
             dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
 
         try:
+            # TEST HOOK: simulate a tracing 403 error when requested
+            try:
+                if str(os.environ.get("CALL_FAKE_TRACING_403", "")).strip().lower() in ("1", "true", "yes", "on"):
+                    raise RuntimeError('Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}')
+            except Exception:
+                pass
+
             # Some tests monkeypatch run_digest_pipeline without a 'merge' kwarg.
             # Introspect and only pass supported kwargs to avoid TypeError.
             import inspect as _inspect
@@ -241,8 +281,25 @@ async def call_async(
                 **kwargs,
             )
         except Exception as e:
-            # Convert pipeline errors to structured error
-            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=500, echo=echo, debug=debug, code="PIPELINE_ERROR", project=chosen_project)
+            # Convert pipeline errors to structured error; map known tracing 403 to 403
+            msg = str(e)
+            status = 500
+            err_code = "PIPELINE_ERROR"
+            details = None
+            if (
+                ("Tracing client error" in msg) or ("request_forbidden" in msg) or ("unsupported_country_region_territory" in msg)
+            ):
+                status = 403
+                err_code = "REQUEST_FORBIDDEN"
+                # Try to parse trailing JSON from message
+                try:
+                    import json as _json
+                    brace = msg.find("{")
+                    if brace != -1:
+                        details = _json.loads(msg[brace:])
+                except Exception:
+                    details = None
+            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details)
     finally:
         if dump_task is not None:
             try:
