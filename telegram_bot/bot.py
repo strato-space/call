@@ -467,21 +467,9 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def _format_prompt_markdown_row(item: dict) -> str:
     name = str(item.get('name') or item.get('prompt_id') or '').strip()
-    project = str(item.get('project') or '').strip()
-    agent = str(item.get('agent') or '').strip()
-    state = str(item.get('state') or '').strip()
-    url = item.get('url')
-    # Prefer GitHub link when available
-    title = f"[{name}]({url})" if (url and name) else (name or '(untitled)')
-    meta_parts = []
-    if project:
-        meta_parts.append(f"proj: {project}")
-    if agent:
-        meta_parts.append(f"agent: {agent}")
-    if state:
-        meta_parts.append(f"state: {state}")
-    meta = (" | ".join(meta_parts)) if meta_parts else ""
-    return f"- {title}  {meta}".rstrip()
+    # Show only plain name; no links
+    title = name or '(untitled)'
+    return f"- {title}"
 
 
 def _format_prompts_markdown(items: list[dict]) -> str:
