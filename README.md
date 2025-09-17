@@ -82,12 +82,14 @@ You can enumerate available agents discovered in the Agent repository via the li
 - Library (Python):
 
   ```python
-  from call.lib.api import list as list_agents
+  from call.lib.api import list as list_agents, resolve_agent
 
-  # Project-scoped (recommended):
-  flat = list_agents(project_name="UxFab")  # [{"name": "...", "path": "..."}, ...]
-  with_aliases = list_agents(project_name="UxFab", include_aliases=True)
-  filtered = list_agents(project_name="UxFab", query="news")
+  # Hierarchical listing for a project (projects -> agents with aliases/prompts)
+  projects = list_agents(project="UxFab")
+
+  # Resolve a single agent selection (exact/case-sensitive names)
+  r = resolve_agent(project="UxFab", agent="DialogPostAnalysis")
+  # -> { ok: true, resolved: { project, name, path, aliases, prompts } }
   ```
 
 - Voice Actions API (requires bearer):
@@ -159,6 +161,17 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - The CLI uses UTF‑8‑safe printing to avoid encoding errors on CP‑1251 consoles.
   - Exit code is `0` on success (`ok: true`) and `1` on error envelopes (`ok: false`).
 
+### Troubleshooting & Debugging
+
+- Quiet console output (default): normal CLI runs avoid noisy prints. To enable verbose diagnostics, set `CALL_DEBUG=1`.
+- Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
+  `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
+- Test hook for CI/manual checks:
+  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
+  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
+- Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
+  (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
+
 ### Projects-aware discovery (Updated Sep 17, 2025)
 
 - **Project index**
@@ -211,7 +224,8 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 ### Legacy Agent Addressing (Deprecated)
 
 - Agent addressing syntax (canonical): `@[OrgName][AgentName][:PipelineName][:PromptName]`
-  - All parts are optional; inside Call, names are normalized to PascalCase.
+  - All parts are optional; historically, names were normalized to PascalCase here.
+  - Current implementation follows the KISS policy (exact, case‑sensitive names). This addressing mode is documented for historical context only and is not recommended.
   - Defaults: `OrgName=Strato`, `AgentName=DiscoveryAgent`, `PromptName=DiscoveryAgentPrompt`.
   - Examples:
     - `@`
