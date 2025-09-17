@@ -219,13 +219,26 @@ async def call_async(
             dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
 
         try:
-            agent_obj, history, final_output = await app_call.run_digest_pipeline(
-                default_samples_dir,
+            # Some tests monkeypatch run_digest_pipeline without a 'merge' kwarg.
+            # Introspect and only pass supported kwargs to avoid TypeError.
+            import inspect as _inspect
+            fn = getattr(app_call, "run_digest_pipeline")
+            sig = None
+            try:
+                sig = _inspect.signature(fn)
+            except Exception:
+                sig = None
+            kwargs = dict(
                 user_input=(input or ""),
                 cli_agent_name=(chosen_name if isinstance(chosen_name, str) else ""),
                 prompt_override=(prompt or None),
                 project_name=(project or None),
-                merge=merge,
+            )
+            if (sig is None) or ("merge" in getattr(sig, "parameters", {})):
+                kwargs["merge"] = merge
+            agent_obj, history, final_output = await fn(
+                default_samples_dir,
+                **kwargs,
             )
         except Exception as e:
             # Convert pipeline errors to structured error

@@ -6,7 +6,6 @@ This module centralizes functions that were previously implemented in
 library API, CLI, and Telegram bot layers.
 
 Provided helpers:
-- to_pascal_case(name: str) -> str
 - discover_prompt_repo() -> Path
 - _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]
 - _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]
@@ -39,33 +38,7 @@ def _debug_print(*parts: str) -> None:
     except Exception:
         pass
 
-
-def to_pascal_case(name: str) -> str:
-    """Normalize agent name to PascalCase as per process-agents.md (case-insensitive input)."""
-    if not name:
-        return ""
-    # strip leading '@' and split by non-alnum and separators like ':' and '/'
-    raw = name.strip().lstrip('@')
-    # only take the AgentName part before ':' if provided
-    raw = raw.split(':', 1)[0]
-    parts: List[str] = []
-    token = ''
-    for ch in raw:
-        if ch.isalnum():
-            token += ch
-        else:
-            if token:
-                parts.append(token)
-                token = ''
-    if token:
-        parts.append(token)
-    # Preserve existing internal capitalization within tokens.
-    # Only uppercase the first character of each token; do not lowercase the remainder.
-    def _cap_preserve(t: str) -> str:
-        if not t:
-            return ''
-        return t[:1].upper() + t[1:]
-    return ''.join(_cap_preserve(p) for p in parts)
+    # KISS policy (2025-09-17): all lookups/use are case-sensitive. No normalization.
 
 
 def discover_prompt_repo() -> Path:
@@ -169,7 +142,7 @@ def load_projects_index(repo: Path | None = None) -> list[str]:
 def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
     """Load per-project agents index which may contain 'agents' and optional 'aliases'.
 
-    Returns a mapping from agent name and all aliases (PascalCase) to full agent.yaml Path.
+    Returns a mapping from agent name and all aliases (exact, case-sensitive) to full agent.yaml Path.
     """
     mapping: dict[str, Path] = {}
 
@@ -197,18 +170,33 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
         aliases_map = data.get('aliases') or {}
         if isinstance(agents_map, dict):
             for name in agents_map.keys():
-                name_pc = to_pascal_case(str(name))
-                # resolve to actual directory casing if present
-                agent_dir = _resolve_dir_case(base_dir, name_pc)
+                name_key = str(name)
+                # resolve to on-disk directory name if present (robustness only)
+                agent_dir = _resolve_dir_case(base_dir, name_key)
                 path = (agent_dir / 'agent.yaml')
                 if path.exists():
-                    mapping[name_pc] = path
-                # bind aliases
+                    mapping[name_key] = path
+                # bind aliases from agents.yaml index (exact case)
                 if isinstance(aliases_map, dict):
-                    for alias in (aliases_map.get(name) or aliases_map.get(name_pc) or []):
-                        alias_pc = to_pascal_case(str(alias))
-                        if alias_pc and path.exists():
-                            mapping[alias_pc] = path
+                    for alias in (aliases_map.get(name) or aliases_map.get(name_key) or []):
+                        alias_key = str(alias)
+                        if alias_key and path.exists():
+                            mapping[alias_key] = path
+                # Enrich aliases from the agent.yaml itself if present
+                try:
+                    if path.exists():
+                        try:
+                            y = load_yaml(path) or {}
+                            raw_aliases = y.get('aliases') or []
+                            if isinstance(raw_aliases, list):
+                                for al in raw_aliases:
+                                    alias_key = str(al)
+                                    if alias_key:
+                                        mapping[alias_key] = path
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
     except Exception:
         # Non-fatal: fallback to directory scan later
         return {}
@@ -230,11 +218,11 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
         if ay.exists():
             try:
                 y = load_yaml(ay) or {}
-                name = to_pascal_case(str(y.get('id') or y.get('name') or child.name))
+                name = str(y.get('id') or y.get('name') or child.name)
                 aliases: list[str] = []
                 raw_aliases = y.get('aliases') or []
                 if isinstance(raw_aliases, list):
-                    aliases = [to_pascal_case(str(a)) for a in raw_aliases if str(a).strip()]
+                    aliases = [str(a) for a in raw_aliases if str(a).strip()]
                 result[name] = (ay, aliases)
             except Exception:
                 result[child.name] = (ay, [])
@@ -535,13 +523,13 @@ def _ensure_indices(rep: Path) -> None:
                     if isinstance(section, dict):
                         # section may be { name: desc } or { name: { desc, aliases, prompts } }
                         for nm, spec in section.items():
-                            agents_map[to_pascal_case(str(nm))] = '' if not isinstance(spec, str) else str(spec or '')
+                            agents_map[str(nm)] = '' if not isinstance(spec, str) else str(spec or '')
                         # Try to enrich aliases_map from nested specs
                         for nm, spec in section.items():
                             if isinstance(spec, dict):
                                 av = spec.get('aliases') or []
                                 if isinstance(av, list) and av:
-                                    aliases_map[to_pascal_case(str(nm))] = [to_pascal_case(str(a)) for a in av if str(a).strip()]
+                                    aliases_map[str(nm)] = [str(a) for a in av if str(a).strip()]
                 except Exception:
                     pass
         content = {
@@ -572,13 +560,13 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
         return None
     repo = discover_agent_repo()
     query_raw = str(agent_name).strip().lstrip('@')
-    query_norm = to_pascal_case(query_raw)
+    query_norm = query_raw  # exact, case-sensitive
     _debug_print("discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
 
     # 0) Special-case: AgentFab root card; support agent.yaml or project.yaml (new schema)
     for root_file in [repo / 'AgentFab' / 'agent.yaml', repo / 'AgentFab' / 'project.yaml']:
         if root_file.exists():
-            if query_norm.lower() == 'agentfab':
+            if query_norm == 'AgentFab':
                 return root_file
             # Consider aliases from root card under either top-level or 'project' block
             try:
@@ -586,11 +574,8 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
                 root_block = data.get('project') or {}
                 aliases = root_block.get('aliases') or data.get('aliases') or []
                 for al in (aliases or []):
-                    if to_pascal_case(str(al)) == query_norm:
+                    if str(al) == query_norm:
                         return root_file
-                # Also accept a few common derived handles
-                if query_norm in {to_pascal_case('Agent Fab'), to_pascal_case('Factory'), to_pascal_case('AgentFabBot')}:
-                    return root_file
             except Exception:
                 pass
 
@@ -622,7 +607,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
         except Exception:
             pass
 
-    # 2) Fallback directory scan with case-insensitive match across all projects
+    # 2) Fallback directory scan with exact case-sensitive match across all projects
     def find_in_dir(base: Path) -> Path | None:
         if not base.exists():
             return None
@@ -630,12 +615,6 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
         direct = base / query_norm / 'agent.yaml'
         if direct.exists():
             return direct
-        # Case-insensitive directory match
-        for child in base.iterdir():
-            if child.is_dir() and child.name.lower() == query_norm.lower():
-                cand = child / 'agent.yaml'
-                if cand.exists():
-                    return cand
         return None
 
     # Search through all project directories
@@ -826,7 +805,7 @@ def resolve_prompt(name: str, *, project: str | None = None, agent: str | None =
     try:
         if agent:
             arepo = discover_agent_repo()
-            ag_norm = to_pascal_case(agent)
+            ag_norm = str(agent)
             proj_candidates: list[Path] = []
             if project:
                 proj_candidates = [arepo / str(project)]
