@@ -826,4 +826,25 @@ def prompts(*, project: str | None = None, agent: str | None = None, state: str 
         if ag and (str(item.get('agent') or '').lower().replace(' ', '') != ag):
             continue
         out.append(item)
+
+    def _nat_key(d: dict):
+        import re
+        # Prefer numeric prefix from prompt_id or name before first dash
+        src = str(d.get('prompt_id') or d.get('name') or '')
+        # Extract leading int (start or before first '-')
+        m = re.match(r"\s*(\d+)", src) or re.match(r"\s*(\d+)-", src)
+        if m:
+            try:
+                return (0, int(m.group(1)))
+            except Exception:
+                pass
+        # Fallback: put after numerics, sort by lowercase name
+        nm = str(d.get('name') or src).lower()
+        return (1, nm)
+
+    try:
+        out.sort(key=_nat_key)
+    except Exception:
+        # best-effort: keep original order on error
+        pass
     return out
