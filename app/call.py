@@ -239,6 +239,12 @@ async def init_bot(*, project_name: str | None = None):
       - If already initialized with the same token, reuse existing instance
     """
     global bot
+    # If no project was requested and the bot already exists, keep using it.
+    # This prevents downgrading to the default TELEGRAM_TOKEN after a project-specific
+    # bot (e.g., AgentFab) has been initialized upstream.
+    if project_name is None and "bot" in globals() and isinstance(bot, Bot):
+        return bot
+
     # Resolve token based on preference order
     token: str | None = None
     if project_name:
