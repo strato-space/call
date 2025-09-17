@@ -10,9 +10,11 @@ All notable changes to this project will be documented in this file.
 - UX (CLI): safe UTF‑8 printing on Windows consoles (CP‑1251) via `_safe_print()`; all table/JSON outputs routed through it. Returns exit code `0` on success and `1` when library returns `{ ok:false }` envelopes. File: `call/cli/main.py`.
 - Feat (API): robust pipeline invocation — introspects `run_digest_pipeline` and only passes `merge` kwarg when supported (compatibility with monkeypatched tests). File: `call/lib/api.py`.
 - Feat (API): map Tracing client errors to structured envelopes — messages containing `request_forbidden`/`unsupported_country_region_territory` are returned with `error_code: 403`, `code: "REQUEST_FORBIDDEN"`, and a parsed `details` object when available. Added an early test hook `CALL_FAKE_TRACING_403=1` to simulate this path. File: `call/lib/api.py`.
+- Feat (API): converted plain-text pipeline failures (`final_output` starting with `"Error:"`) into structured error envelopes (`error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid leaking stack traces to users. File: `call/lib/api.py`.
+- UX (App): reduced noisy console output during normal CLI runs by gating prints behind `CALL_DEBUG`. Welcome banner failures, Telegram send errors, and run-time exceptions are now printed only in debug mode. File: `call/app/call.py`.
 - Refactor (discovery): indices and scans now use exact names and also enrich alias mappings from each agent’s local `agent.yaml`. File: `call/lib/discovery.py`.
 - Tests: added CLI integration tests for `prompts` table/JSON, `call/exec --print-instructions`, JSON shape for `list` (aliases/prompts), and error propagation for Tracing 403 via the new test hook. All tests pass under `.venv` — 40 passed.
-- Docs: updated `README.md` to reflect KISS case-sensitive policy, new CLI subcommands, `--print-instructions`, Windows-safe printing, error envelopes and exit codes.
+- Docs: updated `call/README.md` to reflect KISS case-sensitive policy, new CLI subcommands, `--print-instructions`, Windows-safe printing, error envelopes and exit codes; added `prompt/README.md`; inserted a KISS quickstart section at the top of `agent/README.md`.
 
 ## 2025-09-15
 - Fix: eliminate `NameError` by removing last usage of legacy `_discover_agent_yaml_compat`; app now calls the unified `discover_agent_yaml(agent, project)` wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. (file: `call/app/call.py`)
