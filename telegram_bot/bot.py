@@ -463,6 +463,38 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
+# ---- Local formatting helpers for prompt listings ----
+
+def _format_prompt_markdown_row(item: dict) -> str:
+    name = str(item.get('name') or item.get('prompt_id') or '').strip()
+    project = str(item.get('project') or '').strip()
+    agent = str(item.get('agent') or '').strip()
+    state = str(item.get('state') or '').strip()
+    url = item.get('url')
+    # Prefer GitHub link when available
+    title = f"[{name}]({url})" if (url and name) else (name or '(untitled)')
+    meta_parts = []
+    if project:
+        meta_parts.append(f"proj: {project}")
+    if agent:
+        meta_parts.append(f"agent: {agent}")
+    if state:
+        meta_parts.append(f"state: {state}")
+    meta = (" | ".join(meta_parts)) if meta_parts else ""
+    return f"- {title}  {meta}".rstrip()
+
+
+def _format_prompts_markdown(items: list[dict]) -> str:
+    try:
+        lst = list(items or [])
+    except Exception:
+        lst = []
+    if not lst:
+        return "_No prompts found_"
+    rows = [_format_prompt_markdown_row(x) for x in lst]
+    return "\n".join(rows)
+
+
 @_require_allowed_users
 async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List ready prompts. Usage: /prompts_ready [<project>] [<agent>|@Agent]"""
