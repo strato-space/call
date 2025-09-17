@@ -24,6 +24,7 @@ import os
 import faulthandler
 
 from call.lib import api as call_api
+from call.lib import discovery as call_discovery
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -36,10 +37,52 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
+    """Print a simple table to console.
+
+    columns: list of (key, header)
+    """
+    # Compute column widths
+    widths = []
+    for key, header in columns:
+        w = len(header)
+        for r in rows:
+            w = max(w, len(str(r.get(key, ''))))
+        widths.append(w)
+    # Header
+    header_cells = []
+    for i, (key, header) in enumerate(columns):
+        header_cells.append(header.ljust(widths[i]))
+    print(" | ".join(header_cells))
+    print("-+-".join('-' * w for w in widths))
+    # Rows
+    for r in rows:
+        cells = []
+        for i, (key, header) in enumerate(columns):
+            cells.append(str(r.get(key, '')).ljust(widths[i]))
+        print(" | ".join(cells))
+
+
 def cmd_call(args: argparse.Namespace) -> int:
     agent = (args.agent or "").lstrip("@") if isinstance(args.agent, str) else (args.agent or None)
     trace_fp = None
     try:
+        # Optional: print instructions and exit
+        if getattr(args, "print_instructions", False):
+            try:
+                # Build config to get merged instructions
+                from call.app.call import build_agent_config
+                cfg = call_api.asyncio.run(build_agent_config(agent, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=not bool(getattr(args, "no_merge", False))))  # type: ignore[attr-defined]
+            except Exception:
+                # Fallback to sync wrapper if asyncio not exposed
+                import asyncio as _asyncio
+                async def _go():
+                    from call.app.call import build_agent_config
+                    return await build_agent_config(agent, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=not bool(getattr(args, "no_merge", False)))
+                cfg = _asyncio.run(_go())
+            print(cfg.instructions or "")
+            return 0
+
         # Optional periodic stack dumps for debugging long runs
         if getattr(args, "trace", 0):
             delay = max(1, int(args.trace))
@@ -105,10 +148,121 @@ def main() -> int:
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
     p_call.add_argument("--input", default="", help="Input text for the agent")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
+    p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_call.add_argument("--no-merge", dest="no_merge", action="store_true", help="Disable attribute/instructions merge (use prompt/agent/project only)")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
     p_call.set_defaults(func=cmd_call)
+
+    # prompts subcommand
+    def cmd_prompts(args: argparse.Namespace) -> int:
+        items = call_discovery.prompts(project=(args.project or None), agent=(args.agent or None), state=(args.state or None))
+        if (args.format or 'table').lower() == 'json':
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+            return 0
+        # table view
+        cols = [
+            ("prompt_id", "id"),
+            ("name", "name"),
+            ("agent", "agent"),
+            ("project", "project"),
+            ("state", "state"),
+            ("url", "url"),
+        ]
+        _print_table(items, cols)
+        return 0
+
+    p_prompts = sub.add_parser("prompts", help="List prompts (flat)")
+    p_prompts.add_argument("--project", default="", help="Filter by project")
+    p_prompts.add_argument("--agent", default="", help="Filter by agent")
+    p_prompts.add_argument("--state", default="", help="Filter by state (draft|ready)")
+    p_prompts.add_argument("--format", default="table", choices=["table", "json"], help="Output format")
+    p_prompts.set_defaults(func=cmd_prompts)
+
+    # exec subcommand
+    def _parse_content_item(raw: str) -> dict:
+        raw = raw.strip()
+        # JSON form
+        if raw.startswith('{') and raw.endswith('}'):
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+        # URL or text heuristic
+        import re as _re
+        if _re.match(r"^https?://", raw):
+            item = {"type": "url", "url": raw}
+        else:
+            item = {"type": "text", "text": raw}
+        # Extract Google Docs id for known hosts
+        try:
+            url = item.get("url")
+            if url:
+                # docs.google.com/document/d/<id>/ or .../spreadsheets/d/<id>/
+                m = _re.search(r"/d/([A-Za-z0-9_-]{10,})", url)
+                if m:
+                    item["source"] = {"type": "file", "file_id": m.group(1)}
+        except Exception:
+            pass
+        return item
+
+    def cmd_exec(args: argparse.Namespace) -> int:
+        # Build input payload
+        payload: dict = {}
+        if args.prompt and args.agent:
+            print(json.dumps({"ok": False, "error": "Specify only one of --prompt or --agent"}, ensure_ascii=False))
+            return 1
+        if args.prompt:
+            payload["prompt"] = args.prompt
+        if args.agent:
+            payload["agent"] = args.agent
+        ctx: list = []
+        for ci in (args.content_item or []):
+            try:
+                ctx.append(_parse_content_item(ci))
+            except Exception:
+                continue
+        if ctx:
+            payload["context"] = ctx
+        if args.output_type:
+            payload["output-type"] = args.output_type
+
+        # Optional: print instructions only
+        if getattr(args, "print_instructions", False):
+            try:
+                # Build config to get merged instructions
+                from call.app.call import build_agent_config
+                name = args.agent or ""
+                cfg = call_api.asyncio.run(build_agent_config(name, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=True))  # type: ignore[attr-defined]
+            except Exception:
+                import asyncio as _asyncio
+                async def _go():
+                    from call.app.call import build_agent_config
+                    return await build_agent_config(args.agent or "", prompt_override=(args.prompt or None), project_name=(args.project or None), merge=True)
+                cfg = _asyncio.run(_go())
+            print(cfg.instructions or "")
+            return 0
+
+        # Execute via call API, passing payload as input JSON string
+        result = call_api.call(
+            project=(args.project or None),
+            agent=(args.agent or None),
+            prompt=(args.prompt or None),
+            input=json.dumps(payload, ensure_ascii=False),
+            echo=bool(getattr(args, "echo", False)),
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    p_exec = sub.add_parser("exec", help="Execute with context items (JSON input)")
+    p_exec.add_argument("--project", default="", help="Project name (optional)")
+    p_exec.add_argument("--agent", default="", help="Agent name (mutually exclusive with --prompt)")
+    p_exec.add_argument("--prompt", default="", help="Prompt name (mutually exclusive with --agent)")
+    p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")
+    p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
+    p_exec.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
+    p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
+    p_exec.set_defaults(func=cmd_exec)
 
     args = parser.parse_args()
     return args.func(args)

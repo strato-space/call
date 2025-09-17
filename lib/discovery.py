@@ -254,6 +254,55 @@ def scan_project_agents(project_dir) -> list[dict]:
     out: list[dict] = []
     if not _Path(project_dir).exists():
         return out
+    def _fallback_parse_aliases_prompts(text: str) -> tuple[list[str], list[str]]:
+        """Best-effort parser to extract aliases and prompts lists without PyYAML.
+
+        Supports two forms per key:
+          aliases: [a, b, "c"]
+          aliases:\n            - a\n            - b\n        And same for prompts.
+        """
+        import re as _re
+        aliases: list[str] = []
+        prompts: list[str] = []
+        def _strip_q(s: str) -> str:
+            s = s.strip()
+            if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                return s[1:-1]
+            return s
+        # inline form
+        for key, acc in (("aliases", aliases), ("prompts", prompts)):
+            m = _re.search(rf"^\s*{key}\s*:\s*\[(.*?)\]\s*$", text, _re.MULTILINE)
+            if m:
+                inside = m.group(1)
+                parts = [p.strip() for p in inside.split(',') if p.strip()]
+                acc.extend([_strip_q(p) for p in parts])
+        # block form
+        lines = text.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.strip().startswith('aliases:') or line.strip().startswith('prompts:'):
+                key = 'aliases' if line.strip().startswith('aliases:') else 'prompts'
+                acc = aliases if key == 'aliases' else prompts
+                indent = len(line) - len(line.lstrip(' '))
+                i += 1
+                while i < len(lines):
+                    l2 = lines[i]
+                    if not l2.strip():
+                        i += 1; continue
+                    ind2 = len(l2) - len(l2.lstrip(' '))
+                    if ind2 <= indent:
+                        break
+                    l2s = l2.strip()
+                    if l2s.startswith('-'):
+                        val = _strip_q(l2s[1:].strip())
+                        if val:
+                            acc.append(val)
+                    i += 1
+                continue
+            i += 1
+        return aliases, prompts
+
     # 0) Prefer new unified project.yaml schema when present
     try:
         proj_yaml = _Path(project_dir) / 'project.yaml'
@@ -261,7 +310,20 @@ def scan_project_agents(project_dir) -> list[dict]:
             try:
                 y = load_yaml(proj_yaml) or {}
             except Exception:
-                y = {}
+                # If YAML lib missing or parse fails, best-effort from text
+                try:
+                    y = {}
+                    text = proj_yaml.read_text(encoding='utf-8')
+                    # Attempt to collect agents keys in a naive way
+                    # agents: \n  Name: ...
+                    import re as _re
+                    agents_keys = []
+                    for m in _re.finditer(r"^\s*agents\s*:\s*$", text, _re.MULTILINE):
+                        # collect following lines of '  Key:' until dedent or blank
+                        pass
+                    # Fallback: leave y empty; legacy scan covers agents below
+                except Exception:
+                    y = {}
             # Root project agent
             root_block = {}
             if isinstance(y.get('project'), dict):
@@ -302,6 +364,31 @@ def scan_project_agents(project_dir) -> list[dict]:
                             ag_prompts = [str(k) for k in pv.keys()]
                         elif isinstance(pv, _builtins.list):
                             ag_prompts = [str(k) for k in pv]
+                    # Enrich from per-agent agent.yaml if present
+                    ay = _Path(project_dir) / ag_name / 'agent.yaml'
+                    try:
+                        if ay.exists():
+                            try:
+                                y2 = load_yaml(ay) or {}
+                                if not ag_aliases:
+                                    raw = y2.get('aliases') or []
+                                    if isinstance(raw, _builtins.list):
+                                        ag_aliases = [str(a).strip() for a in raw if str(a).strip()]
+                                if not ag_prompts:
+                                    pv2 = y2.get('prompts') or []
+                                    if isinstance(pv2, dict):
+                                        ag_prompts = [str(k) for k in pv2.keys()]
+                                    elif isinstance(pv2, _builtins.list):
+                                        ag_prompts = [str(k) for k in pv2]
+                            except Exception:
+                                text2 = ay.read_text(encoding='utf-8')
+                                als, prs = _fallback_parse_aliases_prompts(text2)
+                                if not ag_aliases:
+                                    ag_aliases = als
+                                if not ag_prompts:
+                                    ag_prompts = prs
+                    except Exception:
+                        pass
                     # Resolve path: prefer subdir/agent.yaml when present; else project.yaml as definition source
                     ay = _Path(project_dir) / ag_name / 'agent.yaml'
                     path_str = str(ay) if ay.exists() else str(proj_yaml)
@@ -324,7 +411,13 @@ def scan_project_agents(project_dir) -> list[dict]:
             try:
                 y = load_yaml(root_ay) or {}
             except Exception:
-                y = {}
+                try:
+                    y = {}
+                    text = root_ay.read_text(encoding='utf-8')
+                    als, prs = _fallback_parse_aliases_prompts(text)
+                except Exception:
+                    als, prs = ([], [])
+                # We'll use als/prs below when filling aliases/prompts
             name = _Path(project_dir).name
             try:
                 id_or_name = y.get('id') or y.get('name')
@@ -333,19 +426,19 @@ def scan_project_agents(project_dir) -> list[dict]:
             except Exception:
                 pass
             aliases: list[str] = []
-            raw_aliases = y.get('aliases') or []
+            raw_aliases = (y.get('aliases') if isinstance(y, dict) else None) or []
             if isinstance(raw_aliases, _builtins.list):
                 aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
             prompts_list: list[str] = []
-            raw_prompts = y.get('prompts') or {}
+            raw_prompts = (y.get('prompts') if isinstance(y, dict) else None) or {}
             if isinstance(raw_prompts, dict):
                 prompts_list = [str(k) for k in raw_prompts.keys()]
             out.append({
                 "type": "agent",
                 "id": "",
                 "name": name,
-                "aliases": aliases,
-                "prompts": prompts_list,
+                "aliases": aliases if aliases else (als if 'als' in locals() else []),
+                "prompts": prompts_list if prompts_list else (prs if 'prs' in locals() else []),
                 "path": str(root_ay),
             })
     except Exception:
@@ -360,7 +453,12 @@ def scan_project_agents(project_dir) -> list[dict]:
         try:
             y = load_yaml(ay) or {}
         except Exception:
-            y = {}
+            try:
+                y = {}
+                text = ay.read_text(encoding='utf-8')
+                als, prs = _fallback_parse_aliases_prompts(text)
+            except Exception:
+                als, prs = ([], [])
         name = child.name
         try:
             id_or_name = y.get('id') or y.get('name')
@@ -369,19 +467,19 @@ def scan_project_agents(project_dir) -> list[dict]:
         except Exception:
             pass
         aliases: list[str] = []
-        raw_aliases = y.get('aliases') or []
+        raw_aliases = (y.get('aliases') if isinstance(y, dict) else None) or []
         if isinstance(raw_aliases, _builtins.list):
             aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
         prompts_list: list[str] = []
-        raw_prompts = y.get('prompts') or {}
+        raw_prompts = (y.get('prompts') if isinstance(y, dict) else None) or {}
         if isinstance(raw_prompts, dict):
             prompts_list = [str(k) for k in raw_prompts.keys()]
         out.append({
             "type": "agent",
             "id": "",
             "name": name,
-            "aliases": aliases,
-            "prompts": prompts_list,
+            "aliases": aliases if aliases else (als if 'als' in locals() else []),
+            "prompts": prompts_list if prompts_list else (prs if 'prs' in locals() else []),
             "path": str(ay),
         })
     return out
