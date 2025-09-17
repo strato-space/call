@@ -541,12 +541,289 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
         search_bases = [proj_dir]
         _debug_print("project restricted search:", f"base={proj_dir}")
 
-    for base in search_bases:
-        try:
-            p = find_in_dir(base)
-            if p:
-                _debug_print("fallback hit:", f"base={base.name}", f"path={p}")
-                return p
-        except Exception:
-            pass
+        for base in search_bases:
+            try:
+                p = find_in_dir(base)
+                if p:
+                    _debug_print("fallback hit:", f"base={base.name}", f"path={p}")
+                    return p
+            except Exception:
+                pass
     return None
+
+
+def _read_prompt_metadata(path: Path) -> dict:
+    """Parse METADATA YAML fenced block from a StratoFormater Markdown file."""
+    try:
+        text = path.read_text(encoding='utf-8')
+    except Exception:
+        return {}
+    try:
+        start = text.index('<!-- METADATA:START -->')
+        y0 = text.index('```yaml', start) + len('```yaml')
+        y1 = text.index('```', y0)
+        import yaml  # local import
+        data = yaml.safe_load(text[y0:y1]) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _choose_best_prompt(paths: list[Path], *, project: str | None, agent: str | None) -> Path | None:
+    """Pick the best prompt among candidates using metadata and policy."""
+    if not paths:
+        return None
+    prio = {'AgentFab': 0, 'UxFab': 1, 'FanFab': 2, 'MediaGenFab': 3}
+
+    def key(p: Path):
+        m = _read_prompt_metadata(p)
+        m_proj = str(m.get('project') or '')
+        m_agent = str(m.get('agent') or '')
+        proj_match = (project or '').lower() == m_proj.lower() if project else False
+        agent_match = (agent or '').lower().replace(' ', '') == m_agent.lower().replace(' ', '') if agent else False
+        return (
+            0 if (proj_match and agent_match) else 1 if proj_match else 2 if agent_match else 3,
+            prio.get(m_proj, 9),
+            m_agent.lower(),
+            p.name.lower(),
+        )
+
+    try:
+        return sorted(paths, key=key)[0]
+    except Exception:
+        return sorted(paths)[0]
+
+
+def resolve_prompt(name: str, *, project: str | None = None, agent: str | None = None, prefer_ready: bool = True, repo: Path | None = None) -> Path | None:
+    """Resolve a prompt path by name using flat basename layout with disambiguation.
+
+    Search order (Markdown first, then YAML):
+      1) prompt/ready/<name>.md (if prefer_ready)
+      2) prompt/draft/<name>.md
+      3) prompt/ready/<name>--<Agent>.md and prompt/draft/<name>--<Agent>.md (when agent given)
+      4) Otherwise choose among <name>--*.md using metadata/policy
+      5) Repeat 1-4 for .yaml
+      6) Legacy fallback: search non-flat project folders
+    """
+    if not name:
+        return None
+    if repo is None:
+        repo = discover_prompt_repo()
+    prompt_root = Path(repo)
+    ready = prompt_root / 'ready'
+    draft = prompt_root / 'draft'
+
+    nm = str(name).strip()
+    base_md = nm + '.md'
+    base_yaml = nm + '.yaml'
+    agent_sfx_md = f"{nm}--{(agent or '').replace(' ', '')}.md" if agent else None
+    agent_sfx_yaml = f"{nm}--{(agent or '').replace(' ', '')}.yaml" if agent else None
+
+    def try_exact(dirp: Path, fname: str | None) -> Path | None:
+        if not fname:
+            return None
+        p = dirp / fname
+        return p if p.exists() else None
+
+    # Markdown: prefer ready, then draft
+    if prefer_ready:
+        p = try_exact(ready, base_md)
+        if p:
+            return p
+    p = try_exact(draft, base_md)
+    if p:
+        return p
+
+    if agent:
+        if prefer_ready:
+            p = try_exact(ready, agent_sfx_md)
+            if p:
+                return p
+        p = try_exact(draft, agent_sfx_md)
+        if p:
+            return p
+
+    # Variants <name>--*.md
+    def variants(dirp: Path, ext: str) -> list[Path]:
+        try:
+            return sorted(list(dirp.glob(f"{nm}--*.{ext}")))
+        except Exception:
+            return []
+
+    cands: list[Path] = []
+    if prefer_ready:
+        cands += variants(ready, 'md')
+        if not cands:
+            cands += variants(draft, 'md')
+    else:
+        cands += variants(draft, 'md')
+        if not cands:
+            cands += variants(ready, 'md')
+    if cands:
+        best = _choose_best_prompt(cands, project=project, agent=agent)
+        if best:
+            return best
+
+    # YAML exact
+    if prefer_ready:
+        p = try_exact(ready, base_yaml)
+        if p:
+            return p
+    p = try_exact(draft, base_yaml)
+    if p:
+        return p
+    if agent:
+        if prefer_ready:
+            p = try_exact(ready, agent_sfx_yaml)
+            if p:
+                return p
+        p = try_exact(draft, agent_sfx_yaml)
+        if p:
+            return p
+
+    # YAML variants
+    ycands: list[Path] = []
+    if prefer_ready:
+        ycands += variants(ready, 'yaml')
+        if not ycands:
+            ycands += variants(draft, 'yaml')
+    else:
+        ycands += variants(draft, 'yaml')
+        if not ycands:
+            ycands += variants(ready, 'yaml')
+    if ycands:
+        best = _choose_best_prompt(ycands, project=project, agent=agent)
+        if best:
+            return best
+
+    # Legacy fallback under project trees (exclude draft/ready)
+    def legacy(ext: str) -> Path | None:
+        try:
+            roots: list[Path] = []
+            if project:
+                roots = [prompt_root / str(project)]
+            else:
+                for child in prompt_root.iterdir():
+                    if child.is_dir() and child.name not in {'draft', 'ready'} and not child.name.startswith('.'):
+                        roots.append(child)
+            hits: list[Path] = []
+            for r in roots:
+                hits += list(r.rglob(f"{nm}.{ext}"))
+            if not hits:
+                return None
+            hits = [h for h in hits if '/draft/' not in str(h).replace('\\','/') and '/ready/' not in str(h).replace('\\','/')]
+            return _choose_best_prompt(hits, project=project, agent=agent)
+        except Exception:
+            return None
+
+    for ext in ('md', 'yaml'):
+        p = legacy(ext)
+        if p:
+            return p
+    return None
+
+
+def github_blob_url(local_path: str | Path) -> str | None:
+    """Best-effort GitHub blob URL from a local path.
+
+    Environment options:
+      - GITHUB_REMOTE_URL: full remote URL (ssh or https)
+      - GITHUB_REMOTE_ORGANIZATION_URL: org URL; repo derived from top-level folder
+      - GITHUB_BRANCH: defaults to 'master'
+    """
+    try:
+        import os as _os
+        p = Path(local_path)
+        repo_root = Path(__file__).resolve().parents[2]
+        try:
+            rel = str(Path(p).resolve().relative_to(repo_root.resolve()).as_posix())
+        except Exception:
+            rel = p.name
+        branch = _os.getenv("GITHUB_BRANCH", "master")
+        remote = _os.getenv("GITHUB_REMOTE_URL", "").strip()
+        if remote:
+            url = remote
+            if url.startswith("git@github.com:"):
+                url = url.replace("git@github.com:", "https://github.com/")
+            if url.endswith(".git"):
+                url = url[:-4]
+            if url.startswith("http"):
+                return f"{url}/blob/{branch}/{rel}"
+        org = _os.getenv("GITHUB_REMOTE_ORGANIZATION_URL", "").strip().rstrip("/")
+        if org and rel and "/" in rel:
+            top, sub = rel.split("/", 1)
+            if top:
+                return f"{org}/{top}/blob/{branch}/{sub}"
+        return None
+    except Exception:
+        return None
+
+
+def _read_yaml_prompt_metadata(path: Path) -> dict:
+    """Read minimal prompt metadata from a YAML prompt file."""
+    try:
+        import yaml
+        data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+        if not isinstance(data, dict):
+            return {}
+        # normalize keys
+        out = {
+            'version': data.get('version'),
+            'id': data.get('id'),
+            'title': data.get('title') or data.get('name'),
+            'project': data.get('project'),
+            'agent': data.get('agent'),
+            'tags': data.get('tags') if isinstance(data.get('tags'), list) else [],
+        }
+        return {k: v for k, v in out.items() if v is not None}
+    except Exception:
+        return {}
+
+
+def iter_prompts(*, repo: Path | None = None, state: str | None = None):
+    """Yield dictionaries for prompts under draft/ and ready/.
+
+    Each item: { prompt_id, name, agent, project, state, url, path }
+    name is the title from metadata, falls back to filename stem.
+    """
+    if repo is None:
+        repo = discover_prompt_repo()
+    base = Path(repo)
+    states = [state] if state else ['draft', 'ready']
+    for st in states:
+        sub = base / st
+        if not sub.exists():
+            continue
+        for ext in ('md', 'yaml'):
+            for f in sorted(sub.glob(f"*.{ext}")):
+                meta = _read_prompt_metadata(f) if ext == 'md' else _read_yaml_prompt_metadata(f)
+                prompt_id = str(meta.get('id') or f.stem)
+                title = str(meta.get('title') or f.stem)
+                project = meta.get('project') or None
+                agent = meta.get('agent') or None
+                yield {
+                    'prompt_id': prompt_id,
+                    'name': title,
+                    'agent': agent,
+                    'project': project,
+                    'state': st,
+                    'url': github_blob_url(f),
+                    'path': str(f),
+                }
+
+
+def prompts(*, project: str | None = None, agent: str | None = None, state: str | None = None, repo: Path | None = None) -> list[dict]:
+    """Return a list of prompt descriptors from draft/ and ready/ with optional filters.
+
+    Filters are case-insensitive for project and agent.
+    """
+    out: list[dict] = []
+    pj = (project or '').lower()
+    ag = (agent or '').lower().replace(' ', '')
+    for item in iter_prompts(repo=repo, state=state):
+        if pj and (str(item.get('project') or '').lower() != pj):
+            continue
+        if ag and (str(item.get('agent') or '').lower().replace(' ', '') != ag):
+            continue
+        out.append(item)
+    return out
