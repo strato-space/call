@@ -100,7 +100,6 @@ from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
 import re
 from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
-from dataclasses import dataclass, field
 import urllib.parse
 from pathlib import Path
 
@@ -513,7 +512,7 @@ async def send_digest_notification(
                 except Exception:
                     resolved_yaml = None
         if resolved_yaml:
-            agent_cfg = load_yaml(resolved_yaml) or {}
+            agent_cfg = _load_yaml(resolved_yaml) or {}
             btns = agent_cfg.get("buttons")
             if isinstance(btns, list) and btns:
                 row = []
@@ -1656,16 +1655,7 @@ class AgentDTO:
         return None
 
 
-@dataclass
-class AgentConfig:
-    name: str
-    instructions: str
-    model: str
-    model_settings: ModelSettings | None = None
-    vs_list: List[str] = field(default_factory=list)
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    agent_yaml_path: Path | None = None
-    base_dir: Path | None = None
+ 
 
 
 async def resolve_vector_stores(vs_val: Any) -> List[str]:
@@ -1882,7 +1872,9 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
     # Optional YAML config to control MCP servers
     cfg_yaml: dict | None = None
     yaml_path = _call_dir / "mcp_config.yaml"
-    if yaml_path.exists():
+    # Determine whether we should start MCP servers at all for this run
+    should_start_mcp = bool((agent_name or "").strip() or (prompt_override or "").strip() or (project_name or "").strip())
+    if should_start_mcp and yaml_path.exists():
         try:
             with open(yaml_path, "r", encoding="utf-8") as f:
                 cfg_yaml = yaml.safe_load(f) or {}
@@ -1899,7 +1891,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         # Start ALL enabled servers from YAML via helper (lifecycle bound to astack)
         mcp_servers_started: list[Any] = []
-        if cfg_yaml:
+        if should_start_mcp and cfg_yaml:
             try:
                 mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
             except FileNotFoundError:
@@ -1907,10 +1899,6 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 mcp_servers_started = []
             except Exception:
                 mcp_servers_started = []
-        # Skip MCP servers entirely when there is no explicit selection (agent/prompt/project all empty)
-        should_start_mcp = bool((agent_name or "").strip() or (prompt_override or "").strip() or (project_name or "").strip())
-        if not should_start_mcp:
-            mcp_servers_started = []
 
         # Build agent (respect optional prompt override)
         cfg = await build_agent_config(agent_name, prompt_override=prompt_override, project_name=project_name, merge=merge)
@@ -1958,7 +1946,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 pass
         
         merged_output = _merge_outputs(
-            (load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
+            (_load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
             None,
         )
         m_chat, m_thread = _extract_tg_targets(merged_output)
@@ -2074,8 +2062,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         yield agent, cfg, session
         
 
-async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None):
-    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name, merge=True) as (agent, cfg, session):
+async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True):
+    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name, merge=merge) as (agent, cfg, session):
         # Return simplified triple: no history, just final output from cfg attribute
         final_output = getattr(cfg, "_last_final_output", None)
         return agent, [], final_output

@@ -119,6 +119,7 @@ async def call_async(
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
+    merge: bool = True,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -224,6 +225,7 @@ async def call_async(
                 cli_agent_name=(chosen_name if isinstance(chosen_name, str) else ""),
                 prompt_override=(prompt or None),
                 project_name=(project or None),
+                merge=merge,
             )
         except Exception as e:
             # Convert pipeline errors to structured error
@@ -261,6 +263,7 @@ def call(
     thread_id: Optional[int] = None,
     echo: bool = False,
     debug: bool = False,
+    merge: bool = True,
 ) -> Dict[str, Any]:
     """
     Thin sync wrapper over call_async. All selection and error handling is in call_async.
@@ -276,6 +279,7 @@ def call(
                 thread_id=thread_id,
                 echo=echo,
                 debug=debug,
+                merge=merge,
             )
         )
     except Exception as e:
