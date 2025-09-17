@@ -505,10 +505,10 @@ async def send_digest_notification(
             if not resolved_yaml.exists():
                 resolved_yaml = None
         if resolved_yaml is None:
-            agent_name_norm = to_pascal_case(agent_name or "") if agent_name else None
-            if agent_name_norm:
+            agent_name_exact = (agent_name or "").strip() if agent_name else None
+            if agent_name_exact:
                 try:
-                    resolved_yaml = discover_agent_yaml(agent_name_norm)
+                    resolved_yaml = discover_agent_yaml(agent_name_exact)
                 except Exception:
                     resolved_yaml = None
         if resolved_yaml:
@@ -1193,32 +1193,7 @@ class MCPServerStdioHook(MCPServerStdio):
 
 
 # -------- Call subsystem helpers --------
-def to_pascal_case(name: str) -> str:
-    """Normalize agent name to PascalCase as per process-agents.md (case-insensitive input)."""
-    if not name:
-        return ""
-    # strip leading '@' and split by non-alnum and separators like ':' and '/'
-    raw = name.strip().lstrip('@')
-    # only take the AgentName part before ':' if provided
-    raw = raw.split(':', 1)[0]
-    parts = []
-    token = ''
-    for ch in raw:
-        if ch.isalnum():
-            token += ch
-        else:
-            if token:
-                parts.append(token)
-                token = ''
-    if token:
-        parts.append(token)
-    # Preserve existing internal capitalization within tokens.
-    # Only uppercase the first character of each token; do not lowercase the remainder.
-    def _cap_preserve(t: str) -> str:
-        if not t:
-            return ''
-        return t[:1].upper() + t[1:]
-    return ''.join(_cap_preserve(p) for p in parts)
+# KISS policy: names are treated as-is (case-sensitive). No normalization helpers.
 
 
 def discover_prompt_repo() -> Path:
@@ -1271,18 +1246,18 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
         aliases_map = data.get('aliases') or {}
         if isinstance(agents_map, dict):
             for name in agents_map.keys():
-                name_pc = to_pascal_case(str(name))
+                name_key = str(name)
                 # resolve to actual directory casing if present
-                agent_dir = _resolve_dir_case(base_dir, name_pc)
+                agent_dir = _resolve_dir_case(base_dir, name_key)
                 path = (agent_dir / 'agent.yaml')
                 if path.exists():
-                    mapping[name_pc] = path
+                    mapping[name_key] = path
                 # bind aliases
                 if isinstance(aliases_map, dict):
-                    for alias in (aliases_map.get(name) or aliases_map.get(name_pc) or []):
-                        alias_pc = to_pascal_case(str(alias))
-                        if alias_pc and path.exists():
-                            mapping[alias_pc] = path
+                    for alias in (aliases_map.get(name) or aliases_map.get(name_key) or []):
+                        alias_key = str(alias)
+                        if alias_key and path.exists():
+                            mapping[alias_key] = path
     except Exception:
         # Non-fatal: fallback to directory scan later
         return {}
@@ -1304,11 +1279,11 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
         if ay.exists():
             try:
                 y = load_yaml(ay) or {}
-                name = to_pascal_case(str(y.get('id') or y.get('name') or child.name))
+                name = str(y.get('id') or y.get('name') or child.name)
                 aliases = []
                 raw_aliases = y.get('aliases') or []
                 if isinstance(raw_aliases, list):
-                    aliases = [to_pascal_case(str(a)) for a in raw_aliases if str(a).strip()]
+                    aliases = [str(a) for a in raw_aliases if str(a).strip()]
                 result[name] = (ay, aliases)
             except Exception:
                 result[child.name] = (ay, [])
@@ -1720,7 +1695,7 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
     """
     from call.lib.discovery import resolve_prompt as _resolve_prompt, discover_agent_repo as _discover_agent_repo, discover_prompt_repo as _discover_prompt_repo
 
-    norm_agent = to_pascal_case(agent_name or "") if agent_name else ""
+    norm_agent = (agent_name or "").strip() if agent_name else ""
     agent_yaml: Path | None = discover_agent_yaml(norm_agent, project=project_name) if norm_agent else None
     project_yaml: Path | None = None
     if project_name:

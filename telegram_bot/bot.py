@@ -715,7 +715,7 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             arg = arg[len("/clear"):].strip()
         if arg.startswith("@"):
             arg = arg[1:]
-        agent_name = to_pascal_case(arg) if arg else ""
+        agent_name = arg or ""
 
         cid = update.effective_chat.id if update and update.effective_chat else None
         tid = update.message.message_thread_id if update and update.message else None

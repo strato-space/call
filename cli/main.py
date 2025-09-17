@@ -33,8 +33,21 @@ def cmd_list(args: argparse.Namespace) -> int:
         agent=(args.agent or None),
         prompt=(args.prompt or None),
     )
-    print(json.dumps(items, ensure_ascii=False, indent=2))
+    _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
     return 0
+
+
+def _safe_print(s: str) -> None:
+    try:
+        print(s)
+    except UnicodeEncodeError:
+        try:
+            import sys as _sys
+            _sys.stdout.buffer.write(s.encode('utf-8', 'replace'))
+            _sys.stdout.buffer.write(b"\n")
+        except Exception:
+            # last resort: strip non-ascii
+            print(s.encode('ascii', 'ignore').decode('ascii'))
 
 
 def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
@@ -53,14 +66,14 @@ def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
     header_cells = []
     for i, (key, header) in enumerate(columns):
         header_cells.append(header.ljust(widths[i]))
-    print(" | ".join(header_cells))
-    print("-+-".join('-' * w for w in widths))
+    _safe_print(" | ".join(header_cells))
+    _safe_print("-+-".join('-' * w for w in widths))
     # Rows
     for r in rows:
         cells = []
         for i, (key, header) in enumerate(columns):
             cells.append(str(r.get(key, '')).ljust(widths[i]))
-        print(" | ".join(cells))
+        _safe_print(" | ".join(cells))
 
 
 def cmd_call(args: argparse.Namespace) -> int:
@@ -80,7 +93,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                     from call.app.call import build_agent_config
                     return await build_agent_config(agent, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=not bool(getattr(args, "no_merge", False)))
                 cfg = _asyncio.run(_go())
-            print(cfg.instructions or "")
+            _safe_print(cfg.instructions or "")
             return 0
 
         # Optional periodic stack dumps for debugging long runs
@@ -111,7 +124,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             echo=bool(getattr(args, "echo", False)),
             merge=not bool(getattr(args, "no_merge", False)),
         )
-        print(json.dumps(result, ensure_ascii=False))
+        _safe_print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as e:
         err = {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}
@@ -158,7 +171,7 @@ def main() -> int:
     def cmd_prompts(args: argparse.Namespace) -> int:
         items = call_discovery.prompts(project=(args.project or None), agent=(args.agent or None), state=(args.state or None))
         if (args.format or 'table').lower() == 'json':
-            print(json.dumps(items, ensure_ascii=False, indent=2))
+            _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
             return 0
         # table view
         cols = [
@@ -240,7 +253,7 @@ def main() -> int:
                     from call.app.call import build_agent_config
                     return await build_agent_config(args.agent or "", prompt_override=(args.prompt or None), project_name=(args.project or None), merge=True)
                 cfg = _asyncio.run(_go())
-            print(cfg.instructions or "")
+            _safe_print(cfg.instructions or "")
             return 0
 
         # Execute via call API, passing payload as input JSON string
@@ -251,7 +264,7 @@ def main() -> int:
             input=json.dumps(payload, ensure_ascii=False),
             echo=bool(getattr(args, "echo", False)),
         )
-        print(json.dumps(result, ensure_ascii=False))
+        _safe_print(json.dumps(result, ensure_ascii=False))
         return 0
 
     p_exec = sub.add_parser("exec", help="Execute with context items (JSON input)")
