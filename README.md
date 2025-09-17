@@ -8,9 +8,9 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 ## Key Concepts
 
-### Simplified Agent Discovery (Updated Aug 31, 2025)
+### Simplified Agent Discovery (Updated Sep 17, 2025)
 
-- **Directory-based lookup**: Agents are discovered by directory name only under `prompt/AgentFab/` and `prompt/UxFab/` (AgentFab takes precedence)
+- **Directory-based lookup**: Agents are discovered by directory name only under `agent/AgentFab/` and `agent/UxFab/` (AgentFab takes precedence)
 - **Case-insensitive matching**: Agent names are normalized to PascalCase but matched case-insensitively
 - **No registry scanning**: Removed complex metadata matching and registry file processing
 - **Simple syntax**: `@AgentName` or just `AgentName`
@@ -60,7 +60,7 @@ Notes:
 
 ## Listing available agents
 
-You can enumerate available agents discovered in the Prompt repository via the library, the Actions API, or the MCP server.
+You can enumerate available agents discovered in the Agent repository via the library, the Actions API, or the MCP server.
 
 - Important (KISS): agent names are exact and case-sensitive across CLI and Telegram. No automatic normalization; use the exact names shown by `list`.
 
@@ -131,15 +131,15 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - `--trace SECONDS`: Periodically dumps all thread stacks (default: stderr)
   - `--trace-file PATH`: Writes stack dumps to specified file
 
-### Projects-aware discovery (Updated Sep 14, 2025)
+### Projects-aware discovery (Updated Sep 17, 2025)
 
 - **Project index**
-  - The canonical list of projects is defined in `prompt/projects.yaml`.
-  - Each project corresponds to a subdirectory under the prompt repo, for example: `prompt/UxFab/`.
-  - Loader is centralized: `call.lib.discovery.load_projects_index()` reads `projects.yaml` once and is used by the API and discovery paths.
+  - The canonical list of projects is defined in `agent/projects.yaml` (Agent repo).
+  - Each project corresponds to a subdirectory under the agent repo, for example: `agent/UxFab/`.
+  - Loader is centralized: `call.lib.discovery.load_projects_index()` reads `agent/projects.yaml` once and is used by the API and discovery paths.
 
 - **Project manifest: project.yaml**
-  - Each project may define a `project.yaml` manifest in `prompt/<Project>/project.yaml`.
+  - Each project may define a `project.yaml` manifest in `agent/<Project>/project.yaml`.
   - Preferred flattened structure:
 
     ```yaml
@@ -155,23 +155,23 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - Backward compatibility: a nested `project:` block is also supported by the library.
 
 - **Agent location**
-  - Agents live under their project directory: `prompt/<Project>/<Agent>/agent.yaml`.
-  - Example: `prompt/UxFab/AiNewsAggr/agent.yaml`.
+  - Agents live under their project directory: `agent/<Project>/<Agent>/agent.yaml`.
+  - Example: `agent/UxFab/AiNewsAggr/agent.yaml`.
 
-- **Per‑project indices**
-  - The library can auto-generate `prompt/<Project>/agents.yaml` when missing.
+-- **Per‑project indices**
+  - The library can auto-generate `agent/<Project>/agents.yaml` when missing.
   - Generation sources, in order:
     1) Directory scan of `prompt/<Project>/*/agent.yaml`
-    2) If empty, enrich from `prompt/<Project>/project.yaml` (top‑level `agents` or nested `project.agents`)
-    3) For `AgentFab`, fallback enrich from `prompt/AgentFab/agent.yaml` when present
-  - Compatibility: `prompt/AgentFab/` remains supported as the creator area. The legacy `prompt/agents/` layout is no longer supported.
+    2) If empty, enrich from `agent/<Project>/project.yaml` (top‑level `agents` or nested `project.agents`)
+    3) For `AgentFab`, fallback enrich from `agent/AgentFab/agent.yaml` when present
+  - Compatibility: `agent/AgentFab/` remains supported as the creator area. The legacy `prompt/agents/` layout is no longer supported.
 
 - **Library API behavior**
   - `list(project, agent, prompt)` returns hierarchical projects → agents with fields: `name`, `aliases`, `prompts`, `path`.
   - `resolve_agent(project, agent, prompt)` returns `{ ok: true, resolved: { project, name, path, aliases, prompts } }` on success.
-  - `discover_agent_yaml(name)` looks up indices first, then scans all project folders. It also resolves the root `AgentFab` agent from `AgentFab/project.yaml` or `AgentFab/agent.yaml`.
+  - `discover_agent_yaml(name)` looks up indices first, then scans all project folders in the Agent repo. It also resolves the root `AgentFab` agent from `agent/AgentFab/project.yaml` or `agent/AgentFab/agent.yaml`.
   - App layer note: `call.app.call.discover_agent_yaml()` is a thin wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. The legacy `_discover_agent_yaml_compat` helper was removed.
-  - Strict schema: when `prompt/projects.yaml` exists, it must contain a non-empty top-level `projects` mapping. Otherwise a clear error is raised with a fix suggestion. If the file is missing, a fallback scans the repo for plausible project directories.
+  - Strict schema: when `agent/projects.yaml` exists, it must contain a non-empty top-level `projects` mapping. Otherwise a clear error is raised with a fix suggestion. If the file is missing, a fallback scans the agent repo for plausible project directories.
   - Cross-project discovery: when `project=None`, selection functions (`list`, `resolve_agent`, `discover_agent_yaml`) scan all known projects discovered via `projects.yaml` (or repo scan fallback) until a unique match is found.
 
 - **Wildcards & errors**
@@ -207,14 +207,15 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
 Call integrates with and executes artifacts produced by:
 
-- Agent Fab — a factory of early analytical agnets cards and there prompts stored in repo `prompt` directory `AgentFab`.
-- Prompt Repository — canonical storage of prompts, schemas, tests, and metadata stored under project directories (e.g., `prompt/UxFab`, `prompt/FanFab`).
+- Agent Fab — a factory of early analytical agents; cards live in the Agent repo under `agent/AgentFab`.
+- Prompt Repository — canonical storage of prompts under flat folders: `prompt/ready/`, `prompt/draft/`.
 - RAG and MCP servers — optional data access and tool affordances:
   - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice []   
 - Voice Bot, AI News Aggregator, Telegram, Google Sheets/Pages — integration touchpoints.
 
-- Repos list:
-  - prompt - prompt repository;
+-- Repos list:
+  - agent - agent repository (projects, agents index);
+  - prompt - prompt repository (draft/ready);
   - call - this repo;
   - server mcp's starter, nginx cofings 
   - rms sample custromer's of project repo, 
@@ -279,11 +280,10 @@ See also the strategy doc:
   - `input` (string) → `inputObj`
   - `output` (string) → `outputObj`
 - Discovery order (creator → execution):
-  - `prompt/AgentFab/<AgentName>.yaml`
-  - `prompt/AgentFab/<AgentName>/agent.yaml`
-  - `prompt/UxFab/<AgentName>/agent.yaml`
-- Output artifacts (runnable): `prompt/UxFab/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
-- Reference: `prompt/AgentFab/project.yaml` and .
+  - `agent/AgentFab/<AgentName>/agent.yaml`
+  - `agent/UxFab/<AgentName>/agent.yaml`
+- Output artifacts (runnable): `agent/UxFab/<AgentName>/agent.yaml` (+ `prompts/*.yaml`, optional `tests/*`).
+- Reference: `agent/AgentFab/project.yaml`.
 
 - AgentFab card fields:
   - `agents`: map of `AgentName: goal` (names only, without `@`). This replaces the old list format.
@@ -328,7 +328,7 @@ Planned parity in Python (FastAPI) and Node.js (Express/Koa). File-system resolv
 
 ## Configuration
 
-- Prompt Repo location: local FS path (required), optional GitHub resolver.
+- Agent/Prompt Repo locations: local FS paths (required), optional GitHub resolvers.
 - Org registry (YAML): `orgs/{org}.yaml` for per-org defaults, secrets resolvers, allowlists.
 - MCP allowlist per prompt: enforce which MCPs a prompt is allowed to call.
 - Cost hints & token stats: optional; emitted as metrics when configured.
@@ -362,7 +362,8 @@ The module `call.app.call` expects the following environment variables (can be p
 - `TELEGRAM_THREAD_ID` — optional thread id (int)
 - `TELEGRAPH_TOKEN` — Telegra.ph access token
 - `OPENAI_API_KEY` — API key for the LLM
-- `PROMPT_REPO` — absolute path to the Prompt repository; if not set, discovery tries sibling `../prompt` (see `discover_prompt_repo()` in `call/app/call.py`).
+- `PROMPT_REPO` — absolute path to the Prompt repository (holds `draft/` and `ready/` prompts); if not set, discovery tries sibling `../prompt` (see `discover_prompt_repo()` in `call/lib/discovery.py`).
+- `AGENT_REPO` — absolute path to the Agent repository (holds `projects.yaml` and `agent/<Project>/<Agent>/agent.yaml`); if not set, discovery tries sibling `../agent` (see `discover_agent_repo()` in `call/lib/discovery.py`).
 
 Notes:
 - On startup, `call.app.call` will copy `../.env` into local `.env` if `.env` is missing.

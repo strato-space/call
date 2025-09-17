@@ -40,6 +40,8 @@ repo() {
 ensure_repo() { repo "$@"; }
 
 # Ensure core repositories
+repo https://github.com/strato-space/call
+repo https://github.com/strato-space/agent
 repo https://github.com/strato-space/prompt
 repo https://github.com/strato-space/server
 repo https://github.com/strato-space/rms

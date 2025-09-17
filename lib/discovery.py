@@ -88,6 +88,28 @@ def discover_prompt_repo() -> Path:
     raise FileNotFoundError("Prompt repository not found. Set PROMPT_REPO env to its path.")
 
 
+def discover_agent_repo() -> Path:
+    """Locate agent repository root (projects + agents).
+    Priority: env AGENT_REPO -> sibling '../agent' -> workspace default.
+    """
+    env_repo = os.environ.get('AGENT_REPO')
+    if env_repo and Path(env_repo).exists():
+        return Path(env_repo)
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parents[2] / 'agent',  # repo_root/agent
+        here.parents[1] / 'agent',  # call/agent (if copied inside)
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    # As a last resort, if there is no dedicated agent repo, fall back to prompt repo root
+    try:
+        return discover_prompt_repo()
+    except Exception:
+        raise FileNotFoundError("Agent repository not found. Set AGENT_REPO env to its path.")
+
+
 def load_yaml(path: Path) -> dict:
     """Simple YAML loader."""
     import yaml
@@ -96,14 +118,14 @@ def load_yaml(path: Path) -> dict:
 
 
 def load_projects_index(repo: Path | None = None) -> list[str]:
-    """Return list of project names from prompt/projects.yaml (exact, case-sensitive).
+    """Return list of project names from agent/projects.yaml (exact, case-sensitive).
 
     Strict policy:
     - If projects.yaml exists: require a non-empty top-level 'projects' mapping; otherwise raise ValueError with guidance.
     - If projects.yaml is missing: fall back to scanning repo root for plausible project directories.
     """
     if repo is None:
-        repo = discover_prompt_repo()
+        repo = discover_agent_repo()
     index = repo / 'projects.yaml'
     if index.exists():
         try:
@@ -119,7 +141,7 @@ def load_projects_index(repo: Path | None = None) -> list[str]:
                 f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
             )
         return list(pr.keys())
-    # Fallback: scan repo root
+    # Fallback: scan agent repo root
     names: list[str] = []
     try:
         for child in repo.iterdir():
@@ -435,17 +457,17 @@ def _ensure_indices(rep: Path) -> None:
 
 
 def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | None:
-    """Discover agent YAML with index-first strategy and fallbacks.
+    """Discover agent YAML with index-first strategy and fallbacks in the AGENT repo.
 
     Priority:
-    0) Special-case AgentFab -> prompt/AgentFab/agent.yaml
+    0) Special-case AgentFab -> agent/AgentFab/agent.yaml (or project.yaml)
     1) Index lookup in per-project agents.yaml and AgentFab/agents.yaml (by name or alias)
     2) Directory scan in AgentFab/<AgentName>/agent.yaml
     3) Directory scan in <Project>/<AgentName>/agent.yaml across known projects
     """
     if not agent_name:
         return None
-    repo = discover_prompt_repo()
+    repo = discover_agent_repo()
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = to_pascal_case(query_raw)
     _debug_print("discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
@@ -695,6 +717,42 @@ def resolve_prompt(name: str, *, project: str | None = None, agent: str | None =
         best = _choose_best_prompt(ycands, project=project, agent=agent)
         if best:
             return best
+
+    # Agent folder fallback in Agent repo (when agent provided)
+    # Search order: <Project>/<Agent>/<name>.md then .yaml across known projects when project is None
+    try:
+        if agent:
+            arepo = discover_agent_repo()
+            ag_norm = to_pascal_case(agent)
+            proj_candidates: list[Path] = []
+            if project:
+                proj_candidates = [arepo / str(project)]
+            else:
+                try:
+                    for pname in load_projects_index(arepo):
+                        proj_candidates.append(arepo / str(pname))
+                except Exception:
+                    # Broad fallback: any top-level directory
+                    proj_candidates = [p for p in arepo.iterdir() if p.is_dir() and not p.name.startswith('.')]
+            for base in proj_candidates:
+                adir = base / ag_norm
+                if not adir.exists():
+                    # case-insensitive match
+                    try:
+                        for ch in base.iterdir():
+                            if ch.is_dir() and ch.name.lower() == ag_norm.lower():
+                                adir = ch; break
+                    except Exception:
+                        pass
+                if adir.exists():
+                    p_md = adir / f"{nm}.md"
+                    if p_md.exists():
+                        return p_md
+                    p_yaml = adir / f"{nm}.yaml"
+                    if p_yaml.exists():
+                        return p_yaml
+    except Exception:
+        pass
 
     # Legacy fallback under project trees (exclude draft/ready)
     def legacy(ext: str) -> Path | None:
