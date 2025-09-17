@@ -484,6 +484,35 @@ def _format_prompts_markdown(items: list[dict]) -> str:
     return "\n".join(rows)
 
 
+async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: str | None = None, max_len: int = 3800) -> None:
+    """Send a list of Markdown rows split across multiple Telegram messages.
+
+    - max_len: conservative limit below 4000 to avoid entity boundary issues.
+    - header: optional header placed at the top of the first chunk only.
+    """
+    if not rows:
+        await m.reply("_No prompts found_", parse_mode=ParseMode.MARKDOWN)
+        return
+    chunks: list[str] = []
+    cur: list[str] = []
+    cur_len = len(header) if header else 0
+    if header:
+        cur.append(header)
+    for r in rows:
+        # +1 for newline when joined
+        add_len = len(r) + (1 if cur else 0)
+        if cur_len + add_len > max_len and cur:
+            chunks.append("\n".join(cur))
+            cur = []
+            cur_len = 0
+        cur.append(r)
+        cur_len += add_len
+    if cur:
+        chunks.append("\n".join(cur))
+    for ch in chunks:
+        await m.reply(ch, parse_mode=ParseMode.MARKDOWN)
+
+
 @_require_allowed_users
 async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List ready prompts. Usage: /prompts_ready [<project>] [<agent>|@Agent]"""
@@ -512,11 +541,11 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
                 agent = t
         # Use default project if none provided
         project = project or proj_default
-        md = _format_prompts_markdown(_lib_prompts(project=project, agent=agent, state='ready'))
-        # Fallback: if empty with defaulted project, retry without project filter
-        if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
-            md = _format_prompts_markdown(_lib_prompts(project=None, agent=agent, state='ready'))
-        await m.reply(md, parse_mode=ParseMode.MARKDOWN)
+        items = _lib_prompts(project=project, agent=agent, state='ready')
+        if not items and proj_default and not (project and project != proj_default):
+            items = _lib_prompts(project=None, agent=agent, state='ready')
+        rows = [_format_prompt_markdown_row(x) for x in items]
+        await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
@@ -546,11 +575,11 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 agent = t
         project = project or proj_default
-        md = _format_prompts_markdown(_lib_prompts(project=project, agent=agent, state='draft'))
-        # Fallback: if empty with defaulted project, retry without project filter
-        if md.strip() == "_No prompts found_" and proj_default and not (project and project != proj_default):
-            md = _format_prompts_markdown(_lib_prompts(project=None, agent=agent, state='draft'))
-        await m.reply(md, parse_mode=ParseMode.MARKDOWN)
+        items = _lib_prompts(project=project, agent=agent, state='draft')
+        if not items and proj_default and not (project and project != proj_default):
+            items = _lib_prompts(project=None, agent=agent, state='draft')
+        rows = [_format_prompt_markdown_row(x) for x in items]
+        await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
