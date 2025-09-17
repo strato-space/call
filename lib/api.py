@@ -28,7 +28,7 @@ import sqlite3
 
 # Discovery helpers are centralized in call.lib.discovery to avoid circular imports
 from call.lib.discovery import (
-    discover_prompt_repo,
+    discover_agent_repo,
     _ensure_indices,           # private helper; internal use by the lib facade
     _load_agents_index,        # private helper; internal use by the lib facade
     discover_agent_yaml,
@@ -294,7 +294,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     - Supports wildcard '*' in project/agent/prompt (treated as '.*', case-insensitive).
     - Removes legacy 'query' and 'include_aliases'. Aliases are always included from agent.yaml when present.
     """
-    repo = discover_prompt_repo()
+    repo = discover_agent_repo()
 
     # Prepare matchers
     import re as _re

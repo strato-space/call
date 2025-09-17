@@ -1,3 +1,87 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, Any
+
+@dataclass
+class AgentConfig:
+    """Lightweight config used by the runtime to run an Agent.
+
+    Note: This mirrors the minimal fields the pipeline relies on and intentionally
+    avoids coupling to external DTOs. It is sufficient for building the Agent instance.
+    """
+    name: str = ""
+    instructions: str = ""
+    model: str | None = None
+    model_settings: Any | None = None
+    vs_list: list[str] | None = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
+    agent_yaml_path: Path | None = None
+    base_dir: Path | None = None
+    _last_final_output: Any | None = None
+
+
+def _parse_md_metadata_and_prompt(md_text: str) -> tuple[Dict[str, Any], str]:
+    """Extract metadata YAML (between <!-- METADATA:START --> fenced ```yaml ... ```)
+    and prompt body (prefer content between <!-- PROMPT:START --> and <!-- PROMPT:END -->).
+    Falls back to the whole MD text as prompt instructions when tags are absent.
+    """
+    meta: Dict[str, Any] = {}
+    body: str = md_text or ""
+    try:
+        start_tag = "<!-- METADATA:START -->"
+        if start_tag in md_text:
+            y0 = md_text.index(start_tag)
+            y1 = md_text.index("```yaml", y0) + len("```yaml")
+            y2 = md_text.index("```", y1)
+            import yaml as _yaml
+            meta = _yaml.safe_load(md_text[y1:y2]) or {}
+            if not isinstance(meta, dict):
+                meta = {}
+    except Exception:
+        meta = {}
+    try:
+        p0_tag = "<!-- PROMPT:START -->"
+        p1_tag = "<!-- PROMPT:END -->"
+        if p0_tag in md_text and p1_tag in md_text:
+            p0 = md_text.index(p0_tag) + len(p0_tag)
+            p1 = md_text.index(p1_tag, p0)
+            body = md_text[p0:p1].strip()
+    except Exception:
+        body = (md_text or "").strip()
+    return meta, body
+
+
+def _load_yaml(path: Path) -> Dict[str, Any]:
+    try:
+        import yaml as _yaml
+        return _yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _load_card(path: Path) -> tuple[Dict[str, Any], str, str]:
+    """Load a YAML or MD card.
+    Returns (attributes_dict, instructions_text, raw_dump_for_embed)
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception:
+        return {}, "", ""
+    if path.suffix.lower() in {".md", ".markdown"}:
+        meta, body = _parse_md_metadata_and_prompt(text)
+        raw_dump = text
+        return meta, body, raw_dump
+    # YAML
+    data = _load_yaml(path)
+    raw_dump = ""
+    try:
+        import yaml as _yaml
+        raw_dump = _yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    except Exception:
+        raw_dump = text
+    instructions = str(data.get("instructions") or data.get("goal") or "")
+    return (data if isinstance(data, dict) else {}), instructions, raw_dump
+
 # Thin wrapper to expose discovery to tests: call.app.call.discover_agent_yaml
 def discover_agent_yaml(agent_name: str, project: str | None = None):
     """Delegate to call.lib.discovery.discover_agent_yaml(agent_name, project=None).
@@ -1631,70 +1715,88 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
         return items
 
 
-async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None) -> AgentConfig:
-    """Build AgentConfig by discovering/loading YAML via normalized agent name."""
-    norm = to_pascal_case(agent_name or "") if agent_name else ""
-    path_obj: Path | None = discover_agent_yaml(norm, project=project_name) if norm else None
+async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True) -> AgentConfig:
+    """Build AgentConfig from project/agent/prompt cards with new merge policy.
 
-    try:
-        debug_print("discovery input:", f"agent={norm}", f"project={(project_name or '')}")
-        debug_print("discovery path:", str(path_obj) if path_obj else "<None>")
-    except Exception:
-        pass
+    Selection rules:
+      - All of project/agent/prompt are optional. No implicit defaults.
+      - Prompt resolution: prefer prompt repo `ready/`, then `draft/`, then agent folder.
+        Try `.md` first, then `.yaml`.
+      - If merge is True: merge attributes project -> agent -> prompt (prompt wins).
+        Instructions: prompt text (if any) followed by <agent> and <project> blocks with raw cards.
+      - If merge is False: use only the selected artifact (prompt if provided; else agent; else project; else empty).
+      - If only project is provided (no agent/prompt): use project card as instructions/attrs.
+      - If nothing provided: instructions="" and empty attrs.
+    """
+    from call.lib.discovery import resolve_prompt as _resolve_prompt, discover_agent_repo as _discover_agent_repo, discover_prompt_repo as _discover_prompt_repo
 
-    dto: AgentDTO | None = None
-    if path_obj and Path(path_obj).exists():
-        dto = AgentDTO(load_yaml(path_obj), base_dir=Path(path_obj).parent)
+    norm_agent = to_pascal_case(agent_name or "") if agent_name else ""
+    agent_yaml: Path | None = discover_agent_yaml(norm_agent, project=project_name) if norm_agent else None
+    project_yaml: Path | None = None
+    if project_name:
+        project_yaml = (_discover_agent_repo() / str(project_name) / "project.yaml")
+        if not project_yaml.exists():
+            project_yaml = None
 
-    # Defaults
-    default_model = os.environ.get("LLM_MODEL", "gpt-5")
-    # Normalize the agent name once, no fallbacks
-    raw_name = (dto.name if dto and dto.name else (agent_name or "")).strip()
-    name = normalize_agent_name(raw_name)
-    model = (dto.model if dto and dto.model else default_model)
-    model_settings = (dto.model_settings if dto else None)
-    attributes: Dict[str, Any] = dict(getattr(dto, 'attributes', {}) or {})
-    instructions = ""
-    if dto:
+    prompt_path: Path | None = None
+    if isinstance(prompt_override, str) and prompt_override.strip():
         try:
-            # If prompt_override is provided, switch default prompt if available (case-insensitive)
-            if isinstance(prompt_override, str) and prompt_override.strip():
-                try:
-                    pkeys = dto.getPromptNames() if hasattr(dto, 'getPromptNames') else []
-                    target = prompt_override.strip()
-                    # Case-insensitive match over keys
-                    match = next((k for k in pkeys if k.lower() == target.lower()), None)
-                    if match:
-                        # Overwrite default prompt selection for this run
-                        setattr(dto, '_default_prompt_name', match)
-                except Exception:
-                    pass
-            instr, attrs = await dto.getInstructions()
-            instructions = instr or ""
-            if isinstance(attrs, dict):
-                # Merge, but strip aliases from runtime attrs
-                attrs = {k: v for k, v in attrs.items() if k not in {"alias", "aliases"}}
-                attributes |= attrs
+            prompt_path = _resolve_prompt(prompt_override.strip(), project=project_name, agent=norm_agent, prefer_ready=True, repo=_discover_prompt_repo())
         except Exception:
-            instructions = instructions or ""
+            prompt_path = None
+        if prompt_path is None and agent_yaml:
+            # Agent folder fallback handled by resolve_prompt; no action here
+            pass
 
-    # Vector stores from attributes (agent or prompt)
-    vs_list = await resolve_vector_stores(attributes.get('vs'))
+    # Load cards
+    proj_attrs: Dict[str, Any]; proj_instr: str; proj_raw: str
+    ag_attrs: Dict[str, Any]; ag_instr: str; ag_raw: str
+    pr_attrs: Dict[str, Any]; pr_instr: str; pr_raw: str
+    proj_attrs, proj_instr, proj_raw = ({}, "", "") if not project_yaml else _load_card(project_yaml)
+    ag_attrs, ag_instr, ag_raw = ({}, "", "") if not agent_yaml else _load_card(agent_yaml)
+    pr_attrs, pr_instr, pr_raw = ({}, "", "") if not prompt_path else _load_card(prompt_path)
 
-    # Sanitize numeric token fields in model_settings (if provided)
-    try:
-        import re as _re
-        if model_settings:
-            if hasattr(model_settings, 'max_tokens'):
-                v = getattr(model_settings, 'max_tokens')
-                m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
-                setattr(model_settings, 'max_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
-            if hasattr(model_settings, 'max_output_tokens'):
-                v = getattr(model_settings, 'max_output_tokens')
-                m = _re.search(r"\d+", str(v)) if isinstance(v, str) else None
-                setattr(model_settings, 'max_output_tokens', (int(m.group(0)) if m else v) if not isinstance(v, int) else v)
-    except Exception:
-        pass
+    # Determine model and name
+    default_model = os.environ.get("LLM_MODEL", "gpt-5")
+    name = normalize_agent_name(
+        str(ag_attrs.get("id") or ag_attrs.get("name") or norm_agent or pr_attrs.get("agent") or "")
+    )
+    model = str(ag_attrs.get("model") or proj_attrs.get("model") or default_model)
+    model_settings = None  # KISS for now
+
+    # Attributes
+    attributes: Dict[str, Any] = {}
+    instructions = ""
+    if merge:
+        # Merge dictionaries shallowly: project -> agent -> prompt
+        for src in (proj_attrs, ag_attrs, pr_attrs):
+            if isinstance(src, dict):
+                attributes.update({k: v for k, v in src.items() if k not in {"alias", "aliases"}})
+        # Instructions start with prompt text if present; else agent; else project
+        core = pr_instr or ag_instr or proj_instr or ""
+        blocks: list[str] = [core]
+        if ag_raw:
+            blocks.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
+        if proj_raw:
+            blocks.append("<project>\n" + proj_raw.strip() + "\n</project>")
+        instructions = "\n\n".join([b for b in blocks if b.strip()])
+    else:
+        # No merge: prefer prompt-only, else agent-only, else project-only
+        if pr_instr or pr_attrs:
+            attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
+            instructions = pr_instr
+        elif ag_instr or ag_attrs:
+            attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
+            instructions = ag_instr
+        elif proj_instr or proj_attrs:
+            attributes = proj_attrs if isinstance(proj_attrs, dict) else {}
+            instructions = proj_instr
+        else:
+            attributes = {}
+            instructions = ""
+
+    # Vector stores from attributes
+    vs_list = await resolve_vector_stores(attributes.get("vs"))
 
     return AgentConfig(
         name=name,
@@ -1703,8 +1805,8 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
         model_settings=model_settings,
         vs_list=vs_list,
         attributes=attributes,
-        agent_yaml_path=path_obj,
-        base_dir=(path_obj.parent if path_obj else None),
+        agent_yaml_path=agent_yaml,
+        base_dir=(agent_yaml.parent if agent_yaml else None),
     )
 
 
@@ -1770,7 +1872,7 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
 
 
 @asynccontextmanager
-async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None):
+async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
     Usage:
@@ -1796,10 +1898,22 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             return (cfg_yaml.get("mcpServers") or {}).get(name)
 
         # Start ALL enabled servers from YAML via helper (lifecycle bound to astack)
-        mcp_servers_started: list[Any] = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
+        mcp_servers_started: list[Any] = []
+        if cfg_yaml:
+            try:
+                mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
+            except FileNotFoundError:
+                # Graceful: skip missing commands on Windows
+                mcp_servers_started = []
+            except Exception:
+                mcp_servers_started = []
+        # Skip MCP servers entirely when there is no explicit selection (agent/prompt/project all empty)
+        should_start_mcp = bool((agent_name or "").strip() or (prompt_override or "").strip() or (project_name or "").strip())
+        if not should_start_mcp:
+            mcp_servers_started = []
 
         # Build agent (respect optional prompt override)
-        cfg = await build_agent_config(agent_name, prompt_override=prompt_override, project_name=project_name)
+        cfg = await build_agent_config(agent_name, prompt_override=prompt_override, project_name=project_name, merge=merge)
         tools = [WebSearchTool()]
         if cfg.vs_list:
             try:
@@ -1961,13 +2075,12 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         
 
 async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None):
-
-    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name) as (agent, cfg, session):
+    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name, merge=True) as (agent, cfg, session):
         # Return simplified triple: no history, just final output from cfg attribute
         final_output = getattr(cfg, "_last_final_output", None)
         return agent, [], final_output
 
-async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = ""):
+async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = "", prompt_name: str = "", merge: bool = True):
     samples_dir = default_samples_dir
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir,
