@@ -178,6 +178,8 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 ### Troubleshooting & Debugging
 
 - Quiet console output (default): normal CLI runs avoid noisy prints. To enable verbose diagnostics, set `CALL_DEBUG=1`.
+- Centralized debug logging: all layers (app, discovery, Telegram bot) use a single `debug_print()` in `call.lib.logging` gated by `CALL_DEBUG`.
+- Telegram bot: incoming update summaries are logged via `debug_print` (printed only when `CALL_DEBUG=1`).
 - Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
   `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
 - Test hook for CI/manual checks:

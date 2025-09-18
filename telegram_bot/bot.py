@@ -37,6 +37,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
+from call.lib.logging import debug_print
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -154,21 +155,12 @@ def _summarize_update(update: Update) -> str:
 
 
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """TypeHandler callback to log every incoming update (gated by CALL_DEBUG)."""
-    try:
-        enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in ("1", "true", "yes", "on")
-    except Exception:
-        enabled = False
-    if not enabled:
-        return None
-
+    """TypeHandler callback to log every incoming update (uses CALL_DEBUG via debug_print)."""
     summary = _summarize_update(update)
+    # Structured app log remains at INFO
     log.info("Update: %s", summary)
-    # Also print to stdout for easy grepping when logs are redirected
-    try:
-        print(f"[UPDATE] {summary}")
-    except Exception:
-        pass
+    # Console debug output is gated by CALL_DEBUG through debug_print
+    debug_print("[UPDATE]", summary)
     return None
 
 
