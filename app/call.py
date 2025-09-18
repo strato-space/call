@@ -1742,6 +1742,35 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
                 # On parse errors, do not block; assume match
                 pass
 
+        # If no agent explicitly provided, derive from prompt METADATA.agent when available
+        if not norm_agent and prompt_path is not None:
+            try:
+                try:
+                    _text = prompt_path.read_text(encoding="utf-8")  # type: ignore[attr-defined]
+                except Exception:
+                    with open(str(prompt_path), "r", encoding="utf-8") as _fp2:
+                        _text = _fp2.read()
+                _start = _text.find("<!-- METADATA:START -->")
+                if _start != -1:
+                    _y0 = _text.find("```yaml", _start)
+                    if _y0 != -1:
+                        _y0 = _y0 + len("```yaml")
+                        _y1 = _text.find("```", _y0)
+                        _meta = _text[_y0:_y1] if _y1 != -1 else _text[_y0:]
+                        import re as _re
+                        m_agent2 = _re.search(r"^\s*agent\s*:\s*(.+)$", _meta, _re.MULTILINE)
+                        if m_agent2:
+                            a2 = m_agent2.group(1).strip()
+                            if (a2.startswith('"') and a2.endswith('"')) or (a2.startswith("'") and a2.endswith("'")):
+                                a2 = a2[1:-1]
+                            if a2:
+                                norm_agent = a2
+                                # Try to discover agent YAML within provided project_name when present
+                                agent_yaml = discover_agent_yaml(norm_agent, project=project_name) if norm_agent else None
+            except Exception:
+                # best-effort only
+                pass
+
     # Load cards
     proj_attrs: Dict[str, Any]; proj_instr: str; proj_raw: str
     ag_attrs: Dict[str, Any]; ag_instr: str; ag_raw: str

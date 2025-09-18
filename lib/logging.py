@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import logging
+import sys
 
 
 def _env_true(name: str) -> bool:
@@ -127,9 +128,9 @@ def debug_print(*parts: str) -> None:
         # Preserve console debug print for CLI greppability and add logger name prefix
         try:
             lname = getattr(logger, "name", _LOGGER_NAME) or _LOGGER_NAME
-            print(f"[DEBUG] [{lname}] {msg}")
+            print(f"[DEBUG] [{lname}] {msg}", file=sys.stderr)
         except Exception:
-            print(f"[DEBUG] {msg}")
+            print(f"[DEBUG] {msg}", file=sys.stderr)
     except Exception:
         # Never raise from debug logging
         pass
