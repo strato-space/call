@@ -89,14 +89,14 @@ def interpret_target(
 Library API for the call subsystem.
 
 Public surface (keyword-only):
-- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
-- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
+- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
+- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
 - list(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> list[dict]  # hierarchical
 - resolve_agent(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> dict
 
 Behavior:
-- Success: { ok: true, agent, agent_path, final_output, echo, resolved }
-- Failure: { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [...], agent, project, final_output: null, echo }
+- Success: { ok: true, agent, agent_path, final_output, echo, resolved, session_id? }
+- Failure: { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [...], agent, project, final_output: null, echo, session_id? }
   Codes: INTERNAL_ERROR, NOT_FOUND, NO_DATA_FOUND, TOO_MANY_ROWS, PIPELINE_ERROR
 
 This module reuses discovery and pipeline utilities from `call/app/call.py`. It focuses on a
@@ -220,6 +220,7 @@ def _error_payload(
     options: Optional[List[Dict[str, Any]]] = None,
     project: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a consistent error payload for API/CLI/Bot.
 
@@ -242,6 +243,11 @@ def _error_payload(
         "final_output": None,
         "echo": bool(echo),
     }
+    if session_id:
+        try:
+            payload["session_id"] = session_id
+        except Exception:
+            pass
     if code:
         payload["code"] = code
     if options is not None:
@@ -284,6 +290,25 @@ def _error_payload(
     return payload
 
 
+def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]:
+    """Extract chat_id and thread_id from a session id string of the form:
+    "AgentName:chat" or "AgentName:chat:thread".
+    Returns (chat_id, thread_id).
+    """
+    if not raw:
+        return None, None
+    try:
+        s = str(raw).strip()
+        parts = s.split(":")
+        if len(parts) < 2:
+            return None, None
+        chat = int(parts[1]) if parts[1] else None
+        thread = int(parts[2]) if len(parts) > 2 and parts[2] else None
+        return chat, thread
+    except Exception:
+        return None, None
+
+
 async def call_async(
     *,
     project: Optional[str],
@@ -293,6 +318,7 @@ async def call_async(
     input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
     merge: bool = True,
@@ -342,6 +368,7 @@ async def call_async(
                 code="REQUEST_FORBIDDEN",
                 project=project,
                 details=_details,
+                session_id=(session_id or None),
             )
     except Exception:
         pass
@@ -359,6 +386,7 @@ async def call_async(
             code=str(terr.get("code") or "BAD_REQUEST"),
             project=proj2,
             options=terr.get("options"),
+            session_id=(session_id or None),
         )
     project, agent, prompt = proj2, agent2, prompt2
 
@@ -369,6 +397,11 @@ async def call_async(
         cfg, cfg_err = None, None
     if isinstance(cfg_err, dict):
         # Preserve original error envelope (status/code) from resolve_agent
+        try:
+            if session_id:
+                cfg_err["session_id"] = session_id
+        except Exception:
+            pass
         return cfg_err
 
     # If prompt contains wildcard, resolve it against repository with filters first
@@ -407,18 +440,46 @@ async def call_async(
     resolved_env = resolve_agent(project=project, agent=agent, prompt=prompt)
     if not resolved_env.get("ok"):
         # Error envelope already prepared
+        if isinstance(resolved_env, dict) and (session_id or ""):
+            try:
+                # Inject session_id for downstream callers if provided
+                resolved_env["session_id"] = session_id
+            except Exception:
+                pass
         return resolved_env
     resolved = resolved_env.get("resolved") or {}
     chosen_name = resolved.get("name")
     chosen_project = resolved.get("project") or (project or "")
     yaml_path = resolved.get("path")
 
-    # Align with app/main: set effective targets (falling back to env defaults)
-    selected_chat_id = chat_id or app_call.TELEGRAM_CHAT_ID
-    selected_thread_id = thread_id or (app_call.TELEGRAM_THREAD_ID or None)
+    # Align with app/main: set effective targets according to session rules
+    # Priority:
+    #   1) If session_id override provided: parse chat/thread from it
+    #   2) Else if chat_id/thread_id args provided: use them (fallback to env for missing)
+    #   3) Else: do not route to Telegram and do not create a session
+    sel_chat: Optional[int] = None
+    sel_thread: Optional[int] = None
+    sid_override = (session_id or "").strip()
+    if sid_override:
+        c, t = _parse_session_id(sid_override)
+        sel_chat, sel_thread = c, t
+    else:
+        if (chat_id is not None) or (thread_id is not None):
+            sel_chat = chat_id if chat_id is not None else app_call.TELEGRAM_CHAT_ID
+            sel_thread = thread_id if thread_id is not None else (app_call.TELEGRAM_THREAD_ID or None)
+        else:
+            sel_chat, sel_thread = None, None
+
+    selected_chat_id = sel_chat
+    selected_thread_id = sel_thread
     # Update the app module globals so downstream utils see them
     app_call.selected_chat_id = selected_chat_id
     app_call.selected_thread_id = selected_thread_id
+    # Signal to app layer whether to create a session or not
+    try:
+        setattr(app_call, "force_no_session", bool(selected_chat_id is None))
+    except Exception:
+        pass
 
     # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
@@ -497,6 +558,11 @@ async def call_async(
                 merge=(cfg.merge if cfg is not None else merge),
             ) as (agent_obj, _cfg, _session):
                 final_output = getattr(_cfg, "_last_final_output", None)
+                # Try to read actual session id from session object
+                try:
+                    actual_sid = getattr(_session, "id", None)
+                except Exception:
+                    actual_sid = None
         except Exception as e:
             # Convert pipeline errors to structured error; map known tracing 403 to 403
             msg = str(e)
@@ -516,7 +582,7 @@ async def call_async(
                         details = _json.loads(msg[brace:])
                 except Exception:
                     details = None
-            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details)
+            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details, session_id=(session_id or None))
     finally:
         if dump_task is not None:
             try:
@@ -550,7 +616,20 @@ async def call_async(
             debug=debug,
             code=err_code,
             project=chosen_project,
+            session_id=(session_id or None),
         )
+
+    # Prefer actual session id from app layer when available; otherwise, derive if we have chat/thread
+    try:
+        session_id_out = actual_sid if (locals().get("actual_sid") is not None) else None
+    except Exception:
+        session_id_out = None
+    if not session_id_out and (selected_chat_id is not None):
+        try:
+            nm = (chosen_name if isinstance(chosen_name, str) else "")
+            session_id_out = f"{nm}:{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f"{nm}:{selected_chat_id}"
+        except Exception:
+            session_id_out = None
 
     return {
         "ok": True,
@@ -560,6 +639,7 @@ async def call_async(
         # echo flag included for callers that want to inspect behavior upstream
         "echo": bool(echo),
         "resolved": resolved,
+        **({"session_id": session_id_out} if session_id_out else {}),
     }
 
 
@@ -572,6 +652,7 @@ def call(
     input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
     merge: bool = True,
@@ -589,13 +670,14 @@ def call(
                 input=input,
                 chat_id=chat_id,
                 thread_id=thread_id,
+                session_id=session_id,
                 echo=echo,
                 debug=debug,
                 merge=merge,
             )
         )
     except Exception as e:
-        return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project)
+        return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project, session_id=(session_id or None))
 
 
 # No local wrapper for projects index; use discovery.load_projects_index() directly
@@ -749,3 +831,51 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
         }
 
     return {"ok": True, "cleared": cleared}
+
+
+def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Validate and normalize a single exec payload into kwargs for call().
+
+    Rules:
+    - Exactly one of agent/prompt/target must be present (truthy string).
+    - context is converted to an input JSON string when present; otherwise empty string.
+    - session_id, project, echo are passed through when present.
+
+    Returns (kwargs, err) where kwargs can be passed to call(**kwargs) and err is an error envelope on validation error.
+    """
+    try:
+        t = (payload.get("target") or payload.get("prompt") or payload.get("agent") or None)
+        fields = [f for f in [payload.get("target"), payload.get("prompt"), payload.get("agent")] if (str(f or "").strip())]
+        if len(fields) != 1:
+            return {}, {
+                "ok": False,
+                "error_code": 400,
+                "description": "Provide exactly one of 'target' or 'prompt' or 'agent'",
+                "code": "BAD_REQUEST",
+            }
+        import json as _json
+        # Input priority: explicit payload["input"] if present; else full payload JSON
+        if "input" in payload:
+            raw_inp = payload.get("input")
+            inp = raw_inp if isinstance(raw_inp, str) else _json.dumps(raw_inp, ensure_ascii=False)
+        else:
+            inp = _json.dumps(payload, ensure_ascii=False)
+        kwargs = {
+            "project": (payload.get("project") or None),
+            "agent": None,
+            "prompt": None,
+            "target": t,
+            "input": inp,
+            "echo": bool(payload.get("echo", True)),
+        }
+        sid = payload.get("session_id")
+        if sid:
+            kwargs["session_id"] = str(sid)
+        return kwargs, None
+    except Exception as e:
+        return {}, {
+            "ok": False,
+            "error_code": 400,
+            "description": str(e),
+            "code": "BAD_REQUEST",
+        }

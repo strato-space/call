@@ -14,6 +14,7 @@ except Exception as e:  # pragma: no cover
 # Library imports (no cross-reference with 'voice')
 from call.lib.api import call as call_lib
 from call.lib.api import list as list_agents
+from call.lib.api import interpret_exec_payload
 from call.lib.discovery import prompts as list_prompts
 
 
@@ -60,17 +61,12 @@ def mcp_exec(
 ) -> Any:
     """Execute using a single JSON payload.
 
-    Payload shape: { agent?: str, prompt?: str, target?: str, context?: any, project?: str, echo?: bool }
+    Payload shape: { agent?: str, prompt?: str, target?: str, context?: any, project?: str, echo?: bool, session_id?: str }
     """
-    try:
-        import json as _json
-        inp = _json.dumps(payload.get("context")) if ("context" in payload) else ""
-    except Exception:
-        inp = str(payload.get("context"))
-    t = payload.get("target") or payload.get("prompt") or payload.get("agent") or None
-    pj = payload.get("project") or None
-    ec = bool(payload.get("echo", True))
-    return call_lib(project=pj, agent=None, prompt=None, target=t, input=inp, echo=ec)
+    kwargs, err = interpret_exec_payload(payload or {})
+    if err:
+        return err
+    return call_lib(**kwargs)
 
 
 async def main():

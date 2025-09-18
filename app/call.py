@@ -223,10 +223,12 @@ def ensure_env(var: str, default: str = None) -> str:
 
 # debug_print is imported from call.lib.logging
 
-# Global variable to store the last message object
+# Global variables for Telegram routing and session behavior
 telegram_last_message: Optional[Message] = None
 selected_chat_id: Optional[int] = None
 selected_thread_id: Optional[int] = None
+# When True, the pipeline must NOT create a SQLite session and must NOT send Telegram messages
+force_no_session: bool = False
 
 def get_telegram_chat_id(env_var: str, default: str = None) -> int:
     """Safely get and convert Telegram chat ID from environment."""
@@ -1969,67 +1971,77 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
 
         # Save globally for subsequent messages
-        global selected_chat_id, selected_thread_id
+        global selected_chat_id, selected_thread_id, force_no_session
         # Respect previously selected targets (e.g., set by lib.api from Telegram update).
         # If current value equals env default, allow agent YAML/output to override.
         # Otherwise, keep the explicit value set by the caller.
         env_chat = TELEGRAM_CHAT_ID
         env_thread = (TELEGRAM_THREAD_ID or None)
 
-        if selected_chat_id is None or selected_chat_id == env_chat:
-            selected_chat_id = (prompt_chat_id or env_chat)
-        # else: keep caller-provided selected_chat_id
+        no_session = bool(force_no_session)
+        if not no_session:
+            if selected_chat_id is None or selected_chat_id == env_chat:
+                selected_chat_id = (prompt_chat_id or env_chat)
+            # else: keep caller-provided selected_chat_id
 
-        if selected_thread_id is None or selected_thread_id == env_thread:
-            selected_thread_id = (prompt_thread_id or env_thread)
-        # else: keep caller-provided selected_thread_id
-
-        # Now that selected_chat_id is finalized, create a local SQLite-backed session
-        # Deterministic and unique per dialog thread (agent:chat[:thread])
-        if selected_thread_id is not None:
-            session_id = f"{cfg.name}:{selected_chat_id}:{selected_thread_id}"
+            if selected_thread_id is None or selected_thread_id == env_thread:
+                selected_thread_id = (prompt_thread_id or env_thread)
+            # else: keep caller-provided selected_thread_id
         else:
-            session_id = f"{cfg.name}:{selected_chat_id}"
+            # Explicitly disable routing and sessions
+            selected_chat_id = None
+            selected_thread_id = None
 
-        db_path = os.getenv("CALL_DB", "call/call.db")
-        try:
-            db_dir = os.path.dirname(db_path)
-            if db_dir:
-                os.makedirs(db_dir, exist_ok=True)
-        except Exception:
-            pass
+        # Now that selected_chat_id is finalized, create or skip SQLite session
+        if (selected_chat_id is not None):
+            # Deterministic and unique per dialog thread (agent:chat[:thread])
+            if selected_thread_id is not None:
+                session_id = f"{cfg.name}:{selected_chat_id}:{selected_thread_id}"
+            else:
+                session_id = f"{cfg.name}:{selected_chat_id}"
 
-        session = SQLiteSession(session_id, db_path)
-        debug_print(f"[INFO] Session id: {session_id} @ {db_path}")
-
-        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
-        debug_print(f"[INFO] Target: chat_id={selected_chat_id or '(env default)'}, thread_id={selected_thread_id or '(auto/None)'}")
-
-        # Send welcome message with agent link and run context (after config is ready)
-        try:
-            welcome_html = compose_welcome_html(
-                agent_name=cfg.name,
-                agent_yaml_path=(cfg.agent_yaml_path if cfg.agent_yaml_path else None),
-                user_input=user_input,
-                mcp_servers_started=mcp_servers_started,
-                vs_list=cfg.vs_list,
-                model=cfg.model,
-            )
-            # Debug log the welcome HTML only when CALL_DEBUG is enabled
-            debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
-
-            await send_telegram_welcome_message(
-                text=welcome_html,
-                chat_id=selected_chat_id,
-                message_thread_id=selected_thread_id,
-            )
-        except Exception as e:
-            # Do not block run on welcome banner failures, but log the exception in debug mode
+            db_path = os.getenv("CALL_DB", "call/call.db")
             try:
-                err_text = format_exception_text(e)
-                debug_print("[app]", "[WARN] welcome message send failed:\n" + err_text)
+                db_dir = os.path.dirname(db_path)
+                if db_dir:
+                    os.makedirs(db_dir, exist_ok=True)
             except Exception:
                 pass
+
+            session = SQLiteSession(session_id, db_path)
+            debug_print(f"[INFO] Session id: {session_id} @ {db_path}")
+        else:
+            session = None
+
+        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+        debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
+
+        # Send welcome message with agent link and run context (after config is ready)
+        if selected_chat_id is not None:
+            try:
+                welcome_html = compose_welcome_html(
+                    agent_name=cfg.name,
+                    agent_yaml_path=(cfg.agent_yaml_path if cfg.agent_yaml_path else None),
+                    user_input=user_input,
+                    mcp_servers_started=mcp_servers_started,
+                    vs_list=cfg.vs_list,
+                    model=cfg.model,
+                )
+                # Debug log the welcome HTML only when CALL_DEBUG is enabled
+                debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
+
+                await send_telegram_welcome_message(
+                    text=welcome_html,
+                    chat_id=selected_chat_id,
+                    message_thread_id=selected_thread_id,
+                )
+            except Exception as e:
+                # Do not block run on welcome banner failures, but log the exception in debug mode
+                try:
+                    err_text = format_exception_text(e)
+                    debug_print("[app]", "[WARN] welcome message send failed:\n" + err_text)
+                except Exception:
+                    pass
 
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
@@ -2064,7 +2076,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         # Notify digest (no image) and push
         # Only notify/push when we have a non-error output
         is_error_output = isinstance(step1_output, str) and step1_output.strip().lower().startswith("error:")
-        if not is_error_output:
+        if not is_error_output and (selected_chat_id is not None):
             try:
                 # Capture targets locally to avoid races with global changes
                 use_chat_id = selected_chat_id

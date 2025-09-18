@@ -1,3 +1,21 @@
+## Session ID — derivation and override (New)
+
+- Format: `"{AgentName}:{chat_id}"` or `"{AgentName}:{chat_id}:{thread_id}"`.
+- When `session_id` is provided to `call()/call_async()` (or to Actions/MCP/CLI), it takes precedence and is used to derive Telegram routing:
+  - The library parses `chat_id`/`thread_id` from the provided `session_id`.
+  - Environment defaults are NOT used in this case.
+- When `session_id` is not provided:
+  - If `chat_id`/`thread_id` args are provided, they are used (with env defaults filling missing pieces).
+  - If neither is provided, no session is created and no Telegram messages are sent. The response omits `session_id`.
+- On success and on error, when a session is known, responses include `session_id`.
+
+### Exec payload contract
+
+- The single JSON payload accepted by Actions and MCP is:
+  - `{ agent?: string, prompt?: string, target?: string, context?: any, project?: string, echo?: boolean, session_id?: string }`
+  - Exactly one of `agent|prompt|target` must be provided.
+  - The `context` is passed as the full JSON string into the agent `input`.
+  - Optionally, clients may also include a separate free-form `input` in their own UX; we recommend documenting this nuance for your users.
 # Call
 
 A minimal, extensible subsystem for invoking AI agents and prompt pipelines by name and routing inputs/outputs across your project ecosystem.
@@ -74,9 +92,9 @@ $env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFa
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
-## Library return shape and errors (Updated Sep 17, 2025)
+## Library return shape and errors (Updated Sep 18, 2025)
 
-`call.lib.api.call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
+`call.lib.api.call(name: str, input: str, *, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False) -> dict`
 
 - On success returns a dict:
 
@@ -86,7 +104,8 @@ $env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFa
   "agent": "AgentName",
   "agent_path": ".../agent.yaml",
   "final_output": "...",
-  "echo": false
+  "echo": false,
+  "session_id": "AgentName:-100123:10"
 }
 ```
 
@@ -101,7 +120,8 @@ $env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFa
     "agent": "...",
     "project": "...",
     "final_output": null,
-    "echo": false
+    "echo": false,
+    "session_id": "AgentName:-100123:10"
   }
   ```
 
@@ -109,7 +129,7 @@ $env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFa
 
 Also available (async) — supports empty agent name:
 
-`await call.lib.api.call_async(name: str | None, input_text: str, *, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False) -> dict`
+`await call.lib.api.call_async(name: str | None, input_text: str, *, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False) -> dict`
 
 - If `name` is empty/None: discovery is skipped, an Agent with empty instructions is constructed, and only `input_text` is used. In this case, `agent_path` in the response is `null`.
 - If `name` is provided and not found: returns a 404-style error envelope.
@@ -181,7 +201,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
 
   # Call an agent (keyword-only API). Use exact case-sensitive names.
-  python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
+  python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--session-id AgentName:-100123[:thread]] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
 
   # List prompts (flat). Filters: --project, --agent, --prompt (all support *)
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
@@ -191,7 +211,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
       --content-item "https://docs.google.com/document/d/FILE_ID/edit" \
       --content-item '{"type":"text","text":"Hello"}' \
-      [--output-type html] [--print-instructions]
+      [--output-type html] [--session-id AgentName:-100123[:thread]] [--print-instructions]
+
+  # Clear conversation sessions for a chat/thread
+  python -m call.cli.main clear-session --chat-id -100123 --thread-id 10 [--name AgentName]
 
   # Legacy positional (app module still supports):
   python -m call.app.call <AgentName> [<input>]
@@ -222,10 +245,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - Telegram bot: incoming update summaries are logged via `debug_print` (printed only when `CALL_DEBUG=1`).
 - Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
   `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
-- Test hook for CI/manual checks:
+  - Test hook for CI/manual checks:
   - PowerShell: `$env:CALL_FAKE_TRACING_403=1; .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
   - cmd.exe: `set CALL_FAKE_TRACING_403=1 && .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
-- Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
+  - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
 #### Checking exit codes (Windows)

@@ -12,6 +12,7 @@ from .deps import bearer_guard
 # Library imports
 from call.lib.api import call as call_lib
 from call.lib.api import list as list_lib
+from call.lib.api import interpret_exec_payload
 from call.lib.discovery import prompts as list_prompts
 
 
@@ -85,8 +86,9 @@ def call(
     name: str = Query(..., description="The name used as 'target' for selection"),
     input: str = Query(..., description="Input text"),
     echo: bool = Query(False, description="If true, return structured JSON from library"),
+    session_id: str | None = Query(None, description="Override session id: AgentName:chat or AgentName:chat:thread"),
 ):
-    res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, echo=echo)
+    res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -103,6 +105,7 @@ class ExecPayload(BaseModel):
     target: Optional[str] = None
     context: Optional[Any] = None
     echo: Optional[bool] = True
+    session_id: Optional[str] = None
 
 
 @app.post(
@@ -112,18 +115,19 @@ class ExecPayload(BaseModel):
     summary="Execute with a JSON payload (target|prompt|agent + context)",
 )
 def exec_action_post(payload: ExecPayload = Body(...)):
-    # Enforce mutual exclusivity among agent/prompt/target when more than one provided
-    fields = [f for f in [payload.target, payload.prompt, payload.agent] if (f or "").strip()]
-    if len(fields) > 1:
-        return JSONResponse(content={"ok": False, "error": "Provide exactly one of 'target' or 'prompt' or 'agent'"}, status_code=400)
-    # Build input from context
-    try:
-        import json as _json
-        inp = _json.dumps(payload.context) if payload.context is not None else ""
-    except Exception:
-        inp = str(payload.context)
-    t = (payload.target or payload.prompt or payload.agent or None)
-    res = call_lib(project=(payload.project or None), agent=None, prompt=None, target=t, input=inp, echo=bool(payload.echo))
+    # Normalize via library helper
+    kwargs, err = interpret_exec_payload({
+        "project": payload.project,
+        "agent": payload.agent,
+        "prompt": payload.prompt,
+        "target": payload.target,
+        "context": payload.context,
+        "echo": payload.echo,
+        "session_id": payload.session_id,
+    })
+    if err:
+        return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
+    res = call_lib(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))
