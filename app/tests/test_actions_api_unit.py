@@ -7,7 +7,9 @@ from call.actions.main import app
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
+    # Ensure bearer guard expects TEST_TOKEN in this process
+    monkeypatch.setenv("API_ACCESS_TOKEN", "TEST_TOKEN")
     return TestClient(app)
 
 
