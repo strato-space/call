@@ -1875,7 +1875,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         env_model = os.environ.get("LLM_MODEL")
         yaml_model = (cfg.model or None)
         final_model = yaml_model or env_model or "gpt-5"
-        debug_print(f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
+        debug_print("[app]", f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
         # Debug: print instructions length and a short preview
         try:

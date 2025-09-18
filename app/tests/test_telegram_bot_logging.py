@@ -37,7 +37,7 @@ def test_bot_log_update_uses_central_debug_print(monkeypatch):
     # Act: call the async logger
     asyncio.run(mod._log_update(_Update(), None))
 
-    # Assert: centralized debug_print was invoked with an UPDATE entry
+    # Assert: centralized debug_print was invoked with module prefix then tag
     assert logging_calls, "debug_print was not called"
     first = logging_calls[0]
-    assert first and first[0] == "[UPDATE]", f"unexpected debug_print payload: {first}"
+    assert first and first[0] == "[bot]" and first[1] == "[UPDATE]", f"unexpected debug_print payload: {first}"

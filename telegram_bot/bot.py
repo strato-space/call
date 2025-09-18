@@ -37,7 +37,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
-from call.lib.logging import debug_print
+from call.lib.logging import debug_print, configure_logging
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -160,8 +160,8 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Structured app log remains at INFO
     log.info("Update: %s", summary)
     # Console debug output is gated by CALL_DEBUG through debug_print
-    # Keep [UPDATE] as the first token for tests; add module prefix as the second token
-    debug_print("[UPDATE]", "[bot]", summary)
+    # Module prefix first, optional tags second
+    debug_print("[bot]", "[UPDATE]", summary)
     return None
 
 
@@ -752,14 +752,12 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def main() -> None:
-    # CLI flags
-    parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("--echo", action="store_true", help="Print startup parameters and exit 0")
-    parser.add_argument("--bot-name", dest="bot_name", default="", help="Bot name handle to select TELEGRAM_TOKEN.Name from env/.env (overrides positional)")
-    # Positional bot name: `bot.py StratoSpaceAiBot` equivalent to `--bot-name StratoSpaceAiBot`
-    parser.add_argument("bot_name_pos", nargs="?", default="", help="Positional bot name; equivalent to --bot-name")
-    args, _ = parser.parse_known_args()
-
+    # CLIasync def main():
+    # Configure logging once per bot process (DEBUG if CALL_DEBUG=1, else INFO)
+    try:
+        configure_logging()
+    except Exception:
+        pass
     if args.echo:
         cfg = _current_config_dict()
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
