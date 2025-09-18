@@ -37,6 +37,15 @@ Use the project virtual environment interpreter for consistency.
     $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
 
+- Notes:
+  - The Telegram bot uses `get_logger("bot")` so JSON logs appear under `logger: "call.bot"`.
+
+JSON log sample (stderr):
+
+```json
+{"time":"2025-09-18T01:23:45","level":"INFO","logger":"call.bot","message":"Starting polling..."}
+```
+
 Example (PowerShell):
 
 ```powershell

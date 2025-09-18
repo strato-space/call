@@ -37,7 +37,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
-from call.lib.logging import debug_print, configure_logging
+from call.lib.logging import debug_print, configure_logging, get_logger
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -63,11 +63,9 @@ PROJECT_NAME: str = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME el
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
-# Configure logging early
-_debug_env = os.environ.get("DEBUG", "").strip().lower()
-_level = logging.DEBUG if _debug_env in ("1", "true", "yes", "on") else logging.INFO
-logging.basicConfig(level=_level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-log = logging.getLogger("call.telegram_bot")
+# Module logger (emits once configure_logging() is called by the entrypoint)
+log = get_logger("bot")
+
 log.info("Loaded env: call/.env exists=%s", _CALL_ENV.exists())
 masked = TELEGRAM_TOKEN[:6] + "..." if TELEGRAM_TOKEN else "<empty>"
 log.info("TELEGRAM_TOKEN(prefix)=%s, ALLOWED_USERS_raw_len=%d", masked, len(_ALLOWED_USERS_RAW))
