@@ -666,6 +666,18 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     echo_flag = False
     try:
         t = text.strip()
+        # If the command explicitly mentions another bot, ignore
+        try:
+            if t.lower().startswith("/call@"):  # explicit target bot mention
+                end = t.find(" ")
+                cmd_token = t if end == -1 else t[:end]
+                mentioned = cmd_token[len("/call@"):].strip()
+                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+                if mentioned and own and mentioned != own:
+                    debug_print("[bot]", "[CALL]", f"ignoring command addressed to @{mentioned}")
+                    return
+        except Exception:
+            pass
         if t.startswith("/call"):
             t = _extract_after("/call", t)
         elif t.lower().startswith("call"):

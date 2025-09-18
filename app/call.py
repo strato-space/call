@@ -229,6 +229,9 @@ selected_chat_id: Optional[int] = None
 selected_thread_id: Optional[int] = None
 # When True, the pipeline must NOT create a SQLite session and must NOT send Telegram messages
 force_no_session: bool = False
+# When True, respect the chat/thread provided by the caller and do NOT override
+# them with agent/prompt or environment defaults inside the app pipeline.
+prefer_caller_targets: bool = False
 
 def get_telegram_chat_id(env_var: str, default: str = None) -> int:
     """Safely get and convert Telegram chat ID from environment."""
@@ -1971,7 +1974,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
 
         # Save globally for subsequent messages
-        global selected_chat_id, selected_thread_id, force_no_session
+        global selected_chat_id, selected_thread_id, force_no_session, prefer_caller_targets
         # Respect previously selected targets (e.g., set by lib.api from Telegram update).
         # If current value equals env default, allow agent YAML/output to override.
         # Otherwise, keep the explicit value set by the caller.
@@ -1980,13 +1983,15 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         no_session = bool(force_no_session)
         if not no_session:
-            if selected_chat_id is None or selected_chat_id == env_chat:
-                selected_chat_id = (prompt_chat_id or env_chat)
-            # else: keep caller-provided selected_chat_id
+            # If caller explicitly provided routing (prefer_caller_targets), never override it
+            if not bool(prefer_caller_targets):
+                if selected_chat_id is None or selected_chat_id == env_chat:
+                    selected_chat_id = (prompt_chat_id or env_chat)
+                # else: keep caller-provided selected_chat_id
 
-            if selected_thread_id is None or selected_thread_id == env_thread:
-                selected_thread_id = (prompt_thread_id or env_thread)
-            # else: keep caller-provided selected_thread_id
+                if selected_thread_id is None or selected_thread_id == env_thread:
+                    selected_thread_id = (prompt_thread_id or env_thread)
+                # else: keep caller-provided selected_thread_id
         else:
             # Explicitly disable routing and sessions
             selected_chat_id = None
