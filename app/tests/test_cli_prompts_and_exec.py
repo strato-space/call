@@ -137,3 +137,65 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
     except Exception:
         # Fallback: plain-text error message
         assert ("not found" in out.lower()) or ("not found" in err.lower())
+
+
+def test_cli_exec_print_instructions_wrong_project_prompt_not_found():
+    env = os.environ.copy()
+    env.update(essential_env)
+    # Mismatch: prompt 33-Questioning under project AgentFab (should be UxFab)
+    code, out, err = _run_cli([
+        "exec",
+        "--project", "AgentFab",
+        "--prompt", "33-Questioning",
+        "--print-instructions",
+    ], env=env)
+    # Expect non-zero (exception propagates in exec --print-instructions path)
+    assert code != 0
+    # Try JSON envelope; else plain error text
+    try:
+        data = json.loads(out)
+        assert data.get("ok") is False
+        assert data.get("error_code") in (400, 404)
+    except Exception:
+        assert ("not found" in out.lower()) or ("not found" in err.lower())
+
+
+def test_cli_call_print_instructions_wrong_project_agent_not_found():
+    env = os.environ.copy()
+    env.update(essential_env)
+    # Mismatch: agent UxCreator under project UxFab; include prompt to mirror user's example
+    code, out, err = _run_cli([
+        "call",
+        "--project", "UxFab",
+        "--agent", "UxCreator",
+        "--prompt", "33-Questioning",
+        "--print-instructions",
+    ], env=env)
+    # Expect non-zero and JSON error envelope in call path
+    assert code != 0
+    data = json.loads(out)
+    assert data.get("ok") is False
+    assert data.get("error_code") in (400, 404, 500)
+    assert "not found" in (data.get("description", "").lower())
+
+
+def test_cli_exec_print_instructions_wrong_project_agent_not_found():
+    env = os.environ.copy()
+    env.update(essential_env)
+    # Mismatch: agent under a different project for exec path
+    code, out, err = _run_cli([
+        "exec",
+        "--project", "UxFab",
+        "--agent", "UxCreator",
+        "--print-instructions",
+    ], env=env)
+    # Expect non-zero exit (exception propagates)
+    assert code != 0
+    # Try JSON; otherwise check plain text
+    try:
+        data = json.loads(out)
+        assert data.get("ok") is False
+        assert data.get("error_code") in (400, 404, 500)
+        assert "not found" in (data.get("description", "").lower())
+    except Exception:
+        assert ("not found" in out.lower()) or ("not found" in err.lower())
