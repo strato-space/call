@@ -154,6 +154,45 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
         assert ("not found" in out.lower()) or ("not found" in err.lower())
 
 
+def test_cli_call_print_instructions_malformed_prompt_metadata_returns_400(tmp_path):
+    """Creating a shadow ready/33-Questioning.md with bad YAML should raise a 400 envelope."""
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[3]
+    prompt_ready = repo_root / "prompt" / "ready"
+    prompt_ready.mkdir(parents=True, exist_ok=True)
+    bad = prompt_ready / "33-Questioning.md"
+    bad.write_text(
+        """<!-- METADATA:START -->
+```yaml
+id: 33-Questioning
+title: 33-Questioning
+project: UxFab
+agent: DialogPostAnalysis
+bad: [missing: bracket
+```
+<!-- METADATA:END -->
+""",
+        encoding="utf-8",
+    )
+    try:
+        code, out, err = _run_cli([
+            "call",
+            "--project", "UxFab",
+            "--prompt", "33-Questioning",
+            "--print-instructions",
+        ])
+        assert code != 0
+        data = json.loads(out)
+        assert data.get("ok") is False
+        assert data.get("error_code") == 400
+        assert "metadata yaml" in (data.get("description", "").lower())
+    finally:
+        try:
+            bad.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def test_cli_exec_print_instructions_wrong_project_prompt_not_found():
     env = os.environ.copy()
     env.update(essential_env)
@@ -190,11 +229,12 @@ def test_cli_call_print_instructions_wrong_project_agent_not_found():
     assert code != 0
     data = json.loads(out)
     assert data.get("ok") is False
-    # In this call path, CLI prints a simple error envelope without error_code
+    assert data.get("error_code") in (400, 404)
+    desc = (data.get("description") or "")
     err = data.get("error") or {}
     msg = (err.get("message") or "") if isinstance(err, dict) else ""
-    desc = data.get("description", "")
-    assert ("not found" in msg.lower()) or ("not found" in desc.lower())
+    low = (msg + " " + desc).lower()
+    assert ("not found" in low) or ("no data found" in low)
 
 
 def test_cli_exec_print_instructions_wrong_project_agent_not_found():
