@@ -632,19 +632,17 @@ async def _call_task(
             debug_print("[bot]", "[CALL_TASK]", f"result ok={ok}")
         except Exception:
             pass
-        # Always send a minimal acknowledgement to the user to avoid "silent" behavior
+        # Avoid double responses: the app pipeline publishes welcome/digest directly to Telegram.
+        # On success: do not send an extra bot reply. On error: reply with a concise error.
         try:
-            if isinstance(res, dict) and res.get("ok"):
-                out = res.get("final_output")
-                text = out if isinstance(out, str) and out.strip() else "Done."
-                await m.reply(text, parse_mode=None)
-                debug_print("[bot]", "[CALL_TASK]", f"replied ok len={len(text)}")
-            else:
+            if not (isinstance(res, dict) and res.get("ok")):
                 code = (res.get("code") if isinstance(res, dict) else None) or "ERROR"
                 status = (res.get("error_code") if isinstance(res, dict) else None) or 500
                 desc = (res.get("description") if isinstance(res, dict) else None) or "Unknown error"
                 await m.reply(f"Error: {code} ({status}): {desc}", parse_mode=None)
                 debug_print("[bot]", "[CALL_TASK]", f"replied error code={code} status={status}")
+            else:
+                debug_print("[bot]", "[CALL_TASK]", "ok=true; no extra reply to avoid duplicates (pipeline published)")
         except Exception:
             # Never let reply errors crash the task
             pass
