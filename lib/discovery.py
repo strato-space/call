@@ -939,19 +939,39 @@ def iter_prompts(*, repo: Path | None = None, state: str | None = None):
                 }
 
 
-def prompts(*, project: str | None = None, agent: str | None = None, state: str | None = None, repo: Path | None = None) -> list[dict]:
+def prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, repo: Path | None = None) -> list[dict]:
     """Return a list of prompt descriptors from draft/ and ready/ with optional filters.
 
-    Filters are case-insensitive for project and agent.
+    - Filters are case-insensitive for project and agent.
+    - Supports '*' wildcard in project, agent, and prompt (treated as '.*' with full-string match).
     """
+    import re as _re
+
+    def _compile(pat: str | None, *, strip_spaces: bool = False):
+        if not pat:
+            return None
+        s = str(pat)
+        if strip_spaces:
+            s = s.replace(' ', '')
+        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
+
+    m_proj = _compile(project)
+    m_agent = _compile(agent, strip_spaces=True)
+    m_prompt = _compile(prompt)
+
     out: list[dict] = []
-    pj = (project or '').lower()
-    ag = (agent or '').lower().replace(' ', '')
     for item in iter_prompts(repo=repo, state=state):
-        if pj and (str(item.get('project') or '').lower() != pj):
+        pj = str(item.get('project') or '')
+        ag = str(item.get('agent') or '').replace(' ', '')
+        if m_proj and not m_proj.match(pj):
             continue
-        if ag and (str(item.get('agent') or '').lower().replace(' ', '') != ag):
+        if m_agent and not m_agent.match(ag):
             continue
+        if m_prompt:
+            pid = str(item.get('prompt_id') or '')
+            nm = str(item.get('name') or '')
+            if not (m_prompt.match(pid) or m_prompt.match(nm)):
+                continue
         out.append(item)
 
     def _nat_key(d: dict):

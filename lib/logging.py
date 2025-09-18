@@ -12,6 +12,9 @@ import logging
 import sys
 
 
+# Tracks whether configure_logging() has successfully attached handlers
+_configured_logging = False
+
 def _env_true(name: str) -> bool:
     try:
         v = str(os.environ.get(name, "")).strip().lower()
@@ -31,9 +34,11 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
     - Output: stderr with a concise formatter (timestamp level name message)
     - json flag is reserved for future JSON formatting (kept False now to avoid deps)
     """
+    global _configured_logging
     try:
         # If logging already has handlers, don't reconfigure
         if _logger.handlers:
+            _configured_logging = True
             return
         eff_level = level if level is not None else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
         _logger.setLevel(eff_level)
@@ -62,6 +67,7 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
             fmt = JSONFormatter()
         handler.setFormatter(fmt)
         _logger.addHandler(handler)
+        _configured_logging = True
 
         # Optional file handler
         try:
@@ -120,17 +126,11 @@ def debug_print(*parts: str) -> None:
             logger = _logger
 
         msg = " ".join(str(p) for p in parts if p is not None)
-        # Route through stdlib logging (if configured by the entrypoint)
+        # Route through stdlib logging only; do not emit a separate console line
         try:
             logger.debug(msg)
         except Exception:
             pass
-        # Preserve console debug print for CLI greppability and add logger name prefix
-        try:
-            lname = getattr(logger, "name", _LOGGER_NAME) or _LOGGER_NAME
-            print(f"[DEBUG] [{lname}] {msg}", file=sys.stderr)
-        except Exception:
-            print(f"[DEBUG] {msg}", file=sys.stderr)
     except Exception:
         # Never raise from debug logging
         pass
