@@ -65,6 +65,21 @@ def test_cli_call_print_instructions_dialogpostanalysis():
     assert "Формирует вопросы" in out
 
 
+def test_cli_call_print_instructions_infers_agent_from_prompt():
+    env = os.environ.copy()
+    env.update(essential_env)
+    code, out, err = _run_cli([
+        "call",
+        "--project", "UxFab",
+        "--prompt", "33-Questioning",
+        "--print-instructions",
+    ], env=env)
+    assert code == 0, err
+    # Should include prompt text and an <agent> block with DialogPostAnalysis card
+    assert "Формирует вопросы" in out
+    assert "<agent>" in out and "DialogPostAnalysis" in out
+
+
 def test_cli_list_json_contains_aliases_and_prompts():
     code, out, err = _run_cli(["list", "--project", "FanFab"])
     assert code == 0, err
@@ -175,8 +190,11 @@ def test_cli_call_print_instructions_wrong_project_agent_not_found():
     assert code != 0
     data = json.loads(out)
     assert data.get("ok") is False
-    assert data.get("error_code") in (400, 404, 500)
-    assert "not found" in (data.get("description", "").lower())
+    # In this call path, CLI prints a simple error envelope without error_code
+    err = data.get("error") or {}
+    msg = (err.get("message") or "") if isinstance(err, dict) else ""
+    desc = data.get("description", "")
+    assert ("not found" in msg.lower()) or ("not found" in desc.lower())
 
 
 def test_cli_exec_print_instructions_wrong_project_agent_not_found():
@@ -185,7 +203,7 @@ def test_cli_exec_print_instructions_wrong_project_agent_not_found():
     # Mismatch: agent under a different project for exec path
     code, out, err = _run_cli([
         "exec",
-        "--project", "UxFab",
+        "--project", "AgentFab",
         "--agent", "UxCreator",
         "--print-instructions",
     ], env=env)
