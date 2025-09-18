@@ -39,6 +39,24 @@ def custom_openapi():
         "bearerFormat": "JWT",
     }
     schema["security"] = [{"bearerAuth": []}]
+    # Enforce (in schema) that ExecPayload must specify exactly one of project|agent|prompt|target
+    try:
+        schemas = comps.setdefault("schemas", {})
+        exec_schema = schemas.get("ExecPayload")
+        if isinstance(exec_schema, dict):
+            # Add oneOf alternatives; each alternative requires exactly one selector
+            exec_schema.setdefault("description", "Execute with a single selector. Exactly one of project|agent|prompt|target must be provided.")
+            exec_schema["oneOf"] = [
+                {"required": ["project"]},
+                {"required": ["agent"]},
+                {"required": ["prompt"]},
+                {"required": ["target"]},
+            ]
+            # Hint for generators
+            exec_schema["x-exactly-one"] = ["project", "agent", "prompt", "target"]
+    except Exception:
+        # Schema patching best-effort only
+        pass
     app.openapi_schema = schema
     return app.openapi_schema
 
