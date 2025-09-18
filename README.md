@@ -182,8 +182,9 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   # Call an agent (keyword-only API). Use exact case-sensitive names.
   python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
 
-  # List prompts (flat). Format: table|json
-  python -m call.cli.main prompts --project FanFab --format json
+  # List prompts (flat). Filters: --project, --agent, --prompt (all support *)
+  python -m call.cli.main prompts --project FanFab --prompt 13* --format json
+  python -m call.cli.main prompts --project * --agent * --prompt 10* --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.
   python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
@@ -198,7 +199,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Listing Output (hierarchical)**:
   - `list()` returns an array of projects; each project has `name`, `type: "project"`, and `agents`.
   - Each agent item has `type: "agent"`, `name`, `aliases` (from agent.yaml), `prompts` (from agent.yaml), and `path`.
-  - Wildcards `*` are supported in `--project`, `--agent`, and `--prompt` (case-insensitive).
+  - Wildcards `*` are supported in `--project`, `--agent`, and `--prompt` (case-insensitive). Agent filter ignores spaces.
 
 - **Selection Behavior**:
   - If multiple agents match: the API returns an error envelope with `code: "TOO_MANY_ROWS"` and an `options` list of candidates.

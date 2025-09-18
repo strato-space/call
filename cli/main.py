@@ -3,7 +3,7 @@ CLI for the call subsystem.
 
 Command Reference (one-line):
   # List projects/agents/prompts (hierarchical JSON)
-  python -m call.cli.main list [--project UxFab] [--agent Agent*] [--prompt Draft]
+  python -m call.cli.main agents [--project UxFab] [--agent Agent*] [--prompt 10*]
 
   # Call an agent with optional prompt override
   python -m call.cli.main call --agent BusinessAnalyticAgent --input "Analyze Q3" [--project UxFab]
@@ -163,11 +163,11 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_list = sub.add_parser("list", help="List projects and agents (hierarchical)")
-    p_list.add_argument("--project", default="", help="Project filter (supports * wildcard)")
-    p_list.add_argument("--agent", default="", help="Agent filter (supports * and aliases)")
-    p_list.add_argument("--prompt", default="", help="Prompt filter (supports *)")
-    p_list.set_defaults(func=cmd_list)
+    p_agents = sub.add_parser("agents", aliases=["list"], help="List projects and agents (hierarchical)")
+    p_agents.add_argument("--project", default="", help="Project filter (supports * wildcard)")
+    p_agents.add_argument("--agent", default="", help="Agent filter (supports * and aliases)")
+    p_agents.add_argument("--prompt", default="", help="Prompt filter (supports *)")
+    p_agents.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
     p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard)")
@@ -183,7 +183,7 @@ def main() -> int:
 
     # prompts subcommand
     def cmd_prompts(args: argparse.Namespace) -> int:
-        items = call_discovery.prompts(project=(args.project or None), agent=(args.agent or None), state=(args.state or None))
+        items = call_discovery.prompts(project=(args.project or None), agent=(args.agent or None), prompt=(args.prompt or None), state=(args.state or None))
         if (args.format or 'table').lower() == 'json':
             _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
             return 0
@@ -202,6 +202,7 @@ def main() -> int:
     p_prompts = sub.add_parser("prompts", help="List prompts (flat)")
     p_prompts.add_argument("--project", default="", help="Filter by project")
     p_prompts.add_argument("--agent", default="", help="Filter by agent")
+    p_prompts.add_argument("--prompt", default="", help="Filter by prompt id or name (supports *)")
     p_prompts.add_argument("--state", default="", help="Filter by state (draft|ready)")
     p_prompts.add_argument("--format", default="table", choices=["table", "json"], help="Output format")
     p_prompts.set_defaults(func=cmd_prompts)

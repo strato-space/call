@@ -35,8 +35,9 @@ from call.lib.discovery import (
     load_yaml,
     load_projects_index,
     scan_project_agents,
+    resolve_prompt,
+    prompts as _lib_prompts,
 )
-
 
 
 def _error_payload(
@@ -120,6 +121,7 @@ async def call_async(
     project: Optional[str],
     agent: Optional[str],
     prompt: Optional[str] = None,
+    target: Optional[str] = None,
     input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
@@ -138,6 +140,13 @@ async def call_async(
     - This will initialize the Telegram bot (so that downstream utils can publish).
     - No explicit welcome message is sent here to avoid duplicates; the app pipeline will send a single digest.
     - If agent discovery fails (when name is provided), returns 404 error envelope.
+
+    Selection convenience:
+    - When 'target' is provided, we try to interpret it in this order using provided filters (project/agent/prompt):
+      1) prompt name (resolve_prompt)
+      2) agent name/alias (resolve_agent)
+      3) project name (load_projects_index contains it)
+      The first match sets the corresponding field if it wasn't already set explicitly.
     """
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
@@ -166,6 +175,107 @@ async def call_async(
                 project=project,
                 details=_details,
             )
+    except Exception:
+        pass
+
+    # Interpret 'target' shortcut before agent resolution using provided filters
+    try:
+        tgt = (target or "").strip()
+        if tgt:
+            import re as _re
+            def _compile(p: str) -> Optional[object]:
+                try:
+                    return _re.compile("^" + _re.escape(p).replace("\\*", ".*") + "$", _re.IGNORECASE)
+                except Exception:
+                    return None
+            # 1) Prefer prompt match (id or name)
+            p_regex = _compile(tgt)
+            prompt_matches: list[dict] = []
+            if p_regex:
+                try:
+                    items = _lib_prompts(project=project, agent=agent, state=None)
+                except Exception:
+                    items = []
+                for x in (items or []):
+                    pid = str(x.get("prompt_id") or "")
+                    nm = str(x.get("name") or "")
+                    if (p_regex.match(pid) or p_regex.match(nm)):
+                        prompt_matches.append(x)
+            if prompt_matches and not (prompt or "").strip():
+                if len(prompt_matches) == 1:
+                    prompt = str(prompt_matches[0].get("prompt_id") or prompt_matches[0].get("name") or tgt)
+                else:
+                    return _error_payload(
+                        agent=(agent or ""),
+                        input=(input or ""),
+                        exc="Multiple prompts matched your criteria",
+                        status=400,
+                        echo=echo,
+                        debug=debug,
+                        code="TOO_MANY_ROWS",
+                        project=project,
+                        options=prompt_matches,
+                    )
+            elif not prompt_matches:
+                # 2) Agent name/alias (unique; allow wildcard via list())
+                try:
+                    ra = resolve_agent(project=project, agent=tgt, prompt=prompt)
+                except Exception:
+                    ra = {"ok": False}
+                if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
+                    agent = tgt
+                elif isinstance(ra, dict) and (not ra.get("ok")):
+                    # If ambiguity surfaced from resolve_agent, bubble it up directly
+                    if str(ra.get("code")) == "TOO_MANY_ROWS":
+                        return ra
+                else:
+                    # 3) Project exact or wildcard
+                    try:
+                        projects = load_projects_index()
+                    except Exception:
+                        projects = []
+                    m = _compile(tgt)
+                    proj_candidates = [p for p in (projects or []) if (m.match(p) if m else p == tgt)]
+                    if proj_candidates and not (project or "").strip():
+                        if len(proj_candidates) == 1:
+                            project = proj_candidates[0]
+                        else:
+                            return _error_payload(
+                                agent=(agent or ""),
+                                input=(input or ""),
+                                exc="Multiple projects matched your criteria",
+                                status=400,
+                                echo=echo,
+                                debug=debug,
+                                code="TOO_MANY_ROWS",
+                                project=project,
+                                options=[{"project": p} for p in proj_candidates],
+                            )
+    except Exception:
+        # Non-fatal; proceed with provided args
+        pass
+
+    # If prompt contains wildcard, resolve it against repository with filters first
+    try:
+        if isinstance(prompt, str) and ("*" in prompt):
+            import re as _re
+            rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
+            try:
+                items = _lib_prompts(project=project, agent=agent, state=None)
+            except Exception:
+                items = []
+            matches = [x for x in (items or []) if rx.match(str(x.get("prompt_id") or "")) or rx.match(str(x.get("name") or ""))]
+            if not matches:
+                return _error_payload(
+                    agent=(agent or ""), input=(input or ""), exc="no data found",
+                    status=404, echo=echo, debug=debug, code="NO_DATA_FOUND", project=project, options=[]
+                )
+            if len(matches) > 1:
+                return _error_payload(
+                    agent=(agent or ""), input=(input or ""), exc="Multiple prompts matched your criteria",
+                    status=400, echo=echo, debug=debug, code="TOO_MANY_ROWS", project=project, options=matches
+                )
+            prompt = str(matches[0].get("prompt_id") or matches[0].get("name") or prompt)
     except Exception:
         pass
 
@@ -351,6 +461,7 @@ def call(
     project: Optional[str],
     agent: Optional[str],
     prompt: Optional[str] = None,
+    target: Optional[str] = None,
     input: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
@@ -367,6 +478,7 @@ def call(
                 project=project,
                 agent=agent,
                 prompt=prompt,
+                target=target,
                 input=input,
                 chat_id=chat_id,
                 thread_id=thread_id,

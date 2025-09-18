@@ -2,7 +2,7 @@
 Telegram bot for the call subsystem.
 
 Commands:
-- /list [--aliases] [--q "filter"]
+- /agents [--aliases] [--q "filter"]
 - /call @Name <input>
 
 The bot only interacts with the call library API and does not directly use OpenAI or Telegraph.
@@ -221,86 +221,81 @@ class Messenger:
         - Retry on TimedOut with exponential backoff
         - Fallback to plain text on BadRequest entity parse errors
         """
-        # Small semaphore to avoid exhausting HTTPX connection pool under bursts
-        if not hasattr(self.context.application, "_send_semaphore"):
-            self.context.application._send_semaphore = asyncio.Semaphore(5)
+        prepared_text = text or ""
+        use_parse_mode = parse_mode
 
-        async with self.context.application._send_semaphore:
-            prepared_text = text or ""
-            use_parse_mode = parse_mode
-
-            try:
-                if parse_mode in (ParseMode.HTML, "HTML"):
-                    prepared_text, pm = telegram_prepare_html(prepared_text, 4000)
-                    use_parse_mode = pm
-                elif parse_mode in (ParseMode.MARKDOWN, "Markdown", "MarkdownV2"):
-                    # Default to MarkdownV2 escaping
-                    prepared_text, pm = telegram_prepare_markdown(prepared_text, 4000, version="v2")
-                    use_parse_mode = pm
-                else:
-                    # Plain text path; enforce limit
-                    if len(prepared_text) > 4096:
-                        prepared_text = prepared_text[:4095] + "…"
-                    use_parse_mode = None
-            except Exception:
-                # If anything goes wrong, fallback to plain
+        try:
+            if parse_mode in (ParseMode.HTML, "HTML"):
+                prepared_text, pm = telegram_prepare_html(prepared_text, 4000)
+                use_parse_mode = pm
+            elif parse_mode in (ParseMode.MARKDOWN, "Markdown", "MarkdownV2"):
+                # Default to MarkdownV2 escaping
+                prepared_text, pm = telegram_prepare_markdown(prepared_text, 4000, version="v2")
+                use_parse_mode = pm
+            else:
+                # Plain text path; enforce limit
+                if len(prepared_text) > 4096:
+                    prepared_text = prepared_text[:4095] + "…"
                 use_parse_mode = None
-                prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
+        except Exception:
+            # If anything goes wrong, fallback to plain
+            use_parse_mode = None
+            prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
 
-            async def _send(pt: str, pmode: Optional[str]):
-                debug_print("[bot]", "[SEND]", f"len={len(pt)}", f"pmode={pmode}")
-                if self.update.message:
-                    res = await self.update.message.reply_text(text=pt, parse_mode=pmode)
-                    debug_print("[bot]", "[SENT]", "via reply_text")
-                    return res
-                elif self.update.effective_chat:
-                    res = await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
-                    debug_print("[bot]", "[SENT]", f"via send_message chat_id={getattr(self.update.effective_chat, 'id', None)}")
-                    return res
+        async def _send(pt: str, pmode: Optional[str]):
+            debug_print("[bot]", "[SEND]", f"len={len(pt)}", f"pmode={pmode}")
+            if self.update.message:
+                res = await self.update.message.reply_text(text=pt, parse_mode=pmode)
+                debug_print("[bot]", "[SENT]", "via reply_text")
+                return res
+            elif self.update.effective_chat:
+                res = await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
+                debug_print("[bot]", "[SENT]", f"via send_message chat_id={getattr(self.update.effective_chat, 'id', None)}")
+                return res
 
-            # Retry loop for transient timeouts
-            for attempt in range(3):
-                try:
-                    await _send(prepared_text, use_parse_mode)
-                    return
-                except BadRequest as e:
-                    # Fallback to plain text if Telegram can't parse entities
-                    msg = str(e).lower()
-                    if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
-                        debug_print("[bot]", "[WARN]", f"BadRequest parse error: {e}; falling back to plain")
-                        plain = re.sub(r"<[^>]+>", "", prepared_text)
-                        if len(plain) > 4096:
-                            plain = plain[:4095] + "…"
-                        try:
-                            await _send(plain, None)
-                        except Exception as e2:
-                            debug_print("[bot]", "[ERROR]", f"Fallback send failed: {type(e2).__name__}: {e2}")
-                            raise
-                        return
-                    raise
-                except TimedOut:
-                    debug_print("[bot]", "[WARN]", f"TimedOut on attempt {attempt+1}/3")
-                    if attempt == 2:
-                        break
-                    await asyncio.sleep(1 * (2 ** attempt))
-                except Exception as e:
-                    # Last-resort fallback to plain
-                    debug_print("[bot]", "[ERROR]", f"Send failed: {type(e).__name__}: {e}; falling back to plain")
+        # Retry loop for transient timeouts
+        for attempt in range(3):
+            try:
+                await _send(prepared_text, use_parse_mode)
+                return
+            except BadRequest as e:
+                # Fallback to plain text if Telegram can't parse entities
+                msg = str(e).lower()
+                if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
+                    debug_print("[bot]", "[WARN]", f"BadRequest parse error: {e}; falling back to plain")
                     plain = re.sub(r"<[^>]+>", "", prepared_text)
                     if len(plain) > 4096:
                         plain = plain[:4095] + "…"
                     try:
                         await _send(plain, None)
-                        return
                     except Exception as e2:
-                        debug_print("[bot]", "[ERROR]", f"Plain fallback also failed: {type(e2).__name__}: {e2}")
+                        debug_print("[bot]", "[ERROR]", f"Fallback send failed: {type(e2).__name__}: {e2}")
                         raise
-            # If retries exhausted due to TimedOut, send minimal plain notification
-            fallback = "Service temporarily unavailable. Please try again later."
-            try:
-                await _send(fallback, None)
-            except Exception as e3:
-                debug_print("[bot]", "[ERROR]", f"Minimal fallback failed: {type(e3).__name__}: {e3}")
+                    return
+                raise
+            except TimedOut:
+                debug_print("[bot]", "[WARN]", f"TimedOut on attempt {attempt+1}/3")
+                if attempt == 2:
+                    break
+                await asyncio.sleep(1 * (2 ** attempt))
+            except Exception as e:
+                # Last-resort fallback to plain
+                debug_print("[bot]", "[ERROR]", f"Send failed: {type(e).__name__}: {e}; falling back to plain")
+                plain = re.sub(r"<[^>]+>", "", prepared_text)
+                if len(plain) > 4096:
+                    plain = plain[:4095] + "…"
+                try:
+                    await _send(plain, None)
+                    return
+                except Exception as e2:
+                    debug_print("[bot]", "[ERROR]", f"Plain fallback also failed: {type(e2).__name__}: {e2}")
+                    raise
+        # If retries exhausted due to TimedOut, send minimal plain notification
+        fallback = "Service temporarily unavailable. Please try again later."
+        try:
+            await _send(fallback, None)
+        except Exception as e3:
+            debug_print("[bot]", "[ERROR]", f"Minimal fallback failed: {type(e3).__name__}: {e3}")
 
 
 # Authorization decorator
@@ -354,6 +349,51 @@ def _project_to_bot_handle(project_name: str) -> str:
     return name if name.endswith("Bot") else f"{name}Bot"
 
 
+def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
+    """Return ("@Handle", "https://t.me/Handle") for a project name.
+
+    If project name is empty, returns ("", None).
+    """
+    handle = _project_to_bot_handle(project_name)
+    if not handle:
+        return "", None
+    at = f"@{handle}"
+    return at, f"https://t.me/{handle}"
+
+
+def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) -> tuple[str, str, bool]:
+    """Parse plain text into (agent_name, input_text, should_handle).
+
+    Rules:
+    - In groups (is_private=False), only handle messages starting with '@Name'.
+    - In private chats, 'Name <input>' and '@Name <input>' are both accepted.
+    - Minimal special-case: when text starts with '@' and no name is provided, do not handle.
+      (Earlier behavior mentioned AgentFab default, but we keep this conservative here.)
+    """
+    s = (text or "").strip()
+    if not s:
+        return "", "", False
+    # Groups must mention explicitly
+    if not is_private and not s.startswith("@"):
+        return "", "", False
+    if s.startswith("@"):
+        body = s[1:].lstrip()
+        if not body:
+            # '@' alone — ignore
+            return "", "", False
+        parts = body.split(None, 1)
+        name = parts[0].lstrip("@")
+        rest = parts[1] if len(parts) > 1 else ""
+        return name, rest, True
+    # Private chat: allow 'Name <input>' without '@'
+    parts = s.split(None, 1)
+    if not parts:
+        return "", "", False
+    name = parts[0].lstrip("@")
+    rest = parts[1] if len(parts) > 1 else ""
+    return name, rest, True
+
+
 @_require_allowed_users
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.debug("handle_start: chat_id=%s user_id=%s", getattr(update.effective_chat, 'id', None), getattr(update.effective_user, 'id', None))
@@ -366,7 +406,7 @@ call-bot
 Commands:
 - /call [--echo] @Name <input>
 - /call [--echo] Name <input>  (equivalent to @Name)
-- /list [--aliases] [--q "filter"]
+- /agents [--aliases] [--q "filter"]
 - /clear [@Name]  (clear conversation session for current chat/thread; all agents if name omitted)
 
 Startup options:
@@ -378,9 +418,9 @@ Plain text (no slash):
 
 Special cases:
 - If this bot is AgentFabBot, default agent is AgentFab when no name is specified (e.g., "@ <input>").
-
+    
 Notes:
-- /list prints one name per line as @Name.
+- /agents lists one name per line as @Name.
 - With --aliases, alias lines are indented with two spaces before @ (e.g., "  @Alias").
         """.strip(),
         parse_mode=None,
@@ -392,7 +432,7 @@ Notes:
 async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.debug("handle_list: incoming text=%r", getattr(update.message, 'text', None))
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[LIST]", f"entry text={getattr(update.message, 'text', None)!r}")
+    debug_print("[bot]", "[AGENTS]", f"entry text={getattr(update.message, 'text', None)!r}")
 
     # Scope by project (derive from bot); StratoSpaceAiBot lists all projects
     proj = PROJECT_NAME or None
@@ -400,7 +440,7 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         proj = None
     try:
         tree = call_api.list(project=proj)
-        debug_print("[bot]", "[LIST]", f"projects={len(tree or [])}")
+        debug_print("[bot]", "[AGENTS]", f"projects={len(tree or [])}")
         if not tree:
             await m.reply("No agents found", parse_mode=None)
             return
@@ -424,10 +464,10 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     lines.append(f"• @{nm}")
             lines.append("")
         payload = "\n".join(lines).strip()
-        debug_print("[bot]", "[LIST]", f"reply_len={len(payload)}")
+        debug_print("[bot]", "[AGENTS]", f"reply_len={len(payload)}")
         await m.reply(payload, parse_mode=ParseMode.HTML)
     except Exception as e:
-        debug_print("[bot]", "[LIST]", f"error {type(e).__name__}: {e}")
+        debug_print("[bot]", "[AGENTS]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
@@ -813,6 +853,8 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("help", handle_start))
+    # Preferred: /agents; keep /list as a temporary alias
+    app.add_handler(CommandHandler("agents", handle_list))
     app.add_handler(CommandHandler("list", handle_list))
     app.add_handler(CommandHandler("projects", handle_projects))
     app.add_handler(CommandHandler("prompts_ready", handle_prompts_ready))

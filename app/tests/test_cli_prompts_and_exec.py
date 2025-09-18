@@ -44,6 +44,32 @@ def test_cli_prompts_table_header():
     assert "id" in head and "name" in head and "agent" in head and "project" in head and "state" in head and "url" in head
 
 
+def test_cli_prompts_prompt_filter_fanfab_prefix():
+    code, out, err = _run_cli(["prompts", "--project", "FanFab", "--prompt", "130*", "--format", "json"])
+    assert code == 0, err
+    data = json.loads(out)
+    assert isinstance(data, list)
+    ids = {x.get("prompt_id") for x in data}
+    assert "130-QAcriteriaDefinition" in ids
+
+
+def test_cli_prompts_prompt_filter_uxfab_agent_prefix():
+    code, out, err = _run_cli(["prompts", "--project", "UxFab", "--agent", "DialogPostAnalysis", "--prompt", "33-*", "--format", "json"])
+    assert code == 0, err
+    data = json.loads(out)
+    assert isinstance(data, list)
+    ids = {x.get("prompt_id") for x in data}
+    assert "33-Questioning" in ids
+
+
+def test_cli_prompts_star_filters_prompt_ok():
+    # Accepts wildcard filters; result may be empty depending on repo contents but should not error
+    code, out, err = _run_cli(["prompts", "--project", "*", "--agent", "*", "--prompt", "10*", "--format", "json"])
+    assert code == 0, err
+    data = json.loads(out)
+    assert isinstance(data, list)
+
+
 essential_env = {
     "TELEGRAM_TOKEN": "dummy",
     "TELEGRAPH_TOKEN": "dummy",
