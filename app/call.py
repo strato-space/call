@@ -1727,6 +1727,15 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
                                 m_proj = m_proj[1:-1]
                             if m_proj and m_proj != project_name:
                                 raise ValueError(f"Prompt '{prompt_override}' not found in project '{project_name}'")
+                        # If both agent and prompt provided, enforce agent match when metadata is present
+                        if norm_agent:
+                            m_agent = _re.search(r"^\s*agent\s*:\s*(.+)$", meta, _re.MULTILINE)
+                            if m_agent:
+                                a = m_agent.group(1).strip()
+                                if (a.startswith('"') and a.endswith('"')) or (a.startswith("'") and a.endswith("'")):
+                                    a = a[1:-1]
+                                if a and a != norm_agent:
+                                    raise ValueError(f"Prompt '{prompt_override}' not found for agent '{norm_agent}' in project '{project_name}'")
             except ValueError:
                 raise
             except Exception:
