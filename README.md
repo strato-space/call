@@ -6,6 +6,20 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 > Recent changes: see `CHANGELOG.md`.
 
+### CLI Quickstart
+
+Use the project virtual environment interpreter for consistency.
+
+```powershell
+.venv\Scripts\python.exe -m call.cli.main list --project UxFab
+.venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
+.venv\Scripts\python.exe -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
+```
+
+- Exit codes: `0` on success (`ok:true`), `1` on error envelopes (`ok:false`).
+  - PowerShell: check `$LASTEXITCODE`
+  - cmd.exe: check `%ERRORLEVEL%`
+
 ## Key Concepts
 
 ### Simplified Agent Discovery (Updated Sep 17, 2025)
@@ -172,6 +186,16 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
+#### Checking exit codes (Windows)
+
+```powershell
+# PowerShell
+.venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
+
+# cmd.exe
+cmd /c ".venv\\Scripts\\python.exe -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
+```
+
 ### Projects-aware discovery (Updated Sep 17, 2025)
 
 - **Project index**
@@ -298,6 +322,19 @@ The script defines a backward-compatible alias `ensure_repo()` which calls `repo
 See also the strategy doc: 
   - `org/strato/context/01. strato stategy/process-agents.md`;
   - `prompt/plan/`
+
+## Contributing / Testing
+
+- Use the project virtual environment for tests:
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
+```
+
+- Useful env flags:
+  - `CALL_DEBUG=1` — verbose debug logs to console
+  - `CALL_FAKE_TRACING_403=1` — simulate a 403 error envelope for `exec`/`call` integration tests
 
 ## AgentFab (Group Agent) — Quick Start
 

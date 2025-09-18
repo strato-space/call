@@ -19,24 +19,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from call.lib.logging import debug_print
 
 # Keep the same default used previously in app layer so callers can reuse it
 # for samples/memory root resolution when needed by the pipeline.
 default_samples_dir: str = str(Path(__file__).resolve().parents[2])
-
-
-def _debug_print(*parts: str) -> None:
-    """Lightweight debug print gated by CALL_DEBUG to avoid importing app layer."""
-    try:
-        flag = str(os.environ.get("CALL_DEBUG", "")).strip().lower()
-        if flag in ("1", "true", "yes", "on"):
-            try:
-                msg = " ".join(str(p) for p in parts if p is not None)
-                print(f"[DEBUG][discovery] {msg}")
-            except Exception:
-                pass
-    except Exception:
-        pass
 
     # KISS policy (2025-09-17): all lookups/use are case-sensitive. No normalization.
 
@@ -105,7 +92,7 @@ def load_projects_index(repo: Path | None = None) -> list[str]:
             data = load_yaml(index) or {}
         except ModuleNotFoundError:
             # PyYAML not installed in this environment: fall back to scanning
-            _debug_print(f"PyYAML is not available to parse {index}; falling back to scanning directories")
+            debug_print(f"[discovery] PyYAML is not available to parse {index}; falling back to scanning directories")
             data = None
         except Exception as e:
             raise ValueError(f"Failed to parse {index}: {e}")
@@ -561,7 +548,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
     repo = discover_agent_repo()
     query_raw = str(agent_name).strip().lstrip('@')
     query_norm = query_raw  # exact, case-sensitive
-    _debug_print("discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
+    debug_print("[discovery] discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
 
     # 0) Special-case: AgentFab root card; support agent.yaml or project.yaml (new schema)
     for root_file in [repo / 'AgentFab' / 'agent.yaml', repo / 'AgentFab' / 'project.yaml']:
@@ -602,7 +589,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
                 continue
             m = _load_agents_index(idx_path, base)
             if query_norm in m:
-                _debug_print("index hit:", f"base={base.name}", f"path={m[query_norm]}")
+                debug_print("[discovery] index hit:", f"base={base.name}", f"path={m[query_norm]}")
                 return m[query_norm]
         except Exception:
             pass
@@ -643,13 +630,13 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
     if project:
         proj_dir = repo / project
         search_bases = [proj_dir]
-        _debug_print("project restricted search:", f"base={proj_dir}")
+        debug_print("[discovery] project restricted search:", f"base={proj_dir}")
 
         for base in search_bases:
             try:
                 p = find_in_dir(base)
                 if p:
-                    _debug_print("fallback hit:", f"base={base.name}", f"path={p}")
+                    debug_print("[discovery] fallback hit:", f"base={base.name}", f"path={p}")
                     return p
             except Exception:
                 pass
