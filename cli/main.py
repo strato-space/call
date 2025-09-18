@@ -145,11 +145,6 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
-    try:
-        configure_logging()
-    except Exception:
-        pass
     parser = argparse.ArgumentParser(
         description="call — CLI for listing and invoking agents (keyword-only API)",
     )
@@ -283,7 +278,16 @@ def main() -> int:
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_exec.set_defaults(func=cmd_exec)
 
+    # Global flags
+    parser.add_argument("--json-logs", action="store_true", help="Emit JSON logs (overrides CALL_LOG_JSON)")
+
     args = parser.parse_args()
+
+    # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
+    try:
+        configure_logging(json=bool(getattr(args, "json_logs", False)))
+    except Exception:
+        pass
     return args.func(args)
 
 
