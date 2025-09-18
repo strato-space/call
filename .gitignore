@@ -41,3 +41,4 @@ wheels/
 
 .venv/
 app/__pycache__/
+call/call.db
