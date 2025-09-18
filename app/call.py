@@ -2042,31 +2042,48 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             )
             step1_output = getattr(result1, "final_output", None)
         except Exception as e:
-            err_text = format_exception_text(e)
-            # Only print stack in debug mode; still return the error text as final_output for downstream handling
-            debug_print("[app]", "Error during main agent run:\n" + err_text)
-            step1_output = f"Error: {err_text}"
+            # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
+            try:
+                err_text = format_exception_text(e)
+            except Exception:
+                err_text = str(e)
+            fatal_tokens = (
+                "unsupported_country_region_territory",
+                "request_forbidden",
+                "Tracing client error 403",
+            )
+            if any(tok in (err_text or "") for tok in fatal_tokens):
+                raise RuntimeError(
+                    'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
+                )
+            # Non-fatal errors: log a concise one-liner and surface a short error (no stack)
+            short_msg = str(e) or "Error"
+            debug_print("[app]", f"Error during main agent run: {short_msg}")
+            step1_output = f"Error: {short_msg}"
 
         # Notify digest (no image) and push
-        try:
-            # Capture targets locally to avoid races with global changes
-            use_chat_id = selected_chat_id
-            use_thread_id = selected_thread_id
-            await send_digest_notification(
-                agent_name=cfg.name,
-                agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
-                input_text=initial_input,
-                text=(step1_output or ""),
-                chat_id=use_chat_id,
-                message_thread_id=use_thread_id,
-                image_path=None,
-            )
-        except Exception:
-            pass
-        try:
-            await post_run_git_push(agent_name=cfg.name, user_input=user_input)
-        except Exception:
-            pass
+        # Only notify/push when we have a non-error output
+        is_error_output = isinstance(step1_output, str) and step1_output.strip().lower().startswith("error:")
+        if not is_error_output:
+            try:
+                # Capture targets locally to avoid races with global changes
+                use_chat_id = selected_chat_id
+                use_thread_id = selected_thread_id
+                await send_digest_notification(
+                    agent_name=cfg.name,
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
+                    input_text=initial_input,
+                    text=(step1_output or ""),
+                    chat_id=use_chat_id,
+                    message_thread_id=use_thread_id,
+                    image_path=None,
+                )
+            except Exception:
+                pass
+            try:
+                await post_run_git_push(agent_name=cfg.name, user_input=user_input)
+            except Exception:
+                pass
 
         # Expose final_output to callers via cfg
         try:
