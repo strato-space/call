@@ -1683,6 +1683,9 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
 
     norm_agent = (agent_name or "").strip() if agent_name else ""
     agent_yaml: Path | None = discover_agent_yaml(norm_agent, project=project_name) if norm_agent else None
+    # Enforce that when project and agent are specified, the agent must belong to that project
+    if project_name and norm_agent and agent_yaml is None:
+        raise ValueError(f"Agent '{norm_agent}' not found in project '{project_name}'")
     project_yaml: Path | None = None
     if project_name:
         project_yaml = (_discover_agent_repo() / str(project_name) / "project.yaml")
@@ -1698,6 +1701,37 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
         if prompt_path is None and agent_yaml:
             # Agent folder fallback handled by resolve_prompt; no action here
             pass
+        # Enforce that when a project is specified, the resolved prompt belongs to that project
+        if project_name:
+            if prompt_path is None:
+                raise ValueError(f"Prompt '{prompt_override}' not found in project '{project_name}'")
+            # Best-effort read of METADATA project from the Markdown file
+            try:
+                try:
+                    text = prompt_path.read_text(encoding="utf-8")  # type: ignore[attr-defined]
+                except Exception:
+                    with open(str(prompt_path), "r", encoding="utf-8") as _fp:
+                        text = _fp.read()
+                start = text.find("<!-- METADATA:START -->")
+                if start != -1:
+                    y0 = text.find("```yaml", start)
+                    if y0 != -1:
+                        y0 = y0 + len("```yaml")
+                        y1 = text.find("```", y0)
+                        meta = text[y0:y1] if y1 != -1 else text[y0:]
+                        import re as _re
+                        m = _re.search(r"^\s*project\s*:\s*(.+)$", meta, _re.MULTILINE)
+                        if m:
+                            m_proj = m.group(1).strip()
+                            if (m_proj.startswith('"') and m_proj.endswith('"')) or (m_proj.startswith("'") and m_proj.endswith("'")):
+                                m_proj = m_proj[1:-1]
+                            if m_proj and m_proj != project_name:
+                                raise ValueError(f"Prompt '{prompt_override}' not found in project '{project_name}'")
+            except ValueError:
+                raise
+            except Exception:
+                # On parse errors, do not block; assume match
+                pass
 
     # Load cards
     proj_attrs: Dict[str, Any]; proj_instr: str; proj_raw: str

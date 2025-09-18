@@ -113,3 +113,27 @@ def test_cli_exec_tracing_403_error_json():
     if isinstance(det, dict):
         inner = det.get("error") or {}
         assert inner.get("type") == "request_forbidden"
+
+
+def test_cli_call_print_instructions_wrong_project_prompt_not_found():
+    env = os.environ.copy()
+    env.update(essential_env)
+    # Intentionally mismatch project and prompt; should produce non-zero code and an error
+    code, out, err = _run_cli([
+        "call",
+        "--project", "AgentFab",
+        "--agent", "DialogPostAnalysis",
+        "--prompt", "33-Questioning",
+        "--print-instructions",
+    ], env=env)
+    # Expect non-zero and an error envelope or error text
+    assert code != 0
+    # Try to parse JSON envelope first
+    try:
+        data = json.loads(out)
+        assert data.get("ok") is False
+        # Either NOT_FOUND/NO_DATA_FOUND; we accept both 404 or 400 depending on mapping
+        assert data.get("error_code") in (400, 404)
+    except Exception:
+        # Fallback: plain-text error message
+        assert ("not found" in out.lower()) or ("not found" in err.lower())
