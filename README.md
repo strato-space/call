@@ -20,6 +20,21 @@ Use the project virtual environment interpreter for consistency.
   - PowerShell: check `$LASTEXITCODE`
   - cmd.exe: check `%ERRORLEVEL%`
 
+### Logging
+
+- Toggle verbose debug logs with `CALL_DEBUG=1`.
+- Centralized helper: `call.lib.logging.debug_print()`.
+- Module prefixes used in debug lines:
+  - `[app]` — application layer (agent run, welcome banner, notifications)
+  - `[discovery]` — discovery and indices
+  - `[bot]` — Telegram bot layer (update summaries appear as `[UPDATE] [bot] ...`)
+
+Example (PowerShell):
+
+```powershell
+$env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+```
+
 ## Key Concepts
 
 ### Simplified Agent Discovery (Updated Sep 17, 2025)

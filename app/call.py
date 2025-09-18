@@ -545,10 +545,10 @@ async def send_digest_notification(
                 reply_markup=reply_markup,
                 message_thread_id=eff_thread_id)
 
-        debug_print(f"Digest notification sent id={message_obj.message_id} chat={message_obj.chat_id}")
+        debug_print("[app]", f"Digest notification sent id={message_obj.message_id} chat={message_obj.chat_id}")
         return message_obj
     except Exception as e:
-        debug_print(f"Error sending Telegram message/photo: {e}")
+        debug_print("[app]", f"Error sending Telegram message/photo: {e}")
         return None
 
 
@@ -1881,8 +1881,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         try:
             _instr = getattr(cfg, "instructions", "") or ""
             _instr_preview = _instr[:600] + ("…" if len(_instr) > 600 else "")
-            debug_print("Agent instructions len=", str(len(_instr)))
-            debug_print("Agent instructions preview=\n" + _instr_preview)
+            debug_print("[app]", "Agent instructions len=", str(len(_instr)))
+            debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
         except Exception:
             pass
 
@@ -1963,7 +1963,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 model=cfg.model,
             )
             # Debug log the welcome HTML only when CALL_DEBUG is enabled
-            debug_print("welcome_html=\n" + (welcome_html or ""))
+            debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
 
             await send_telegram_welcome_message(
                 text=welcome_html,
@@ -1974,7 +1974,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             # Do not block run on welcome banner failures, but log the exception in debug mode
             try:
                 err_text = format_exception_text(e)
-                debug_print("[WARN] welcome message send failed:\n" + err_text)
+                debug_print("[app]", "[WARN] welcome message send failed:\n" + err_text)
             except Exception:
                 pass
 
@@ -1991,7 +1991,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         except Exception as e:
             err_text = format_exception_text(e)
             # Only print stack in debug mode; still return the error text as final_output for downstream handling
-            debug_print("Error during main agent run:\n" + err_text)
+            debug_print("[app]", "Error during main agent run:\n" + err_text)
             step1_output = f"Error: {err_text}"
 
         # Notify digest (no image) and push
@@ -2059,7 +2059,7 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
         text=text,
         message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None))
     )
-    debug_print(
+    debug_print("[app]",
         f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
 
 
