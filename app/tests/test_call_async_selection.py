@@ -58,12 +58,24 @@ def test_call_success_with_prompt_override(monkeypatch):
         },
     )
 
-    # Patch run_digest_pipeline to avoid heavy runtime
+    # Patch build_and_run_agent to avoid heavy runtime and return a cfg with _last_final_output
     app_call = importlib.import_module("call.app.call")
-    async def fake_run_digest_pipeline(samples_dir, user_input="", cli_agent_name="", initial_history=None, *, prompt_override=None, project_name=None):
-        return types.SimpleNamespace(), [], f"ok:{cli_agent_name}:{prompt_override}:{project_name}"
+    class _Cfg:
+        def __init__(self, out):
+            self._last_final_output = out
+    class _DummyAgent: pass
+    class _DummySession: pass
+    class _CM:
+        def __init__(self, out):
+            self.out = out
+        async def __aenter__(self):
+            return _DummyAgent(), _Cfg(self.out), _DummySession()
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None, merge=True):
+        return _CM(f"ok:{cli_agent_name}:{prompt_override}:{project_name}")
 
-    monkeypatch.setattr(app_call, "run_digest_pipeline", fake_run_digest_pipeline)
+    monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
 
     res = api.call(project="UxFab", agent="NewsAggr", prompt="Draft", input="hello")
     assert res.get("ok") is True

@@ -548,6 +548,7 @@ Notes:
 ### Telegram formatting and routing (Updated Sep 13, 2025)
 
 - KISS policy: the Telegram bot does not validate agent names. It forwards the name exactly as typed to `call.lib.api.call_async`, which performs discovery/validation and returns a structured error when an agent is unknown.
+  - The bot now passes the parsed token as `target` so the library decides whether it is a prompt, agent, or project (precedence: prompt > agent > project; supports `*`).
 
 - Formatting:
   - HTML mode is used for all rich messages. Sanitization is centralized in `call/app/utils/html_sanitizer.py` (via `telegram_prepare_html()`).

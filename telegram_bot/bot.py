@@ -619,8 +619,9 @@ async def _call_task(
         proj = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
         res = await call_api.call_async(
             project=proj,
-            agent=name,
+            agent=None,
             prompt=None,
+            target=name,  # delegate target interpretation (prompt>agent>project) to the library
             input=input_text,
             echo=echo,
             chat_id=chat_id,

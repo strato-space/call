@@ -1,9 +1,96 @@
+def _compile_wildcard_regex(pattern: str | None):
+    """Compile a case-insensitive full-string regex from a wildcard pattern ('*' -> '.*')."""
+    if not pattern:
+        return None
+    try:
+        import re as _re
+        return _re.compile("^" + _re.escape(pattern).replace("\\*", ".*") + "$", _re.IGNORECASE)
+    except Exception:
+        return None
+
+
+def interpret_target(
+    *,
+    project: str | None,
+    agent: str | None,
+    prompt: str | None,
+    target: str | None,
+) -> tuple[str | None, str | None, str | None, dict | None]:
+    """Interpret a free-form target into (project, agent, prompt) using current filters.
+
+    Precedence: prompt > agent > project. Supports '*' wildcards in target.
+
+    Returns (project, agent, prompt, err) where err is a dict with keys
+    { code, status, options, description } or None if no error.
+    """
+    try:
+        tgt = (target or "").strip()
+        if not tgt:
+            return project, agent, prompt, None
+        p_regex = _compile_wildcard_regex(tgt)
+        # 1) Prompt match
+        prompt_matches: list[dict] = []
+        if p_regex:
+            try:
+                items = _lib_prompts(project=project, agent=agent, state=None)
+            except Exception:
+                items = []
+            for x in (items or []):
+                pid = str(x.get("prompt_id") or "")
+                nm = str(x.get("name") or "")
+                if (p_regex.match(pid) or p_regex.match(nm)):
+                    prompt_matches.append(x)
+        if prompt_matches and not (prompt or "").strip():
+            if len(prompt_matches) == 1:
+                prompt = str(prompt_matches[0].get("prompt_id") or prompt_matches[0].get("name") or tgt)
+                return project, agent, prompt, None
+            return project, agent, prompt, {
+                "code": "TOO_MANY_ROWS",
+                "status": 400,
+                "options": prompt_matches,
+                "description": "Multiple prompts matched your criteria",
+            }
+        # 2) Project
+        try:
+            projects = load_projects_index()
+        except Exception:
+            projects = []
+        m = _compile_wildcard_regex(tgt)
+        proj_candidates = [p for p in (projects or []) if (m.match(p) if m else p == tgt)]
+        if proj_candidates and not (project or "").strip():
+            if len(proj_candidates) == 1:
+                project = proj_candidates[0]
+                return project, agent, prompt, None
+            return project, agent, prompt, {
+                "code": "TOO_MANY_ROWS",
+                "status": 400,
+                "options": [{"project": p} for p in proj_candidates],
+                "description": "Multiple projects matched your criteria",
+            }
+        # 3) Agent name/alias (only if still not resolved as project)
+        try:
+            ra = resolve_agent(project=project, agent=tgt, prompt=prompt)
+        except Exception:
+            ra = {"ok": False}
+        if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
+            agent = tgt
+            return project, agent, prompt, None
+        elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
+            return project, agent, prompt, ra
+        # Final conservative fallback: treat simple token as project
+        if (not project) and (not agent) and (not prompt) and ('*' not in tgt):
+            return tgt, agent, prompt, None
+        return project, agent, prompt, None
+    except Exception:
+        return project, agent, prompt, None
+
+
 """
 Library API for the call subsystem.
 
 Public surface (keyword-only):
-- call(*, project: str | None, agent: str | None, prompt: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False) -> dict
-- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False) -> dict
+- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
+- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
 - list(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> list[dict]  # hierarchical
 - resolve_agent(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> dict
 
@@ -16,15 +103,14 @@ This module reuses discovery and pipeline utilities from `call/app/call.py`. It 
 stable facade for the CLI and Telegram bot, including selection, wildcard filtering, and structured
 errors suitable for LLM consumption.
 """
-from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
 import builtins as _builtins
 import os
 import sys
 import traceback
 import sqlite3
+from typing import Any, Dict, List, Optional, Union
 
 # Discovery helpers are centralized in call.lib.discovery to avoid circular imports
 from call.lib.discovery import (
@@ -38,6 +124,88 @@ from call.lib.discovery import (
     resolve_prompt,
     prompts as _lib_prompts,
 )
+
+# DTO for runnable configuration (initial step; will be expanded gradually)
+from dataclasses import dataclass
+
+
+@dataclass
+class RunnableConfig:
+    name: Optional[str] = None
+    project: Optional[str] = None
+    prompt_override: Optional[str] = None
+    merge: bool = True
+    agent_yaml_path: Optional[str] = None
+    base_dir: Optional[str] = None
+    instructions: Optional[List[str]] = None
+    model: Optional[str] = None
+    vs_list: Optional[List[str]] = None
+    attributes: Optional[Dict[str, Any]] = None
+
+
+def build_runnable_instructions_config(
+    *,
+    project: Optional[str],
+    agent: Optional[str],
+    prompt: Optional[str] = None,
+    merge: bool = True,
+) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
+    """Build a minimal runnable configuration DTO from repository selection.
+
+    Returns (cfg, err) where:
+      - cfg is RunnableConfig when successful and err is None
+      - err is an error dict (same shape as _error_payload) when selection fails
+
+    Behavior:
+      - Uses resolve_agent(project, agent, prompt) to pick a single agent
+      - Fills name, project, prompt_override, merge, agent_yaml_path, base_dir
+      - Best-effort parse of agent.yaml to populate attributes/instructions/model/vs_list if present
+    """
+    try:
+        env = resolve_agent(project=project, agent=agent, prompt=prompt)
+    except Exception as e:
+        return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+
+    if not isinstance(env, dict) or not env.get("ok"):
+        # Normalize to error dict similar to _error_payload
+        err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="no data found", status=404, code="NO_DATA_FOUND", project=project)
+        return None, err
+
+    resolved = env.get("resolved") or {}
+    name = resolved.get("name") or ""
+    proj = resolved.get("project") or project
+    path = resolved.get("path")
+
+    cfg = RunnableConfig()
+    cfg.name = name
+    cfg.project = proj
+    cfg.prompt_override = (prompt or None)
+    cfg.merge = bool(merge)
+    cfg.agent_yaml_path = str(path) if path else None
+    try:
+        import os
+        cfg.base_dir = os.path.dirname(str(path)) if path else None
+    except Exception:
+        cfg.base_dir = None
+
+    # Enrich from YAML if available
+    try:
+        if path:
+            y = load_yaml(path) or {}
+            if isinstance(y, dict):
+                cfg.attributes = y.get("attributes") or y.get("meta") or None
+                # Optional hints
+                if isinstance(y.get("instructions"), list):
+                    cfg.instructions = [str(x) for x in y["instructions"]]
+                if isinstance(y.get("model"), str):
+                    cfg.model = y["model"]
+                if isinstance(y.get("vs_list"), list):
+                    cfg.vs_list = [str(x) for x in y["vs_list"]]
+    except Exception:
+        # Non-fatal; proceed with minimal DTO
+        pass
+
+    return cfg, None
 
 
 def _error_payload(
@@ -179,81 +347,31 @@ async def call_async(
         pass
 
     # Interpret 'target' shortcut before agent resolution using provided filters
+    proj2, agent2, prompt2, terr = interpret_target(project=project, agent=agent, prompt=prompt, target=target)
+    if terr is not None:
+        return _error_payload(
+            agent=(agent or ""),
+            input=(input or ""),
+            exc=terr.get("description") or "Ambiguous selection",
+            status=int(terr.get("status") or 400),
+            echo=echo,
+            debug=debug,
+            code=str(terr.get("code") or "BAD_REQUEST"),
+            project=proj2,
+            options=terr.get("options"),
+        )
+    project, agent, prompt = proj2, agent2, prompt2
+
+    # Build initial runnable config (DTO) for the resolved selection (non-breaking usage for now)
     try:
-        tgt = (target or "").strip()
-        if tgt:
-            import re as _re
-            def _compile(p: str) -> Optional[object]:
-                try:
-                    return _re.compile("^" + _re.escape(p).replace("\\*", ".*") + "$", _re.IGNORECASE)
-                except Exception:
-                    return None
-            # 1) Prefer prompt match (id or name)
-            p_regex = _compile(tgt)
-            prompt_matches: list[dict] = []
-            if p_regex:
-                try:
-                    items = _lib_prompts(project=project, agent=agent, state=None)
-                except Exception:
-                    items = []
-                for x in (items or []):
-                    pid = str(x.get("prompt_id") or "")
-                    nm = str(x.get("name") or "")
-                    if (p_regex.match(pid) or p_regex.match(nm)):
-                        prompt_matches.append(x)
-            if prompt_matches and not (prompt or "").strip():
-                if len(prompt_matches) == 1:
-                    prompt = str(prompt_matches[0].get("prompt_id") or prompt_matches[0].get("name") or tgt)
-                else:
-                    return _error_payload(
-                        agent=(agent or ""),
-                        input=(input or ""),
-                        exc="Multiple prompts matched your criteria",
-                        status=400,
-                        echo=echo,
-                        debug=debug,
-                        code="TOO_MANY_ROWS",
-                        project=project,
-                        options=prompt_matches,
-                    )
-            elif not prompt_matches:
-                # 2) Agent name/alias (unique; allow wildcard via list())
-                try:
-                    ra = resolve_agent(project=project, agent=tgt, prompt=prompt)
-                except Exception:
-                    ra = {"ok": False}
-                if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
-                    agent = tgt
-                elif isinstance(ra, dict) and (not ra.get("ok")):
-                    # If ambiguity surfaced from resolve_agent, bubble it up directly
-                    if str(ra.get("code")) == "TOO_MANY_ROWS":
-                        return ra
-                else:
-                    # 3) Project exact or wildcard
-                    try:
-                        projects = load_projects_index()
-                    except Exception:
-                        projects = []
-                    m = _compile(tgt)
-                    proj_candidates = [p for p in (projects or []) if (m.match(p) if m else p == tgt)]
-                    if proj_candidates and not (project or "").strip():
-                        if len(proj_candidates) == 1:
-                            project = proj_candidates[0]
-                        else:
-                            return _error_payload(
-                                agent=(agent or ""),
-                                input=(input or ""),
-                                exc="Multiple projects matched your criteria",
-                                status=400,
-                                echo=echo,
-                                debug=debug,
-                                code="TOO_MANY_ROWS",
-                                project=project,
-                                options=[{"project": p} for p in proj_candidates],
-                            )
+        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, merge=merge)
     except Exception:
-        # Non-fatal; proceed with provided args
-        pass
+        cfg, cfg_err = None, None
+    if isinstance(cfg_err, dict):
+        return _error_payload(
+            agent=(agent or ""), input=(input or ""), exc=cfg_err.get("description") or "Invalid configuration",
+            status=int(cfg_err.get("status") or 400), echo=echo, debug=debug, code=str(cfg_err.get("code") or "BAD_REQUEST"), project=project, options=cfg_err.get("options")
+        )
 
     # If prompt contains wildcard, resolve it against repository with filters first
     try:
@@ -306,8 +424,8 @@ async def call_async(
 
     # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
-    # Use default samples dir from discovery module to avoid importing app layer here
-    from call.lib.discovery import default_samples_dir
+    # Resolve default samples dir from the app layer
+    default_samples_dir = getattr(app_call, "default_samples_dir", None)
 
     # Optionally enable periodic asyncio tasks dump (for diagnosing long waits)
     dump_period_s = 0
@@ -369,27 +487,18 @@ async def call_async(
             except Exception:
                 pass
 
-            # Some tests monkeypatch run_digest_pipeline without a 'merge' kwarg.
-            # Introspect and only pass supported kwargs to avoid TypeError.
-            import inspect as _inspect
-            fn = getattr(app_call, "run_digest_pipeline")
-            sig = None
-            try:
-                sig = _inspect.signature(fn)
-            except Exception:
-                sig = None
-            kwargs = dict(
-                user_input=(input or ""),
-                cli_agent_name=(chosen_name if isinstance(chosen_name, str) else ""),
-                prompt_override=(prompt or None),
-                project_name=(project or None),
-            )
-            if (sig is None) or ("merge" in getattr(sig, "parameters", {})):
-                kwargs["merge"] = merge
-            agent_obj, history, final_output = await fn(
+            # Use the app layer context manager to build and run the agent once.
+            # This eliminates the run_digest_pipeline indirection.
+            cm = getattr(app_call, "build_and_run_agent")
+            async with cm(
+                (cfg.name if cfg and isinstance(cfg.name, str) else (chosen_name if isinstance(chosen_name, str) else "")),
                 default_samples_dir,
-                **kwargs,
-            )
+                user_input=(input or ""),
+                prompt_override=((cfg.prompt_override if cfg else None) or (prompt or None)),
+                project_name=((cfg.project if cfg else None) or (project or None)),
+                merge=(cfg.merge if cfg is not None else merge),
+            ) as (agent_obj, _cfg, _session):
+                final_output = getattr(_cfg, "_last_final_output", None)
         except Exception as e:
             # Convert pipeline errors to structured error; map known tracing 403 to 403
             msg = str(e)
