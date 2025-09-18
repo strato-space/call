@@ -368,10 +368,8 @@ async def call_async(
     except Exception:
         cfg, cfg_err = None, None
     if isinstance(cfg_err, dict):
-        return _error_payload(
-            agent=(agent or ""), input=(input or ""), exc=cfg_err.get("description") or "Invalid configuration",
-            status=int(cfg_err.get("status") or 400), echo=echo, debug=debug, code=str(cfg_err.get("code") or "BAD_REQUEST"), project=project, options=cfg_err.get("options")
-        )
+        # Preserve original error envelope (status/code) from resolve_agent
+        return cfg_err
 
     # If prompt contains wildcard, resolve it against repository with filters first
     try:
