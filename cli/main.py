@@ -135,6 +135,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             agent=agent or None,
             prompt=(args.prompt or None),
             input=(args.input or None),
+            session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
             merge=not bool(getattr(args, "no_merge", False)),
         )
@@ -174,6 +175,7 @@ def main() -> int:
     p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard)")
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
     p_call.add_argument("--input", default="", help="Input text for the agent")
+    p_call.add_argument("--session-id", default="", help="Override session id (format: AgentName:chat or AgentName:chat:thread)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_call.add_argument("--no-merge", dest="no_merge", action="store_true", help="Disable attribute/instructions merge (use prompt/agent/project only)")
@@ -277,6 +279,7 @@ def main() -> int:
             agent=(args.agent or None),
             prompt=(args.prompt or None),
             input=json.dumps(payload, ensure_ascii=False),
+            session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
         )
         _safe_print(json.dumps(result, ensure_ascii=False))
@@ -288,9 +291,30 @@ def main() -> int:
     p_exec.add_argument("--prompt", default="", help="Prompt name (mutually exclusive with --agent)")
     p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")
     p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
+    p_exec.add_argument("--session-id", default="", help="Override session id (format: AgentName:chat or AgentName:chat:thread)")
     p_exec.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_exec.set_defaults(func=cmd_exec)
+
+    # clear-session subcommand
+    def cmd_clear_session(args: argparse.Namespace) -> int:
+        try:
+            if not args.chat_id:
+                _safe_print(json.dumps({"ok": False, "error_code": 400, "description": "--chat-id is required"}, ensure_ascii=False))
+                return 1
+            # name is optional; empty clears all for chat/thread
+            res = call_api.asyncio.run(call_api.clear_session((args.name or None), chat_id=int(args.chat_id), thread_id=(int(args.thread_id) if args.thread_id is not None else None)))  # type: ignore[attr-defined]
+            _safe_print(json.dumps(res, ensure_ascii=False))
+            return 0 if (isinstance(res, dict) and res.get("ok")) else 1
+        except Exception as e:
+            _safe_print(json.dumps({"ok": False, "error_code": 500, "description": str(e)}, ensure_ascii=False))
+            return 1
+
+    p_clear = sub.add_parser("clear-session", help="Clear conversation session(s) for a chat/thread from SQLite")
+    p_clear.add_argument("--name", default="", help="Agent name to clear (optional). If omitted, clears all sessions for chat/thread")
+    p_clear.add_argument("--chat-id", required=True, help="Telegram chat id (required)")
+    p_clear.add_argument("--thread-id", default=None, help="Telegram thread id (optional)")
+    p_clear.set_defaults(func=cmd_clear_session)
 
     # Global flags
     parser.add_argument("--json-logs", action="store_true", help="Emit JSON logs (overrides CALL_LOG_JSON)")
