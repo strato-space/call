@@ -115,15 +115,16 @@ Also available (async) — supports empty agent name:
 - If `name` is provided and not found: returns a 404-style error envelope.
 
 Notes:
-- The Voice integration now imports and uses this library directly (no subprocess). See below.
 - If you need an error-envelope style response, wrap the call and convert exceptions into a `{ ok:false, ... }` JSON at your boundary (e.g., HTTP layer).
 
-### Voice integration via library
+### Integration note (Voice decoupling)
 
-- `voice/src/lib/core.py` (`VoicebotClient.call`) now calls `call.lib.api.call` directly.
-- The Voice CLI passes through `echo`:
-  - `echo=False`: Voice returns plain text to its caller.
-  - `echo=True`: Voice returns the full dict payload (suitable for JSON HTTP responses).
+The Voice repository no longer integrates with Call (no direct library import or CLI proxy). Use Call directly via:
+
+- Python library: `from call.lib.api import call, list, resolve_agent, build_runnable_instructions_config`
+- CLI: `python -m call.cli.main ...`
+- Actions API: `https://call-actions.stratospace.fun`
+- MCP: `call-mcp.stratospace.fun`
 
 ## Listing available agents
 
