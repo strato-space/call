@@ -169,6 +169,7 @@ from telegram.error import TelegramError, TimedOut, NetworkError, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
+from call.lib.logging import debug_print
 
 load_dotenv(dotenv_path=str(_env_file), override=True)
 
@@ -220,22 +221,7 @@ def ensure_env(var: str, default: str = None) -> str:
     return value
 
 
-def debug_print(*parts: str) -> None:
-    """Print a debug message only when CALL_DEBUG is enabled.
-
-    Enabled values (case-insensitive): 1, true, yes, on.
-    Each call prints on a single line, prefixed with [DEBUG].
-    """
-    try:
-        flag = str(os.getenv("CALL_DEBUG", "")).strip().lower()
-        if flag in ("1", "true", "yes", "on"):
-            try:
-                msg = " ".join(str(p) for p in parts if p is not None)
-                print(f"[DEBUG] {msg}")
-            except Exception:
-                pass
-    except Exception:
-        pass
+# debug_print is imported from call.lib.logging
 
 # Global variable to store the last message object
 telegram_last_message: Optional[Message] = None
