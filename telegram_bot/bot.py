@@ -160,7 +160,8 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Structured app log remains at INFO
     log.info("Update: %s", summary)
     # Console debug output is gated by CALL_DEBUG through debug_print
-    debug_print("[UPDATE]", summary)
+    # Keep [UPDATE] as the first token for tests; add module prefix as the second token
+    debug_print("[UPDATE]", "[bot]", summary)
     return None
 
 
