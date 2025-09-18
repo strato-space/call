@@ -20,6 +20,13 @@ import argparse
 import json
 import sys
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Telegram bot entrypoint for Call")
+    p.add_argument("bot_name_pos", nargs="?", help="Bot handle, e.g. StratoSpaceAiBot")
+    p.add_argument("--bot-name", dest="bot_name", default=None, help="Bot handle (same as positional)")
+    p.add_argument("--echo", action="store_true", help="Print effective config and exit")
+    return p
+
 from dotenv import load_dotenv
 from pathlib import Path
 from telegram import Update
@@ -58,8 +65,8 @@ load_dotenv(override=True)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 # Optional selected bot name from CLI (set later in main) or env
 SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
-# Derived project name with common suffixes removed (case-sensitive)
-PROJECT_NAME: str = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
+# Derived project name is computed in main after parsing args
+PROJECT_NAME: str = ""
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
@@ -110,6 +117,8 @@ def _current_config_dict() -> dict:
         "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
         "ALLOWED_USERS": allowed,
         "DEBUG": os.environ.get("DEBUG", ""),
+        "CALL_DEBUG": os.environ.get("CALL_DEBUG", ""),
+        "CALL_LOG_JSON": os.environ.get("CALL_LOG_JSON", ""),
         "CALL_ENV": str(_CALL_ENV),
         "CALL_ENV_exists": _CALL_ENV.exists(),
         "NO_PROXY": os.environ.get("NO_PROXY", ""),
@@ -120,6 +129,8 @@ def _current_config_dict() -> dict:
             "write_timeout": 60.0,
         },
         "drop_pending_updates": _DROP_PENDING_UPDATES,
+        "BOT_NAME": SELECTED_BOT_NAME,
+        "PROJECT_NAME": PROJECT_NAME,
     }
 
 
@@ -170,7 +181,27 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception:
         summary = "<unavailable>"
     # Log the exception with traceback
-    log.exception("Unhandled error while processing update: %s", summary, exc_info=context.error)
+    try:
+        err = getattr(context, "error", None)
+        if err is not None:
+            # Provide traceback tuple explicitly for structured logs
+            log.error("Unhandled error while processing update: %s (%s: %s)", summary, type(err).__name__, str(err), exc_info=(type(err), err, getattr(err, "__traceback__", None)))
+            debug_print("[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary)
+        else:
+            log.error("Unhandled error while processing update: %s (no error)", summary)
+            debug_print("[bot]", "[ERROR]", "<no error>", "|", summary)
+    except Exception:
+        # Fallback to original behavior
+        log.exception("Unhandled error while processing update: %s", summary)
+    # Also notify the user minimally to avoid silent failures
+    try:
+        if isinstance(update, Update):
+            m = Messenger(context=context, update=update)
+            err = context.error
+            msg = f"Error: {type(err).__name__}: {err}" if err else "Error: unknown"
+            await m.reply(msg, parse_mode=None)
+    except Exception:
+        pass
 
 
 ALLOWED_USERS: set[int] = _parse_allowed_users(_ALLOWED_USERS_RAW)
@@ -217,10 +248,15 @@ class Messenger:
                 prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
 
             async def _send(pt: str, pmode: Optional[str]):
+                debug_print("[bot]", "[SEND]", f"len={len(pt)}", f"pmode={pmode}")
                 if self.update.message:
-                    return await self.update.message.reply_text(text=pt, parse_mode=pmode)
+                    res = await self.update.message.reply_text(text=pt, parse_mode=pmode)
+                    debug_print("[bot]", "[SENT]", "via reply_text")
+                    return res
                 elif self.update.effective_chat:
-                    return await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
+                    res = await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
+                    debug_print("[bot]", "[SENT]", f"via send_message chat_id={getattr(self.update.effective_chat, 'id', None)}")
+                    return res
 
             # Retry loop for transient timeouts
             for attempt in range(3):
@@ -231,26 +267,40 @@ class Messenger:
                     # Fallback to plain text if Telegram can't parse entities
                     msg = str(e).lower()
                     if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
+                        debug_print("[bot]", "[WARN]", f"BadRequest parse error: {e}; falling back to plain")
                         plain = re.sub(r"<[^>]+>", "", prepared_text)
                         if len(plain) > 4096:
                             plain = plain[:4095] + "…"
-                        await _send(plain, None)
+                        try:
+                            await _send(plain, None)
+                        except Exception as e2:
+                            debug_print("[bot]", "[ERROR]", f"Fallback send failed: {type(e2).__name__}: {e2}")
+                            raise
                         return
                     raise
                 except TimedOut:
+                    debug_print("[bot]", "[WARN]", f"TimedOut on attempt {attempt+1}/3")
                     if attempt == 2:
                         break
                     await asyncio.sleep(1 * (2 ** attempt))
-                except Exception:
+                except Exception as e:
                     # Last-resort fallback to plain
+                    debug_print("[bot]", "[ERROR]", f"Send failed: {type(e).__name__}: {e}; falling back to plain")
                     plain = re.sub(r"<[^>]+>", "", prepared_text)
                     if len(plain) > 4096:
                         plain = plain[:4095] + "…"
-                    await _send(plain, None)
-                    return
+                    try:
+                        await _send(plain, None)
+                        return
+                    except Exception as e2:
+                        debug_print("[bot]", "[ERROR]", f"Plain fallback also failed: {type(e2).__name__}: {e2}")
+                        raise
             # If retries exhausted due to TimedOut, send minimal plain notification
             fallback = "Service temporarily unavailable. Please try again later."
-            await _send(fallback, None)
+            try:
+                await _send(fallback, None)
+            except Exception as e3:
+                debug_print("[bot]", "[ERROR]", f"Minimal fallback failed: {type(e3).__name__}: {e3}")
 
 
 # Authorization decorator
@@ -301,93 +351,14 @@ def _project_to_bot_handle(project_name: str) -> str:
     name = (project_name or "").strip()
     if not name:
         return ""
-    # If already ends with Bot, assume it's a handle-like name
     return name if name.endswith("Bot") else f"{name}Bot"
 
-
-def _project_to_bot_link(project_name: str) -> tuple[str, str]:
-    """Return (handle_with_at, absolute_t_me_url)."""
-    handle = _project_to_bot_handle(project_name)
-    if not handle:
-        return ("", "")
-    return (f"@{handle}", f"https://t.me/{handle}")
-
-
-def _resolve_agent_and_input(text: str, base: str, *, is_private: bool) -> tuple[str, str, bool]:
-    """Resolve (agent_name, input_text, should_handle) from a free-text message.
-
-    Rules:
-    - Private chats: "@Name ..." and "Name ..." are equivalent. If no explicit name,
-      fall back to empty agent; but if base == AgentFab, default to AgentFab.
-      Special case: leading '@' with no name (e.g., "@ text") → empty agent or AgentFab.
-    - Group/supergroup: only explicit "@Name ..." is handled; otherwise do not handle.
-    """
-    t = (text or "").strip()
-    default_base = "AgentFab" if base == "AgentFab" else ""
-
-    if is_private:
-        if not t:
-            return (default_base, t, True)
-        if t.startswith("@"):
-            parts = t.split(maxsplit=1)
-            tok = parts[0]
-            rest = parts[1] if len(parts) > 1 else ""
-            candidate = tok[1:]
-            if not candidate:
-                # '@ <text>' → empty agent, or AgentFab for AgentFabBot
-                return (default_base, rest or "", True)
-            # Do not validate here; delegate to call_api
-            return (candidate, rest, True)
-        else:
-            parts = t.split(maxsplit=1)
-            candidate = parts[0]
-            rest = parts[1] if len(parts) > 1 else ""
-            # Treat first token as agent name; let call_api handle unknown agents
-            return (candidate, rest, True)
-
-    # Group/supergroup: act only on explicit '@Name ...'
-    if not t or not t.startswith("@"):
-        return ("", t, False)
-    parts = t.split(maxsplit=1)
-    candidate = parts[0][1:]
-    rest = parts[1] if len(parts) > 1 else ""
-    if not candidate:
-        return (default_base, rest, True)
-    # In groups, handle only explicit '@Name ...'; delegate validation to call_api
-    return (candidate, rest, True)
-
-
-def _parse_call_text(text: str) -> tuple[str, str]:
-    """
-    Parse forms like:
-    - /call @Name some input
-    - call @Name some input
-    Returns (name_without_at, input_text)
-    Raises ValueError if not parsable.
-    """
-    t = text.strip()
-    if t.startswith("/call"):
-        t = _extract_after("/call", t)
-    elif t.lower().startswith("call"):
-        t = _extract_after("call", t)
-    # Expect @Name at the start
-    if not t or not t.lstrip().startswith("@"):
-        raise ValueError("Usage: /call @Name <input>")
-    t = t.lstrip()
-    # Split first token as @Name
-    parts = t.split(maxsplit=1)
-    name_tok = parts[0]
-    rest = parts[1] if len(parts) > 1 else ""
-    name = name_tok[1:]  # strip '@'
-    return name, rest
-
-
-# Handlers
 
 @_require_allowed_users
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.debug("handle_start: chat_id=%s user_id=%s", getattr(update.effective_chat, 'id', None), getattr(update.effective_user, 'id', None))
     m = Messenger(context=context, update=update)
+    debug_print("[bot]", "[START]", f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}")
     await m.reply(
         """
 call-bot
@@ -414,12 +385,14 @@ Notes:
         """.strip(),
         parse_mode=None,
     )
+    debug_print("[bot]", "[START]", "replied")
 
 
 @_require_allowed_users
 async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.debug("handle_list: incoming text=%r", getattr(update.message, 'text', None))
     m = Messenger(context=context, update=update)
+    debug_print("[bot]", "[LIST]", f"entry text={getattr(update.message, 'text', None)!r}")
 
     # Scope by project (derive from bot); StratoSpaceAiBot lists all projects
     proj = PROJECT_NAME or None
@@ -427,6 +400,7 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         proj = None
     try:
         tree = call_api.list(project=proj)
+        debug_print("[bot]", "[LIST]", f"projects={len(tree or [])}")
         if not tree:
             await m.reply("No agents found", parse_mode=None)
             return
@@ -449,8 +423,11 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 if nm:
                     lines.append(f"• @{nm}")
             lines.append("")
-        await m.reply("\n".join(lines).strip(), parse_mode=ParseMode.HTML)
+        payload = "\n".join(lines).strip()
+        debug_print("[bot]", "[LIST]", f"reply_len={len(payload)}")
+        await m.reply(payload, parse_mode=ParseMode.HTML)
     except Exception as e:
+        debug_print("[bot]", "[LIST]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
@@ -508,6 +485,7 @@ async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: 
 async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List ready prompts. Usage: /prompts_ready [<project>] [<agent>|@Agent]"""
     m = Messenger(context=context, update=update)
+    debug_print("[bot]", "[PROMPTS_READY]", f"entry text={getattr(update.message, 'text', None)!r}")
     try:
         text = (update.message.text or "").strip() if update.message else ""
         tokens = text.split()
@@ -536,8 +514,10 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         if not items and proj_default and not (project and project != proj_default):
             items = _lib_prompts(project=None, agent=agent, state='ready')
         rows = [_format_prompt_markdown_row(x) for x in items]
+        debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
+        debug_print("[bot]", "[PROMPTS_READY]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
@@ -545,6 +525,7 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List draft prompts. Usage: /prompts_draft [<project>] [<agent>|@Agent]"""
     m = Messenger(context=context, update=update)
+    debug_print("[bot]", "[PROMPTS_DRAFT]", f"entry text={getattr(update.message, 'text', None)!r}")
     try:
         text = (update.message.text or "").strip() if update.message else ""
         tokens = text.split()
@@ -593,6 +574,7 @@ async def _call_task(
             chat_id,
             thread_id,
         )
+        debug_print("[bot]", "[CALL_TASK]", f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}")
         # Delegate to lib; it will publish to Telegram via its own utilities
         proj = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
         res = await call_api.call_async(
@@ -604,6 +586,27 @@ async def _call_task(
             chat_id=chat_id,
             thread_id=thread_id,
         )
+        try:
+            ok = bool(res.get("ok")) if isinstance(res, dict) else None
+            debug_print("[bot]", "[CALL_TASK]", f"result ok={ok}")
+        except Exception:
+            pass
+        # Always send a minimal acknowledgement to the user to avoid "silent" behavior
+        try:
+            if isinstance(res, dict) and res.get("ok"):
+                out = res.get("final_output")
+                text = out if isinstance(out, str) and out.strip() else "Done."
+                await m.reply(text, parse_mode=None)
+                debug_print("[bot]", "[CALL_TASK]", f"replied ok len={len(text)}")
+            else:
+                code = (res.get("code") if isinstance(res, dict) else None) or "ERROR"
+                status = (res.get("error_code") if isinstance(res, dict) else None) or 500
+                desc = (res.get("description") if isinstance(res, dict) else None) or "Unknown error"
+                await m.reply(f"Error: {code} ({status}): {desc}", parse_mode=None)
+                debug_print("[bot]", "[CALL_TASK]", f"replied error code={code} status={status}")
+        except Exception:
+            # Never let reply errors crash the task
+            pass
         log.info("_call_task: done name=%s", name)
     except Exception as e:
         log.exception("_call_task: error name=%s", name)
@@ -616,6 +619,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     m = Messenger(context=context, update=update)
     text = (update.message.text or "") if update.message else ""
     log.debug("handle_call: incoming text=%r", text)
+    debug_print("[bot]", "[CALL]", f"entry text={text!r}")
 
     # Parse optional --echo flag and extract Name/@Name + input (both forms are accepted)
     echo_flag = False
@@ -644,6 +648,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             raise ValueError("Usage: /call [--echo] @Name <input>")
         name_tok, rest = (t2.split(maxsplit=1) + [""])[:2]
         name = name_tok[1:] if name_tok.startswith("@") else name_tok
+        debug_print("[bot]", "[CALL]", f"parsed name={name!r} echo={echo_flag}")
     except ValueError as ve:
         await m.reply(str(ve), parse_mode=None)
         return
@@ -665,6 +670,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     )
     log.info("handle_call: scheduled task for name=%s", name)
+    debug_print("[bot]", "[CALL]", f"scheduled name={name!r}")
 
 
 @_require_allowed_users
@@ -675,6 +681,7 @@ async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await m.reply("/projects is available only for StratoSpaceAiBot", parse_mode=None)
         return
     try:
+        debug_print("[bot]", "[PROJECTS]", "entry")
         tree = call_api.list(project=None)
         projects = [n.get("name") for n in (tree or [])]
         if not projects:
@@ -688,8 +695,11 @@ async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 lines.append(f'<b><a href="{url}">{py_html.escape(visible)}</a></b>')
             else:
                 lines.append(f"<b>{py_html.escape(visible)}</b>")
-        await m.reply("\n".join(lines), parse_mode=ParseMode.HTML)
+        payload = "\n".join(lines)
+        debug_print("[bot]", "[PROJECTS]", f"reply_len={len(payload)}")
+        await m.reply(payload, parse_mode=ParseMode.HTML)
     except Exception as e:
+        debug_print("[bot]", "[PROJECTS]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
@@ -698,6 +708,7 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Clear the SQLite conversation session(s) for this chat/thread."""
     m = Messenger(context=context, update=update)
     text = (update.message.text or "").strip() if update.message else ""
+    debug_print("[bot]", "[CLEAR]", f"entry text={text!r}")
     try:
         # Parse optional agent name after /clear, allow @Name or Name
         parts = text.split(None, 1)
@@ -720,7 +731,9 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         head = f"Cleared session for @{agent_name}" if agent_name else "Cleared sessions for all agents"
         body = "<code>" + "\n".join(cleared) + "</code>" if cleared else "(nothing to clear)"
         await m.reply(f"{head}\n\n{body}", parse_mode=ParseMode.HTML)
+        debug_print("[bot]", "[CLEAR]", f"cleared_count={len(cleared)}")
     except Exception as e:
+        debug_print("[bot]", "[CLEAR]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 @_require_allowed_users
@@ -734,6 +747,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     is_private = (chat_type == "private")
     name, inp, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
     if not should_handle:
+        debug_print("[bot]", "[PLAIN]", f"ignored text={text!r}")
         return
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
@@ -747,6 +761,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             thread_id=tid,
         )
     )
+    debug_print("[bot]", "[PLAIN]", f"scheduled name={name!r}")
 
 
 def main() -> None:
@@ -756,6 +771,9 @@ def main() -> None:
         configure_logging()
     except Exception:
         pass
+    # Parse CLI args
+    parser = _build_arg_parser()
+    args = parser.parse_args()
     if args.echo:
         cfg = _current_config_dict()
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
@@ -764,7 +782,8 @@ def main() -> None:
     # Resolve project name from optional bot handle by stripping common suffixes
     global SELECTED_BOT_NAME, PROJECT_NAME
     SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
-    PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else PROJECT_NAME
+    PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
+    debug_print("[bot]", "[MAIN]", f"bot={SELECTED_BOT_NAME!r} project={PROJECT_NAME!r}")
 
     # KISS: require project name to be provided; call layer will use it to fetch the token
     if not PROJECT_NAME:
@@ -809,6 +828,7 @@ def main() -> None:
 
     # Run the application (blocking)
     log.info("Starting polling...")
+    debug_print("[bot]", "[MAIN]", "run_polling")
     try:
         app.run_polling(drop_pending_updates=_DROP_PENDING_UPDATES)
     except Exception:
