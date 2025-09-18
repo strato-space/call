@@ -480,6 +480,11 @@ async def call_async(
         setattr(app_call, "force_no_session", bool(selected_chat_id is None))
     except Exception:
         pass
+    # Prefer caller-provided routing targets (avoid overriding with agent/prompt/env)
+    try:
+        setattr(app_call, "prefer_caller_targets", bool(selected_chat_id is not None))
+    except Exception:
+        pass
 
     # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
