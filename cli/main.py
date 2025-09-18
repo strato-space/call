@@ -134,6 +134,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             project=(args.project or None),
             agent=agent or None,
             prompt=(args.prompt or None),
+            target=(args.target or None) if hasattr(args, "target") else None,
             input=(args.input or None),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
@@ -174,6 +175,7 @@ def main() -> int:
     p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard)")
     p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard)")
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
+    p_call.add_argument("--target", default="", help="Unified selector (project|agent|prompt pattern)")
     p_call.add_argument("--input", default="", help="Input text for the agent")
     p_call.add_argument("--session-id", default="", help="Override session id (format: AgentName:chat or AgentName:chat:thread)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")

@@ -837,37 +837,46 @@ def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Opt
     """Validate and normalize a single exec payload into kwargs for call().
 
     Rules:
-    - Exactly one of agent/prompt/target must be present (truthy string).
-    - context is converted to an input JSON string when present; otherwise empty string.
-    - session_id, project, echo are passed through when present.
+    - Exactly one of project|agent|prompt|target must be present (truthy string).
+    - Always use the full payload JSON as the input string.
+    - session_id and echo are passed through when present.
 
     Returns (kwargs, err) where kwargs can be passed to call(**kwargs) and err is an error envelope on validation error.
     """
     try:
-        t = (payload.get("target") or payload.get("prompt") or payload.get("agent") or None)
-        fields = [f for f in [payload.get("target"), payload.get("prompt"), payload.get("agent")] if (str(f or "").strip())]
+        # Determine exactly one among project|agent|prompt|target
+        f_project = payload.get("project")
+        f_agent = payload.get("agent")
+        f_prompt = payload.get("prompt")
+        f_target = payload.get("target")
+        fields = [f for f in [f_project, f_agent, f_prompt, f_target] if (str(f or "").strip())]
         if len(fields) != 1:
             return {}, {
                 "ok": False,
                 "error_code": 400,
-                "description": "Provide exactly one of 'target' or 'prompt' or 'agent'",
+                "description": "Provide exactly one of 'project' or 'agent' or 'prompt' or 'target'",
                 "code": "BAD_REQUEST",
             }
         import json as _json
-        # Input priority: explicit payload["input"] if present; else full payload JSON
-        if "input" in payload:
-            raw_inp = payload.get("input")
-            inp = raw_inp if isinstance(raw_inp, str) else _json.dumps(raw_inp, ensure_ascii=False)
-        else:
-            inp = _json.dumps(payload, ensure_ascii=False)
+        # Always use full payload JSON as input
+        inp = _json.dumps(payload, ensure_ascii=False)
         kwargs = {
-            "project": (payload.get("project") or None),
+            "project": None,
             "agent": None,
             "prompt": None,
-            "target": t,
+            "target": None,
             "input": inp,
             "echo": bool(payload.get("echo", True)),
         }
+        # Assign only the provided selector
+        if str(f_project or "").strip():
+            kwargs["project"] = str(f_project)
+        elif str(f_agent or "").strip():
+            kwargs["agent"] = str(f_agent)
+        elif str(f_prompt or "").strip():
+            kwargs["prompt"] = str(f_prompt)
+        elif str(f_target or "").strip():
+            kwargs["target"] = str(f_target)
         sid = payload.get("session_id")
         if sid:
             kwargs["session_id"] = str(sid)

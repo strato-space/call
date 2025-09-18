@@ -12,10 +12,9 @@
 ### Exec payload contract
 
 - The single JSON payload accepted by Actions and MCP is:
-  - `{ agent?: string, prompt?: string, target?: string, context?: any, project?: string, echo?: boolean, session_id?: string }`
-  - Exactly one of `agent|prompt|target` must be provided.
-  - The `context` is passed as the full JSON string into the agent `input`.
-  - Optionally, clients may also include a separate free-form `input` in their own UX; we recommend documenting this nuance for your users.
+  - `{ project?: string, agent?: string, prompt?: string, target?: string, context?: any, echo?: boolean, session_id?: string }`
+  - Exactly one of `project|agent|prompt|target` must be provided.
+  - The full payload JSON is used as the input string for the agent pipeline.
 # Call
 
 A minimal, extensible subsystem for invoking AI agents and prompt pipelines by name and routing inputs/outputs across your project ecosystem.
