@@ -670,6 +670,15 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             t = _extract_after("/call", t)
         elif t.lower().startswith("call"):
             t = _extract_after("call", t)
+        # Drop optional @<own-bot-name> immediately following the command (e.g., "/call@StratoSpaceAiBot @Vasil3")
+        try:
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own_at = ("@" + own) if own else ""
+            # Quick path: if remainder starts with our @bot token, strip it
+            if own_at and t.lstrip().startswith(own_at):
+                t = t.lstrip()[len(own_at):].lstrip()
+        except Exception:
+            pass
         # Tokenize and remove --echo occurrences (support ASCII and Unicode dashes) before parsing @Name
         parts = t.split()
         filtered: list[str] = []
@@ -684,6 +693,14 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 echo_flag = True
                 continue
             filtered.append(p)
+        # Also handle form: first token equals our @bot token (e.g., after users typed "/call @Bot @Name ...")
+        try:
+            if filtered:
+                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+                if own and filtered[0].lstrip().startswith("@") and filtered[0].lstrip()[1:] == own:
+                    filtered = filtered[1:]
+        except Exception:
+            pass
         t2 = " ".join(filtered).lstrip()
         if not t2:
             raise ValueError("Usage: /call [--echo] @Name <input>")
