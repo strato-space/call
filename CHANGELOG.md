@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Chore (Logging): centralized `debug_print` in `call.lib.logging`, removed local implementations from `call/app/call.py` and `call/lib/discovery.py`. Removed `CALL_SILENT` flag; logging is controlled solely by `CALL_DEBUG` (KISS).
 - Chore (Logging): configure stdlib logging once per entrypoint — CLI (`call/cli/main.py`) and Telegram bot (`call/telegram_bot/bot.py`) call `configure_logging()` at startup. Library code assumes logging is preconfigured.
 - Feat (Logging): support `CALL_LOG_JSON=1` to emit JSON logs via stdlib logger. Also added a README note and example usage.
+- Feat (CLI): add `--json-logs` flag to force JSON logs regardless of env.
 - Refactor (discovery): indices and scans now use exact names and also enrich alias mappings from each agent’s local `agent.yaml`. File: `call/lib/discovery.py`.
 - Tests: added CLI integration tests for `prompts` table/JSON, `call/exec --print-instructions`, JSON shape for `list` (aliases/prompts), and error propagation for Tracing 403 via the new test hook. All tests pass under `.venv` — 40 passed.
 - Docs: updated `call/README.md` to reflect KISS case-sensitive policy, new CLI subcommands, `--print-instructions`, Windows-safe printing, error envelopes and exit codes; added `prompt/README.md`; inserted a KISS quickstart section at the top of `agent/README.md`. Removed references to `CALL_SILENT`; use `CALL_DEBUG` for diagnostics.

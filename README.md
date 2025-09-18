@@ -36,6 +36,10 @@ Use the project virtual environment interpreter for consistency.
     ```powershell
     $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
+  - CLI also supports `--json-logs` to force JSON output regardless of env:
+    ```powershell
+    .venv\Scripts\python.exe -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
+    ```
 
 - Notes:
   - The Telegram bot uses `get_logger("bot")` so JSON logs appear under `logger: "call.bot"`.
@@ -302,6 +306,30 @@ cmd /c ".venv\\Scripts\\python.exe -m call.cli.main exec --agent DialogPostAnaly
   - Each end-to-end chain receives a unique id (MongoDB ObjectId-like).
   - Full chain logging from start to finish into a dedicated log file.
   - Designed for replay and audit; future: Prometheus-style metrics endpoints.
+
+### Operational Logging
+
+Use these tips to inspect logs locally or in CI.
+
+- PowerShell: tail and filter by module prefix
+  ```powershell
+  Get-Content -Path .\logs\app.log -Wait | Select-String -Pattern "\[app\]"
+  ```
+
+- Bash/Cygwin: follow logs and filter JSON by level with jq
+  ```bash
+  tail -F logs/app.log | jq -r 'select(.level=="INFO") | .message'
+  ```
+
+- Extract bot updates from JSON logs
+  ```bash
+  tail -F logs/bot.log | jq -r 'select(.logger=="call.bot") | .message'
+  ```
+
+- Convert JSON logs to a simple table (time, level, message)
+  ```bash
+  jq -r '[.time, .level, .message] | @tsv' < logs/app.log
+  ```
 
 ## Position in the Ecosystem
 
