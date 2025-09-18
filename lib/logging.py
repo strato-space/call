@@ -3,10 +3,12 @@ Lightweight debug logging utilities for the call subsystem.
 
 - Single source of truth for debug_print() used by app and library layers
 - Gated only by CALL_DEBUG to keep behavior simple (KISS)
+ - Integrates with Python's logging module for optional routing/formatting
 """
 from __future__ import annotations
 
 import os
+import logging
 
 
 def _env_true(name: str) -> bool:
@@ -15,6 +17,63 @@ def _env_true(name: str) -> bool:
         return v in ("1", "true", "yes", "on")
     except Exception:
         return False
+
+
+_LOGGER_NAME = "call"
+_logger = logging.getLogger(_LOGGER_NAME)
+
+
+def configure_logging(level: int | None = None, *, json: bool = False) -> None:
+    """Configure base logging once.
+
+    - Default level: INFO (DEBUG when CALL_DEBUG=1)
+    - Output: stderr with a concise formatter (timestamp level name message)
+    - json flag is reserved for future JSON formatting (kept False now to avoid deps)
+    """
+    try:
+        # If logging already has handlers, don't reconfigure
+        if _logger.handlers:
+            return
+        eff_level = level if level is not None else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
+        _logger.setLevel(eff_level)
+        handler = logging.StreamHandler()
+        # Env toggle for JSON logs takes precedence unless explicit json param is given True/False
+        json_env = _env_true("CALL_LOG_JSON")
+        use_json = json or json_env
+
+        if not use_json:
+            fmt = logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
+        else:
+            class JSONFormatter(logging.Formatter):
+                def format(self, record: logging.LogRecord) -> str:
+                    try:
+                        import json as _json
+                        payload = {
+                            "time": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S"),
+                            "level": record.levelname,
+                            "logger": record.name,
+                            "message": record.getMessage(),
+                        }
+                        return _json.dumps(payload, ensure_ascii=False)
+                    except Exception:
+                        # Fallback to basic formatting on any error
+                        return f"{self.formatTime(record)} {record.levelname} {record.name}: {record.getMessage()}"
+            fmt = JSONFormatter()
+        handler.setFormatter(fmt)
+        _logger.addHandler(handler)
+    except Exception:
+        # Never raise on logging setup
+        pass
+
+
+def get_logger(name: str | None = None) -> logging.Logger:
+    """Return a module logger under the 'call' namespace."""
+    try:
+        if name and name != _LOGGER_NAME:
+            return logging.getLogger(f"{_LOGGER_NAME}.{name}")
+        return _logger
+    except Exception:
+        return _logger
 
 
 def debug_print(*parts: str) -> None:
@@ -27,6 +86,12 @@ def debug_print(*parts: str) -> None:
         if not _env_true("CALL_DEBUG"):
             return
         msg = " ".join(str(p) for p in parts if p is not None)
+        # Route through stdlib logging (if configured by the entrypoint)
+        try:
+            _logger.debug(msg)
+        except Exception:
+            pass
+        # Preserve console debug print for CLI greppability
         print(f"[DEBUG] {msg}")
     except Exception:
         # Never raise from debug logging

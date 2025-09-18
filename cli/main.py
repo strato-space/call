@@ -25,6 +25,7 @@ import faulthandler
 
 from call.lib import api as call_api
 from call.lib import discovery as call_discovery
+from call.lib.logging import configure_logging
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -144,6 +145,11 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
+    try:
+        configure_logging()
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(
         description="call — CLI for listing and invoking agents (keyword-only API)",
     )

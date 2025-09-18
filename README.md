@@ -29,6 +29,14 @@ Use the project virtual environment interpreter for consistency.
   - `[discovery]` — discovery and indices
   - `[bot]` — Telegram bot layer (update summaries appear as `[UPDATE] [bot] ...`)
 
+- Configuration:
+  - CLI and Telegram bot call `configure_logging()` once at startup (DEBUG when `CALL_DEBUG=1`, else INFO).
+  - Library usage assumes logging is already configured by the host application.
+  - Set `CALL_LOG_JSON=1` to emit JSON logs from the stdlib logger (stderr). Example:
+    ```powershell
+    $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+    ```
+
 Example (PowerShell):
 
 ```powershell
