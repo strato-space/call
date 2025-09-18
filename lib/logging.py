@@ -61,6 +61,21 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
             fmt = JSONFormatter()
         handler.setFormatter(fmt)
         _logger.addHandler(handler)
+
+        # Optional file handler
+        try:
+            logfile = os.environ.get("CALL_LOG_FILE", "").strip()
+            if logfile:
+                # Ensure parent directory exists
+                import os as _os
+                parent = _os.path.dirname(logfile)
+                if parent:
+                    _os.makedirs(parent, exist_ok=True)
+                fh = logging.FileHandler(logfile, encoding="utf-8")
+                fh.setFormatter(fmt)
+                _logger.addHandler(fh)
+        except Exception:
+            pass
     except Exception:
         # Never raise on logging setup
         pass
@@ -85,14 +100,36 @@ def debug_print(*parts: str) -> None:
     try:
         if not _env_true("CALL_DEBUG"):
             return
+        # Identify module prefix token if present (e.g., "[app]", "[bot]", "[discovery]")
+        prefix_token = None
+        for p in parts:
+            s = str(p) if p is not None else ""
+            if len(s) >= 3 and s.startswith("[") and "]" in s:
+                inside = s[1:s.index("]")].strip()
+                if inside and all(ch not in inside for ch in (" ", "\t", "/", "\\")):
+                    prefix_token = inside
+                    break
+
+        # Choose appropriate logger based on prefix token
+        logger = _logger
+        try:
+            if prefix_token in ("app", "bot", "discovery"):
+                logger = get_logger(prefix_token)
+        except Exception:
+            logger = _logger
+
         msg = " ".join(str(p) for p in parts if p is not None)
         # Route through stdlib logging (if configured by the entrypoint)
         try:
-            _logger.debug(msg)
+            logger.debug(msg)
         except Exception:
             pass
-        # Preserve console debug print for CLI greppability
-        print(f"[DEBUG] {msg}")
+        # Preserve console debug print for CLI greppability and add logger name prefix
+        try:
+            lname = getattr(logger, "name", _LOGGER_NAME) or _LOGGER_NAME
+            print(f"[DEBUG] [{lname}] {msg}")
+        except Exception:
+            print(f"[DEBUG] {msg}")
     except Exception:
         # Never raise from debug logging
         pass

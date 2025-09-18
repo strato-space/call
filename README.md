@@ -40,9 +40,11 @@ Use the project virtual environment interpreter for consistency.
     ```powershell
     .venv\Scripts\python.exe -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
+  - Set `CALL_LOG_FILE=logs/app.log` to write logs to a file in addition to stderr. The directory will be created if needed.
 
 - Notes:
   - The Telegram bot uses `get_logger("bot")` so JSON logs appear under `logger: "call.bot"`.
+  - `debug_print()` console lines include the logger name prefix (e.g., `[DEBUG] [call.bot] [bot] [UPDATE] ...`).
 
 JSON log sample (stderr):
 
