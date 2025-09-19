@@ -1126,6 +1126,7 @@ class MCPServerStdioHook(MCPServerStdio):
         cleaned = clean_html_for_telegram(safe_text)
         if len(cleaned) > 3800:
             cleaned = cleaned[:3797] + "..."
+        cleaned = '<code>' + cleaned + '</code>'
         msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
         self.__telegram_last_message = msg
         self.__last_tg_text = cleaned
