@@ -687,18 +687,16 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
                         if token:
                             url = f"https://api.telegram.org/file/bot{token}/{url}"
                     if url:
-                        ctx_items.append({"type": "text", "url": url})
+                        ctx_items.append({"type": "file", "url": url})
             except Exception:
                 pass
     except Exception:
         pass
     if ctx_items:
         payload["context"] = ctx_items
-    # Replay: prefer reply text when available; else mirror docs list
+    # Replay: set only when there is reply text (caption). If there are only files, omit replay.
     if reply_text:
         payload["replay"] = reply_text
-    elif ctx_items:
-        payload["replay"] = ctx_items
     # Input only when user provided main_text (do not derive from reply text)
     if (main_text or "").strip():
         payload["input"] = main_text.strip()
