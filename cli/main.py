@@ -138,7 +138,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             input=(args.input or None),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
-            merge=not bool(getattr(args, "no_merge", False)),
+            merge=bool(getattr(args, "merge", False)),
         )
         _safe_print(json.dumps(result, ensure_ascii=False))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
@@ -180,7 +180,7 @@ def main() -> int:
     p_call.add_argument("--session-id", default="", help="Override session id (format: AgentName:chat or AgentName:chat:thread)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
-    p_call.add_argument("--no-merge", dest="no_merge", action="store_true", help="Disable attribute/instructions merge (use prompt/agent/project only)")
+    p_call.add_argument("--merge", dest="merge", action="store_true", help="Enable attribute/instructions merge (off by default)")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
     p_call.set_defaults(func=cmd_call)

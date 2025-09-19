@@ -89,8 +89,8 @@ def interpret_target(
 Library API for the call subsystem.
 
 Public surface (keyword-only):
-- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
-- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = True) -> dict
+- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = False) -> dict
+- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = False) -> dict
 - list(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> list[dict]  # hierarchical
 - resolve_agent(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> dict
 
@@ -321,7 +321,7 @@ async def call_async(
     session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
-    merge: bool = True,
+    merge: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -480,11 +480,7 @@ async def call_async(
         setattr(app_call, "force_no_session", bool(selected_chat_id is None))
     except Exception:
         pass
-    # Prefer caller-provided routing targets (avoid overriding with agent/prompt/env)
-    try:
-        setattr(app_call, "prefer_caller_targets", bool(selected_chat_id is not None))
-    except Exception:
-        pass
+    # Prefer simple routing rules (KISS). No app-level override flags.
 
     # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
