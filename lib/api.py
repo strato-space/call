@@ -277,21 +277,27 @@ def build_runnable_instructions_config(
             input=(input or None),
         ), None
 
-    # Resolve single agent selection (path, project, name)
-    try:
-        env = resolve_agent(project=project, agent=agent, prompt=prompt)
-    except Exception as e:
-        return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+    # Resolve selection. If only a project is provided (no agent/prompt), treat it as a
+    # valid selection and build a project-level cfg from project.yaml (no resolve_agent).
+    path_p = None
+    if (project and not (agent or prompt)):
+        name = str(project)
+        proj = project
+    else:
+        try:
+            env = resolve_agent(project=project, agent=agent, prompt=prompt)
+        except Exception as e:
+            return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
-    if not isinstance(env, dict) or not env.get("ok"):
-        err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project)
-        return None, err
+        if not isinstance(env, dict) or not env.get("ok"):
+            err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project)
+            return None, err
 
-    resolved = env.get("resolved") or {}
-    name = str(resolved.get("name") or "")
-    proj = resolved.get("project") or project
-    path = resolved.get("path")
-    path_p = _Path(path) if path else None
+        resolved = env.get("resolved") or {}
+        name = str(resolved.get("name") or "")
+        proj = resolved.get("project") or project
+        path = resolved.get("path")
+        path_p = _Path(path) if path else None
 
     # Load cards: project, agent, prompt
     from call.lib.discovery import discover_agent_repo as _discover_agent_repo, resolve_prompt as _resolve_prompt, discover_prompt_repo as _discover_prompt_repo
@@ -391,7 +397,7 @@ def build_runnable_instructions_config(
         prompt_override=(prompt or None),
         merge=bool(merge),
         agent_yaml_path=(str(path_p) if path_p else None),
-        base_dir=(str(path_p.parent) if path_p else None),
+        base_dir=(str(path_p.parent) if path_p and path_p.parent else None),
         instructions=str(instr or ""),
         model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
         attributes=attributes if isinstance(attributes, dict) else {},

@@ -1909,11 +1909,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             pass
         # If YAML provided, use what we started; otherwise none
         mcp_servers = mcp_servers_started
-        # Decide final model with diagnostics
-        env_model = os.environ.get("LLM_MODEL")
-        yaml_model = (cfg.model or None)
-        final_model = yaml_model or env_model or "gpt-5"
-        debug_print("[app]", f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
         # Debug: print instructions length and a short preview
         try:
@@ -1925,10 +1920,10 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             pass
 
         agent = Agent(
-            name=f"{cfg.name} [agent]",
+            name=f"{cfg.name}",
             instructions=(cfg.instructions or ""),
             model_settings=ModelSettings(
-                model=final_model,
+                model=cfg.model,
             ),
             tools=tools,
             mcp_servers=mcp_servers,
