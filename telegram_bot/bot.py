@@ -657,6 +657,66 @@ async def _call_task(
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
+async def build_input_payload_from_reply(name: str | None, main_text: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, dict | None]:
+    """Build JSON payload from reply context if present and return (input_arg, payload_dict_or_None).
+
+    - Includes target when provided
+    - Adds context items for reply text and replied document (resolved to Telegram file URL)
+    - Adds 'replay' field (string or array) for convenience
+    - Sets 'input' to main_text; if empty, falls back to reply text
+    - Returns (JSON-string, payload) when any field is present; otherwise (plain_text, None)
+    """
+    payload: dict = {}
+    if name:
+        payload["target"] = name
+    ctx_items: list = []
+    reply_text_for_input: str = ""
+    try:
+        if update.message and update.message.reply_to_message:
+            r = update.message.reply_to_message
+            r_text = (r.text or r.caption or "").strip()
+            if r_text:
+                reply_text_for_input = r_text
+                ctx_items.append({"type": "text", "text": r_text})
+            # Document URL
+            try:
+                if getattr(r, "document", None):
+                    file = await context.bot.get_file(r.document.file_id)
+                    url = getattr(file, "file_path", "")
+                    if url and not url.startswith("http"):
+                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
+                        if token:
+                            url = f"https://api.telegram.org/file/bot{token}/{url}"
+                    if url:
+                        ctx_items.append({"type": "text", "url": url})
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if ctx_items:
+        payload["context"] = ctx_items
+        # Also include 'replay' for consumers expecting a simple field
+        if len(ctx_items) == 1 and "text" in ctx_items[0] and not ctx_items[0].get("url"):
+            payload["replay"] = ctx_items[0]["text"]
+        else:
+            payload["replay"] = ctx_items
+    # Prefer main_text; if absent, fall back to reply text
+    if (main_text or "").strip():
+        payload["input"] = main_text.strip()
+    elif reply_text_for_input:
+        payload["input"] = reply_text_for_input
+
+    if payload:
+        # Debug-dump payload JSON (safe length)
+        try:
+            import json as _json
+            debug_print("[bot]", "[PAYLOAD]", _json.dumps(payload, ensure_ascii=False)[:800])
+        except Exception:
+            pass
+        return ( __import__('json').dumps(payload, ensure_ascii=False), payload )
+    return (main_text or "", None)
+
+
 @_require_allowed_users
 async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = Messenger(context=context, update=update)
@@ -743,49 +803,7 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         app_call.reply_to_message_id = update.message.message_id if update and update.message else None
     except Exception:
         pass
-    # Build JSON payload when replying to a message (text/docs)
-    try:
-        payload: dict = {}
-        if name:
-            payload["target"] = name
-        # Collect reply context if present
-        ctx_items: list = []
-        reply_text_for_input: str = ""
-        if update.message and update.message.reply_to_message:
-            r = update.message.reply_to_message
-            r_text = (r.text or r.caption or "").strip()
-            if r_text:
-                reply_text_for_input = r_text
-                ctx_items.append({"type": "text", "text": r_text})
-            # Document URL
-            try:
-                if getattr(r, "document", None):
-                    file = await context.bot.get_file(r.document.file_id)
-                    url = getattr(file, "file_path", "")
-                    if url and not url.startswith("http"):
-                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
-                        if token:
-                            url = f"https://api.telegram.org/file/bot{token}/{url}"
-                    if url:
-                        ctx_items.append({"type": "text", "url": url})
-            except Exception:
-                pass
-        if ctx_items:
-            payload["context"] = ctx_items
-            # Also include 'replay' for consumers expecting a simple field
-            if len(ctx_items) == 1 and "text" in ctx_items[0] and not ctx_items[0].get("url"):
-                payload["replay"] = ctx_items[0]["text"]
-            else:
-                payload["replay"] = ctx_items
-        # Prefer main_text; if absent, fall back to reply text
-        if (main_text or "").strip():
-            payload["input"] = main_text.strip()
-        elif reply_text_for_input:
-            payload["input"] = reply_text_for_input
-        # Fallback to simple string when nothing to structure
-        input_arg = json.dumps(payload, ensure_ascii=False) if payload else (main_text or "")
-    except Exception:
-        input_arg = main_text or ""
+    input_arg, _ = await build_input_payload_from_reply(name or None, main_text or "", update, context)
 
     asyncio.create_task(
         _call_task(
@@ -889,36 +907,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         main_text = text
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
-    # Build JSON payload from reply context if present
-    try:
-        payload: dict = {}
-        if name:
-            payload["target"] = name
-        ctx_items: list = []
-        if update.message and update.message.reply_to_message:
-            r = update.message.reply_to_message
-            r_text = (r.text or r.caption or "").strip()
-            if r_text:
-                ctx_items.append({"type": "text", "text": r_text})
-            try:
-                if getattr(r, "document", None):
-                    file = await context.bot.get_file(r.document.file_id)
-                    url = getattr(file, "file_path", "")
-                    if url and not url.startswith("http"):
-                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
-                        if token:
-                            url = f"https://api.telegram.org/file/bot{token}/{url}"
-                    if url:
-                        ctx_items.append({"type": "text", "url": url})
-            except Exception:
-                pass
-        if ctx_items:
-            payload["context"] = ctx_items
-        if (main_text or "").strip():
-            payload["input"] = main_text.strip()
-        input_arg = json.dumps(payload, ensure_ascii=False) if payload else (main_text or "")
-    except Exception:
-        input_arg = main_text or ""
+    input_arg, _ = await build_input_payload_from_reply(name or None, main_text or "", update, context)
     asyncio.create_task(
         _call_task(
             Messenger(context=context, update=update),
