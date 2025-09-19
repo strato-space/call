@@ -231,20 +231,25 @@ force_no_session: bool = False
 # Optional original Telegram message id to reply to
 reply_to_message_id: Optional[int] = None
 
-def get_telegram_chat_id(env_var: str, default: str = None) -> int:
-    """Safely get and convert Telegram chat ID from environment."""
+def get_telegram_chat_id(env_var: str, default: str | None = None) -> int | None:
+    """Safely get and convert Telegram chat/thread ID from environment.
+
+    - Missing or empty value returns None when default is provided.
+    - A value of '0' is treated as None (disabled).
+    - Otherwise returns int(chat_id).
+    """
+    raw = os.environ.get(env_var, default if default is not None else "")
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if s == "" or s == "0":
+        return None
     try:
-        chat_id = ensure_env(env_var, default)
         # Remove any non-numeric characters except optional leading minus
-        if chat_id:
-            chat_id = ''.join(c for c in chat_id if c.isdigit() or c == '-')
-            if chat_id and chat_id != '-':  # Check if we have a valid number
-                return int(chat_id)
-        if default is not None:
-            return int(default)
-        raise ValueError(f"Invalid chat ID in {env_var}")
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Failed to parse Telegram chat ID from {env_var}: {e}")
+        s2 = ''.join(c for c in s if c.isdigit() or c == '-')
+        return int(s2) if s2 and s2 != '-' else None
+    except Exception as e:
+        raise ValueError(f"Failed to parse Telegram ID from {env_var}: {e}")
 
 # Get environment variables
 telegram_token = ensure_env("TELEGRAM_TOKEN")
@@ -691,9 +696,51 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
                 )
             debug_print("[TG] BadRequest parse error, retrying as plain text")
             message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        elif "thread not found" in emsg:
+            # Fallback: resend without thread id and without reply parameters
+            def _op_no_thread():
+                return bot.send_message(
+                    chat_id=eff_chat_id,
+                    text=safe_text,
+                    parse_mode=chosen_parse_mode,
+                    reply_markup=reply_markup,
+                )
+            debug_print("[TG] BadRequest thread not found, retrying without thread id")
+            message = await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         else:
             raise
     return message
+
+
+async def safe_send_message(*, chat_id: int | None, text: str, message_thread_id: int | None = None, parse_mode: str | None = None, reply_markup: InlineKeyboardMarkup | None = None, reply_to_message_id: int | None = None) -> Message:
+    """Wrapper around bot.send_message with retry and 'thread not found' fallback.
+
+    - Honors reply_to_message_id via ReplyParameters when available.
+    - On BadRequest 'thread not found', retries without message_thread_id and without reply params.
+    """
+    await init_bot()
+    try:
+        from telegram import ReplyParameters as _ReplyParameters
+    except Exception:
+        _ReplyParameters = None
+    async def _op():
+        kwargs = dict(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        if reply_to_message_id is not None:
+            if _ReplyParameters:
+                kwargs["reply_parameters"] = _ReplyParameters(message_id=reply_to_message_id, allow_sending_without_reply=True)
+            else:
+                kwargs["reply_to_message_id"] = reply_to_message_id
+        return await bot.send_message(**kwargs)
+    try:
+        return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        if "thread not found" in str(e).lower():
+            async def _op_no_thread():
+                return await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+            return await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        raise
 
 
 async def telegram_send_photo(image_path: str | Path, caption: str | None = None, chat_id: int | None = None, message_thread_id: int | None = None, reply_markup: InlineKeyboardMarkup | None = None) -> Message:
@@ -739,14 +786,29 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
         with open(image_path, 'rb') as f:
             return await bot.send_photo(
                 chat_id=eff_chat_id,
-                message_thread_id=eff_thread_id,
                 photo=f,
-                caption=(safe_caption or None),
+                caption=safe_caption,
                 parse_mode=parse_mode,
+                message_thread_id=eff_thread_id,
                 reply_markup=reply_markup,
             )
-
-    message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    try:
+        return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        if "thread not found" in str(e).lower():
+            async def _op_no_thread():
+                await init_bot()
+                with open(image_path, 'rb') as f:
+                    return await bot.send_photo(
+                        chat_id=eff_chat_id,
+                        photo=f,
+                        caption=safe_caption,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup,
+                    )
+            debug_print("[TG] BadRequest thread not found, retrying photo without thread id")
+            return await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        raise
     return message
 
 
@@ -1034,12 +1096,7 @@ class MCPServerStdioHook(MCPServerStdio):
         cleaned = clean_html_for_telegram(safe_text)
         if len(cleaned) > 3800:
             cleaned = cleaned[:3797] + "..."
-        msg = await telegram_send_message(
-            chat_id=selected_chat_id,
-            message_thread_id=selected_thread_id,
-            text=cleaned,
-            reply_markup=None,
-        )
+        msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
         self.__telegram_last_message = msg
         self.__last_tg_text = cleaned
         return msg
@@ -1181,7 +1238,17 @@ class MCPServerStdioHook(MCPServerStdio):
                         return await bot.send_chat_action(chat_id=msg.chat_id,
                                                            message_thread_id=msg.message_thread_id,
                                                            action=ChatAction.TYPING)
-                    await async_retry(_op, retries=1, base_delay=0.5, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+                    try:
+                        await async_retry(_op, retries=1, base_delay=0.5, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+                    except BadRequest as br:
+                        # Fallback: retry without thread id if not a forum topic
+                        if 'thread not found' in str(br).lower():
+                            async def _op_no_thread():
+                                return await bot.send_chat_action(chat_id=msg.chat_id,
+                                                                   action=ChatAction.TYPING)
+                            await async_retry(_op_no_thread, retries=1, base_delay=0.5, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+                        else:
+                            raise
             except Exception:
                 pass
 
