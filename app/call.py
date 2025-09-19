@@ -135,6 +135,14 @@ from .utils.telegraph_utils import publish_results, create_telegrath_account
 
 from mcp.types import CallToolResult
 
+# Increase default max turns for nested agent runs (tools/sub-agents) to avoid hitting library default 10
+try:
+    from agents import run as _agents_run
+    import os as _os_patch
+    _agents_run.DEFAULT_MAX_TURNS = int(_os_patch.environ.get("AGENTS_DEFAULT_MAX_TURNS", "150") or "150")
+except Exception:
+    pass
+
 """
 Environment loading: resolve .env relative to this file location, not CWD.
 Search order:
@@ -2312,7 +2320,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             result1 = await Runner.run(
                 agent,
                 initial_input,
-                max_turns=150,
+                max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
                 session=session,
             )
             step1_output = getattr(result1, "final_output", None)

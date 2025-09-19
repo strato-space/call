@@ -46,14 +46,14 @@ def test_session_id_in_success_response(monkeypatch):
             return False
 
     def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None, merge=True):
-        # Simulate a created session id
-        return _CM(f"{cli_agent_name}:-100123:10")
+        # Simulate a created session id (agentless format chat[:thread])
+        return _CM("-100123:10")
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True)
 
     res = api.call(project="UxFab", agent="NewsAggr", input="hello")
     assert res.get("ok") is True
-    assert res.get("session_id") == "NewsAggr:-100123:10"
+    assert res.get("session_id") == "-100123:10"
 
 
 def test_session_id_override_parsed_and_used(monkeypatch):
@@ -89,7 +89,7 @@ def test_session_id_override_parsed_and_used(monkeypatch):
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True)
 
-    override = "NewsAggr:-100888:77"
+    override = "-100888:77"
     res = api.call(project="UxFab", agent="NewsAggr", input="hello", session_id=override)
     assert res.get("ok") is True
     assert res.get("session_id") == override

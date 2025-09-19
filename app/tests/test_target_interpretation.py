@@ -25,3 +25,16 @@ def test_interpret_target_prompt_single_known():
     pj, ag, pr, err = interpret_target(project="UxFab", agent=None, prompt=None, target="33-Questioning")
     assert err is None
     assert pr in ("33-Questioning", "33-Questioning"), pr
+
+
+def test_interpret_target_prompt_global_fallback_warn(caplog):
+    # When project scope doesn't contain the prompt, the resolver should use global fallback
+    # and emit a WARN log via the standard logger 'call.api'.
+    from call.lib.logging import configure_logging
+    configure_logging()
+    caplog.set_level("WARNING", logger="call.api")
+    pj, ag, pr, err = interpret_target(project="__NoSuchProject__", agent=None, prompt=None, target="33-Questioning")
+    assert err is None
+    assert pr.lower().startswith("33-questioning"), pr
+    # Ensure a warning about global resolution was emitted
+    assert any("outside project scope" in (rec.message or "") for rec in caplog.records)
