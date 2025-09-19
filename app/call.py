@@ -200,6 +200,48 @@ async def async_retry(
         except retry_on as e:
             if attempt >= retries:
                 raise
+
+
+async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, parse_mode: str | None = None) -> Message | None:
+    """Safe edit for Telegram messages with robust fallbacks.
+
+    - Sanitizes HTML if requested by caller.
+    - Retries transient errors.
+    - On BadRequest 'can't parse entities', falls back to plain text edit.
+    - On 'message to edit not found', sends a new message instead.
+    - Returns Message on success; None when falling back silently fails.
+    """
+    await init_bot()
+    # Prepare body conservatively; let caller pre-sanitize if needed
+    prepared = text or ""
+    async def _op():
+        return await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=prepared, parse_mode=parse_mode)
+
+    try:
+        return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        msg = str(e).lower()
+        # Fallback to plain edit if HTML entities fail
+        if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
+            try:
+                import re as _re
+                plain = _re.sub(r"<[^>]+>", "", prepared)
+                async def _plain():
+                    return await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=plain)
+                return await async_retry(_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+            except Exception:
+                pass
+        # If message was deleted or cannot be edited, send a new one
+        if "message to edit not found" in msg or "message can't be edited" in msg or "message is not modified" in msg:
+            try:
+                return await safe_send_message(chat_id=chat_id, text=prepared, parse_mode=parse_mode)
+            except Exception:
+                return None
+        # Unknown BadRequest: swallow to avoid breaking callers
+        return None
+    except Exception:
+        # Never propagate; keep pipelines running
+        return None
             delay = base_delay * (2 ** attempt)
             # Apply jitter within ±jitter seconds
             if jitter:
@@ -778,10 +820,21 @@ async def safe_send_message(*, chat_id: int | None, text: str, message_thread_id
     try:
         return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
     except BadRequest as e:
-        if "thread not found" in str(e).lower():
+        msg = str(e).lower()
+        if "thread not found" in msg:
             async def _op_no_thread():
                 return await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
             return await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        # Fallback to plain text on entity parse errors
+        if ("can't parse entities" in msg) or ("parse entities" in msg) or ("entity" in msg):
+            try:
+                import re as _re
+                plain = _re.sub(r"<[^>]+>", "", text or "")
+                async def _plain():
+                    return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup)
+                return await async_retry(_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+            except Exception:
+                pass
         raise
 
 
@@ -1076,13 +1129,14 @@ def _merge_outputs(*outputs: dict | None) -> dict:
 
 
 async def edit_message_text(text):
-    async def _op():
-        return await bot.edit_message_text(
-            chat_id=telegram_last_message.chat_id,
-            message_id=telegram_last_message.message_id,
-            text=text,
-            parse_mode="HTML")
-    await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    """Legacy helper routed to safe_edit_message_text; keeps compatibility."""
+    try:
+        if telegram_last_message is None:
+            return
+        await safe_edit_message_text(chat_id=telegram_last_message.chat_id, message_id=telegram_last_message.message_id, text=text, parse_mode=ParseMode.HTML)
+    except Exception:
+        # Swallow errors to avoid breaking callers
+        pass
 
 class MCPServerStdioHook(MCPServerStdio):
     """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
@@ -1119,51 +1173,50 @@ class MCPServerStdioHook(MCPServerStdio):
             return f"{thoughtNumber}/{totalThoughts}"
 
     async def __send_message(self, text: str) -> Message:
-        """Send a new Telegram message for this MCP instance and cache it."""
+        """Send a new Telegram message for this MCP instance and cache it. Never raises."""
         # Prefix with MCP title and sanitize; use common send path with consistent target selection
         header = f"<b>{self._mcp_title}</b>\n\n"
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         payload = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
-        cleaned = clean_html_for_telegram(payload)
-        cleaned = telegram_truncate_html_safe(cleaned, 3800)
-        msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
-        self.__telegram_last_message = msg
-        self.__last_tg_text = cleaned
-        return msg
+        try:
+            cleaned = clean_html_for_telegram(payload)
+            cleaned = telegram_truncate_html_safe(cleaned, 3800)
+            msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
+            self.__telegram_last_message = msg
+            self.__last_tg_text = cleaned
+            return msg
+        except Exception:
+            # Swallow errors to keep MCP flow running
+            return self.__telegram_last_message  # may be None
 
     async def __edit_message_text(self, text: str) -> None:
-        """Edit this instance's message; if missing, send a new one."""
+        """Edit this instance's message; if missing, send a new one. Never raises."""
         header = f"<b>{self._mcp_title}</b>\n\n"
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         safe_text = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
         if not self.__telegram_last_message:
             # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
-            await self.__send_message(text)
+            try:
+                await self.__send_message(text)
+            except Exception:
+                pass
             return
         # Clean and truncate
-        cleaned = clean_html_for_telegram(safe_text)
-        cleaned = telegram_truncate_html_safe(cleaned, 3800)
-        # Skip edit if content is unchanged (prevents BadRequest: Message is not modified)
-        if self.__last_tg_text == cleaned:
-            return
-        async def _op():
-            return await bot.edit_message_text(
-                chat_id=self.__telegram_last_message.chat_id,
-                message_id=self.__telegram_last_message.message_id,
-                text=cleaned,
-                parse_mode=ParseMode.HTML,
-            )
         try:
-            await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-            self.__last_tg_text = cleaned
-        except BadRequest as br:
-            # Ignore 'Message is not modified' just in case race conditions occur
-            if 'Message is not modified' in str(br):
+            cleaned = clean_html_for_telegram(safe_text)
+            cleaned = telegram_truncate_html_safe(cleaned, 3800)
+            # Skip edit if content is unchanged (prevents BadRequest: Message is not modified)
+            if self.__last_tg_text == cleaned:
                 return
-            raise
+            res = await safe_edit_message_text(chat_id=self.__telegram_last_message.chat_id, message_id=self.__telegram_last_message.message_id, text=cleaned, parse_mode=ParseMode.HTML)
+            if res is not None:
+                self.__last_tg_text = cleaned
+        except Exception:
+            # Never propagate
+            pass
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         debug_print(f"[MCP Hook] Calling tool: {tool_name}")
@@ -1215,22 +1268,24 @@ class MCPServerStdioHook(MCPServerStdio):
         debug_print("[MCP Hook] Arguments (YAML):\n" + yaml_args)
 
         if tool_name != 'sequentialthinking':
-            # For all other tools: send/edit YAML arguments in Telegram without progress bar
-            yaml_text = _to_yaml_text(arguments)
-
-            body = f"🛠️ {tool_name}\n\n{yaml_text}".strip()
-            # Ensure message exists, then edit
-            if self.__telegram_last_message is None:
-                await self.__send_message(body)
-            else:
-                await self.__edit_message_text(body)
+            # For all other tools: send/edit YAML arguments in Telegram without breaking on errors
+            try:
+                yaml_text = _to_yaml_text(arguments)
+                body = f"🛠️ {tool_name}\n\n{yaml_text}".strip()
+                if self.__telegram_last_message is None:
+                    await self.__send_message(body)
+                else:
+                    await self.__edit_message_text(body)
+            except Exception:
+                # Swallow any Telegram errors
+                pass
             try:
                 async def _call():
                     return await parent_call_tool(tool_name, arguments)
                 return await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
             except Exception as e:
-                err_text = format_exception_text(e)
                 try:
+                    err_text = format_exception_text(e)
                     await self.__edit_message_text(f"❌ Error in {tool_name}\n\n" + err_text)
                 except Exception:
                     pass
@@ -1251,7 +1306,10 @@ class MCPServerStdioHook(MCPServerStdio):
                         banner_lines.append(f"{safe_input}")
                     except Exception:
                         pass
-                await self.__send_message("\n".join(banner_lines))
+                try:
+                    await self.__send_message("\n".join(banner_lines))
+                except Exception:
+                    pass
                 # Do not display progress bar on the very first tick
                 if tn <= 0:
                     return await super().call_tool(tool_name, arguments)
@@ -1262,7 +1320,10 @@ class MCPServerStdioHook(MCPServerStdio):
                 text = f"<b>💭Thinking: {bar}</b>\n\n{thought}\n\n<b>💭Thinking: {bar}</b>"
             else:
                 text = str(thought)
-            await self.__edit_message_text(text)
+            try:
+                await self.__edit_message_text(text)
+            except Exception:
+                pass
 
             # Send typing action on the same chat/thread when possible
             try:
