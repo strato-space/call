@@ -2022,6 +2022,57 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 except Exception:
                     pass
 
+        # Enrich JSON user_input: if it contains context items of type 'file',
+        # try to download by URL and attach a 'base64' field next to the URL.
+        # Errors are swallowed; original input is kept on failure.
+        async def _embed_files_in_user_input_if_any(raw: str) -> str:
+            try:
+                import json as _json
+                import base64 as _b64
+                data = _json.loads(raw)
+                ctx = data.get("context")
+                if not isinstance(ctx, list):
+                    return raw
+                # Only process first-level items with type 'file'
+                found = False
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                    for it in ctx:
+                        try:
+                            if not isinstance(it, dict):
+                                continue
+                            if str(it.get("type")) != "file":
+                                continue
+                            url = str(it.get("url") or "").strip()
+                            if not url:
+                                continue
+                            # Skip if already present
+                            if isinstance(it.get("base64"), str) and it["base64"]:
+                                continue
+                            resp = await client.get(url)
+                            if resp.status_code == 200:
+                                b64 = _b64.b64encode(resp.content).decode("ascii")
+                                it["base64"] = b64
+                                found = True
+                        except Exception:
+                            # best-effort per item
+                            continue
+                if found:
+                    try:
+                        out = _json.dumps(data, ensure_ascii=False)
+                        debug_print("[app]", "[PAYLOAD] embedded base64 for files")
+                        return out
+                    except Exception:
+                        return raw
+                return raw
+            except Exception:
+                return raw
+
+        try:
+            if isinstance(user_input, str) and user_input.strip().startswith(('{','[')):
+                user_input = await _embed_files_in_user_input_if_any(user_input)
+        except Exception:
+            pass
+
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
         try:
