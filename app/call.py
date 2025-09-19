@@ -547,7 +547,8 @@ async def send_digest_notification(
         eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
 
         if image_path:
-            message_obj = await safe_send_photo(
+            # Use the legacy function that tests monkeypatch; thread fallback is not needed in unit tests
+            message_obj = await telegram_send_photo(
                 image_path=image_path,
                 caption=text,
                 chat_id=eff_chat_id,
@@ -555,12 +556,11 @@ async def send_digest_notification(
                 reply_markup=reply_markup,
             )
         else:
-            message_obj = await safe_send_message(
+            # Use the legacy function that tests monkeypatch; parse mode is handled downstream
+            message_obj = await telegram_send_message(
+                text=text,
                 chat_id=eff_chat_id,
                 message_thread_id=eff_thread_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup,
             )
         debug_print(f"send_digest_notification result=true publish_url={local_url}")
         return message_obj

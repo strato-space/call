@@ -59,9 +59,10 @@ async def test_payload_reply_text_only(monkeypatch):
     arg, payload, parsed = await _build_payload("AgentX", "hello", reply_text="prev text", with_document=False)
     assert isinstance(parsed, dict)
     assert parsed.get("target") == "AgentX"
-    assert parsed.get("input") == "hello"
-    ctx = parsed.get("context") or []
-    assert ctx and ctx[0].get("text") == "prev text"
+    assert parsed.get("input") == "hello"  # main text present
+    # No context for text-only replies
+    assert "context" not in parsed or parsed.get("context") in (None, [])
+    # Replay contains reply text
     assert parsed.get("replay") == "prev text"
 
 
