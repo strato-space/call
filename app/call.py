@@ -1919,6 +1919,72 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         except Exception:
             pass
 
+        # Agents-as-Tools: if the project card exposes 'agents' or 'prompts',
+        # create sub-agents as tools so the main agent can call them.
+        try:
+            from call.lib.api import build_runnable_instructions_config as _build_cfg
+        except Exception:
+            _build_cfg = None  # graceful
+
+        try:
+            # Snapshot current toolset to avoid recursive growth
+            base_tools_snapshot = list(tools)
+            entries: list[tuple[str, str]] = []
+            attrs = (cfg.attributes or {}) if hasattr(cfg, 'attributes') else {}
+            # 'agents' may be a dict name->description
+            ag_map = attrs.get('agents') if isinstance(attrs, dict) else None
+            if isinstance(ag_map, dict):
+                for nm, desc in ag_map.items():
+                    try:
+                        entries.append((str(nm), str(desc) if desc is not None else ""))
+                    except Exception:
+                        continue
+            # 'prompts' may be a list or dict; prefer keys/names
+            pr_map = attrs.get('prompts') if isinstance(attrs, dict) else None
+            if isinstance(pr_map, dict):
+                for nm, desc in pr_map.items():
+                    try:
+                        entries.append((str(nm), str(desc) if desc is not None else ""))
+                    except Exception:
+                        continue
+            elif isinstance(pr_map, list):
+                for nm in pr_map:
+                    try:
+                        entries.append((str(nm), ""))
+                    except Exception:
+                        continue
+
+            # Build a sub-agent for each entry and expose as tool
+            if _build_cfg and entries:
+                for sub_name, sub_desc in entries:
+                    try:
+                        sub_cfg, sub_err = _build_cfg(
+                            project=(cfg.project or None),
+                            agent=None,
+                            prompt=None,
+                            target=sub_name,
+                            input=None,
+                            merge=bool(getattr(cfg, 'merge', False)),
+                        )
+                        if sub_err or not sub_cfg:
+                            continue
+                        sub_agent = Agent(
+                            name=sub_cfg.name or sub_name,
+                            instructions=sub_cfg.instructions or "",
+                            model_settings=ModelSettings(model=cfg.model),
+                            tools=base_tools_snapshot,
+                            mcp_servers=mcp_servers,
+                        )
+                        tool = sub_agent.as_tool(
+                            tool_name=sub_cfg.name or sub_name,
+                            tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
+                        )
+                        tools.append(tool)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
         agent = Agent(
             name=f"{cfg.name}",
             instructions=(cfg.instructions or ""),
