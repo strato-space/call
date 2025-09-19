@@ -318,9 +318,18 @@ async def init_bot(*, project_name: str | None = None):
     if project_name is None and "bot" in globals() and isinstance(bot, Bot):
         return bot
 
-    # Resolve token based on preference order (project > default)
+    # Resolve token based on preference order:
+    # 1) CALL_TELEGRAM_TOKEN (passed by telegram_bot at runtime)
+    # 2) TELEGRAM_TOKEN.<ProjectName> when project_name is provided
+    # 3) TELEGRAM_TOKEN (default from environment)
     token: str | None = None
-    if project_name:
+    try:
+        env_override = os.environ.get("CALL_TELEGRAM_TOKEN", "").strip()
+        if env_override:
+            token = env_override
+    except Exception:
+        token = None
+    if not token and project_name:
         try:
             token = get_project_token(project_name)
         except Exception:
@@ -1682,7 +1691,7 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
         return items
 
 
-async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True) -> AgentConfig:
+async def build_agent_config(agent_name: str | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = False) -> AgentConfig:
     """Build AgentConfig from project/agent/prompt cards with new merge policy.
 
     Selection rules:
@@ -1815,6 +1824,20 @@ async def build_agent_config(agent_name: str | None = None, *, prompt_override: 
             attributes = {}
             instructions = ""
 
+    # If explicit AgentName or PromptName was provided but the selected artifact has
+    # an empty instructions string, fall back to its raw card text to avoid empty previews.
+    try:
+        has_name_or_prompt = bool((agent_name or "").strip() or (prompt_override or "").strip())
+        if has_name_or_prompt and (not (instructions or "").strip()):
+            if pr_raw and str(pr_raw).strip():
+                instructions = pr_raw
+            elif ag_raw and str(ag_raw).strip():
+                instructions = ag_raw
+            elif proj_raw and str(proj_raw).strip():
+                instructions = proj_raw
+    except Exception:
+        pass
+
     # Vector stores from attributes
     vs_list = await resolve_vector_stores(attributes.get("vs"))
 
@@ -1892,7 +1915,7 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
 
 
 @asynccontextmanager
-async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True):
+async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = False):
     """Async context manager that creates MCP servers and builds an Agent by name.
 
     Usage:
@@ -2117,13 +2140,13 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         yield agent, cfg, session
         
 
-async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = True):
+async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = False):
     async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name, merge=merge) as (agent, cfg, session):
         # Return simplified triple: no history, just final output from cfg attribute
         final_output = getattr(cfg, "_last_final_output", None)
         return agent, [], final_output
 
-async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = "", prompt_name: str = "", merge: bool = True):
+async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = "", prompt_name: str = "", merge: bool = False):
     samples_dir = default_samples_dir
     agent, history, step1_output = await run_digest_pipeline(
         samples_dir,

@@ -878,6 +878,11 @@ def main() -> None:
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
+    # Ensure downstream app pipeline prefers this bot token
+    try:
+        os.environ["CALL_TELEGRAM_TOKEN"] = polling_token
+    except Exception:
+        pass
     app = (
         ApplicationBuilder()
         .token(polling_token)

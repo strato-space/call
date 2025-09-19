@@ -428,10 +428,10 @@ async def call_async(
     except Exception:
         pass
 
-    # Initialize bot: use provided project or default to StratoSpaceAi when not set
+    # Initialize bot: if a project is provided, pass it; otherwise allow app layer
+    # to prefer CALL_TELEGRAM_TOKEN or TELEGRAM_TOKEN per its own logic.
     try:
-        eff_project = (project or "").strip() or "StratoSpaceAi"
-        await app_call.init_bot(project_name=eff_project)
+        await app_call.init_bot(project_name=(project if (project or "").strip() else None))
     except Exception as _e:
         # If bot init fails, continue; downstream may still function without telegram
         pass
