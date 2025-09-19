@@ -51,6 +51,7 @@ from call.app.utils.telegram_text import (
     telegram_prepare_markdown,
 )
 from call.app.call import get_project_token
+from call.app import call as app_call
 from call.lib.discovery import prompts as _lib_prompts
 
 
@@ -871,6 +872,11 @@ def main() -> None:
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
+    # Ensure the app pipeline uses the same token as this bot (no project token override)
+    try:
+        app_call.telegram_token_override = polling_token
+    except Exception:
+        pass
     app = (
         ApplicationBuilder()
         .token(polling_token)
