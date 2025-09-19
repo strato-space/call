@@ -498,8 +498,11 @@ def _error_payload(
 
 
 def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]:
-    """Extract chat_id and thread_id from a session id string of the form:
-    "AgentName:chat" or "AgentName:chat:thread".
+    """Extract chat_id and thread_id from a session id.
+
+    Supported formats (backward-compat):
+      - "AgentName:chat" or "AgentName:chat:thread" (legacy)
+      - "chat" or "chat:thread" (new, agentless)
     Returns (chat_id, thread_id).
     """
     if not raw:
@@ -507,9 +510,18 @@ def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]
     try:
         s = str(raw).strip()
         parts = s.split(":")
-        if len(parts) < 2:
+        if not parts:
             return None, None
-        chat = int(parts[1]) if parts[1] else None
+        # New format: first token numeric => chat[:thread]
+        try:
+            if parts and parts[0] and str(parts[0]).lstrip("-").isdigit():
+                chat = int(parts[0])
+                thread = int(parts[1]) if len(parts) > 1 and parts[1] else None
+                return chat, thread
+        except Exception:
+            pass
+        # Legacy format: AgentName:chat[:thread]
+        chat = int(parts[1]) if len(parts) > 1 and parts[1] else None
         thread = int(parts[2]) if len(parts) > 2 and parts[2] else None
         return chat, thread
     except Exception:
@@ -783,8 +795,12 @@ async def call_async(
         session_id_out = None
     if not session_id_out and (selected_chat_id is not None):
         try:
-            nm = (chosen_name if isinstance(chosen_name, str) else "")
-            session_id_out = f"{nm}:{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f"{nm}:{selected_chat_id}"
+            # New agentless session id: chat[:thread]
+            session_id_out = (
+                f"{selected_chat_id}:{selected_thread_id}"
+                if (selected_thread_id is not None)
+                else f"{selected_chat_id}"
+            )
         except Exception:
             session_id_out = None
 
@@ -920,9 +936,10 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
 
     Rules:
     - If `name` is given: delete only that exact session id.
-    - If `name` is empty/None: delete all sessions for this chat/thread by pattern.
+      Supports both legacy ("AgentName:chat[:thread]") and new ("chat[:thread]") formats.
+    - If `name` is empty/None: delete all sessions for this chat/thread
+      by exact match on new format and LIKE pattern on legacy format.
 
-    Session id format: "AgentName:chat" or "AgentName:chat:thread".
     We operate on two tables if present: messages(session_id) and sessions(id).
     """
 
@@ -930,9 +947,12 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
     if not chat_id:
         return {"ok": False, "error_code": 400, "description": "chat_id is required"}
 
-    def _sid(agent: str, chat: int, thread: Optional[int]) -> str:
+    def _sid_legacy(agent: str, chat: int, thread: Optional[int]) -> str:
         agent_raw = (agent or "").strip() if agent else ""
         return f"{agent_raw}:{chat}:{thread}" if thread is not None else f"{agent_raw}:{chat}"
+
+    def _sid_new(chat: int, thread: Optional[int]) -> str:
+        return f"{chat}:{thread}" if thread is not None else f"{chat}"
 
     db_path = os.getenv("CALL_DB", "call/call.db")
     cleared: List[str] = []
@@ -949,14 +969,24 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
         # Build candidate session ids
         sids: List[str] = []
         if isinstance(name, str) and name.strip():
-            sids = [_sid(name, int(chat_id), thread_id)]
+            # Delete exact legacy and new ids for this agent/chat/thread
+            sids = [_sid_legacy(name, int(chat_id), thread_id), _sid_new(int(chat_id), thread_id)]
         else:
-            # Pattern-based lookup in sessions/messages tables
+            # Pattern-based lookup (legacy) + exact match (new)
             pattern = f":{int(chat_id)}:{int(thread_id)}" if thread_id is not None else f":{int(chat_id)}"
+            # Exact (new) in sessions
+            if has_sessions:
+                cur.execute("SELECT id FROM sessions WHERE id = ?", (_sid_new(int(chat_id), thread_id),))
+                sids += [row[0] for row in cur.fetchall()]
+            # Exact (new) in messages
+            if has_messages:
+                cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id = ?", (_sid_new(int(chat_id), thread_id),))
+                sids += [row[0] for row in cur.fetchall()]
+            # Legacy patterns
             if has_sessions:
                 cur.execute("SELECT id FROM sessions WHERE id LIKE ?", (f"%{pattern}",))
                 sids += [row[0] for row in cur.fetchall()]
-            if not sids and has_messages:
+            if has_messages:
                 cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id LIKE ?", (f"%{pattern}",))
                 sids += [row[0] for row in cur.fetchall()]
 

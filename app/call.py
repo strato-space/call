@@ -1140,7 +1140,8 @@ class MCPServerStdioHook(MCPServerStdio):
         escaped_body = _html.escape(text or "")
         safe_text = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
         if not self.__telegram_last_message:
-            await self.__send_message(safe_text)
+            # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
+            await self.__send_message(text)
             return
         # Clean and truncate
         cleaned = clean_html_for_telegram(safe_text)
@@ -2000,6 +2001,78 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             tool_name=sub_cfg.name or sub_name,
                             tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
                         )
+                        # Wrap FunctionTool invocation to log to DEBUG and Telegram (start -> completed)
+                        try:
+                            if isinstance(tool, FunctionTool):
+                                orig_invoke = tool.on_invoke_tool
+
+                                async def _wrapped_on_invoke(ctx, input: str):
+                                    # Debug log input (truncated)
+                                    try:
+                                        preview = (input or "")
+                                        if len(preview) > 800:
+                                            preview = preview[:797] + "..."
+                                        debug_print("[tool-call]", f"{sub_cfg.name or sub_name}", preview)
+                                    except Exception:
+                                        pass
+
+                                    # Telegram notification (best-effort)
+                                    tg_msg = None
+                                    try:
+                                        if selected_chat_id is not None:
+                                            await init_bot()
+                                            title = f"🛠️ <b>{clean_html_for_telegram(sub_cfg.name or sub_name)}</b>"
+                                            caller = f"<i>from</i> <b>{clean_html_for_telegram(cfg.name)}</b>"
+                                            body = ""
+                                            try:
+                                                import json as _json, html as _html
+                                                js = _json.loads(input) if input else {}
+                                                pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                                                if len(pretty) > 1500:
+                                                    pretty = pretty[:1497] + "..."
+                                                body = f"\n<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
+                                            except Exception:
+                                                esc = clean_html_for_telegram(input or "")
+                                                if len(esc) > 1500:
+                                                    esc = esc[:1497] + "..."
+                                                body = f"\n<code>{esc}</code>"
+                                            text = f"{title} {caller}{body}"
+                                            tg_msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=text, parse_mode=ParseMode.HTML)
+                                    except Exception:
+                                        tg_msg = None
+
+                                    # Invoke original tool
+                                    result = await orig_invoke(ctx, input)
+
+                                    # Edit Telegram message with completion
+                                    if tg_msg is not None:
+                                        try:
+                                            from telegram.error import BadRequest as _BadReq
+                                            await init_bot()
+                                            try:
+                                                import html as _html
+                                                rtxt = str(result)
+                                                if len(rtxt) > 1200:
+                                                    rtxt = rtxt[:1197] + "..."
+                                                rtxt = _html.escape(rtxt)
+                                                updated = f"{title} {caller}\n<b>✓ Completed</b>\n<pre><code>{rtxt}</code></pre>"
+                                                updated = clean_html_for_telegram(updated)
+                                                await bot.edit_message_text(chat_id=tg_msg.chat_id, message_id=tg_msg.message_id, text=updated, parse_mode=ParseMode.HTML)
+                                            except _BadReq:
+                                                # Fallback: send a new message
+                                                await safe_send_message(chat_id=tg_msg.chat_id, text=f"{title} {caller} — ✓ Completed", parse_mode=ParseMode.HTML)
+                                        except Exception:
+                                            pass
+
+                                    try:
+                                        debug_print("[tool-call]", f"{sub_cfg.name or sub_name}", "✓ completed")
+                                    except Exception:
+                                        pass
+                                    return result
+
+                                tool.on_invoke_tool = _wrapped_on_invoke
+                        except Exception:
+                            pass
                         tools.append(tool)
                         try:
                             debug_print("[tools]", f"Tool added: {sub_cfg.name or sub_name}; tools_count={len(tools)}")
@@ -2071,11 +2144,11 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
         # Now that selected_chat_id is finalized, create or skip SQLite session
         if (selected_chat_id is not None):
-            # Deterministic and unique per dialog thread (agent:chat[:thread])
+            # Deterministic and unique per dialog thread — chat[:thread] only
             if selected_thread_id is not None:
-                session_id = f"{cfg.name}:{selected_chat_id}:{selected_thread_id}"
+                session_id = f"{selected_chat_id}:{selected_thread_id}"
             else:
-                session_id = f"{cfg.name}:{selected_chat_id}"
+                session_id = f"{selected_chat_id}"
 
             db_path = os.getenv("CALL_DB", "call/call.db")
             try:
