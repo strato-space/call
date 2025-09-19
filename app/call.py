@@ -1941,6 +1941,11 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                         continue
             # 'prompts' may be a list or dict; prefer keys/names
             pr_map = attrs.get('prompts') if isinstance(attrs, dict) else None
+            try:
+                debug_print("[tools]",
+                            f"Scanning project attributes for agents/prompts; has_agents={isinstance(ag_map, dict)} has_prompts={isinstance(pr_map, (dict, list))}")
+            except Exception:
+                pass
             if isinstance(pr_map, dict):
                 for nm, desc in pr_map.items():
                     try:
@@ -1956,8 +1961,13 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
             # Build a sub-agent for each entry and expose as tool
             if _build_cfg and entries:
+                try:
+                    debug_print("[tools]", f"Found {len(entries)} tool entries: {[n for n,_ in entries][:10]}" )
+                except Exception:
+                    pass
                 for sub_name, sub_desc in entries:
                     try:
+                        debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
                         sub_cfg, sub_err = _build_cfg(
                             project=(cfg.project or None),
                             agent=None,
@@ -1967,7 +1977,15 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             merge=bool(getattr(cfg, 'merge', False)),
                         )
                         if sub_err or not sub_cfg:
+                            try:
+                                debug_print("[tools]", f"Skip entry {sub_name}: error={getattr(sub_err,'description', None) or (sub_err.get('description') if isinstance(sub_err, dict) else sub_err)}")
+                            except Exception:
+                                pass
                             continue
+                        try:
+                            debug_print("[tools]", f"Sub-cfg built: name={sub_cfg.name} prompt={sub_cfg.prompt_override} instr_len={len(sub_cfg.instructions or '')}")
+                        except Exception:
+                            pass
                         sub_agent = Agent(
                             name=sub_cfg.name or sub_name,
                             instructions=sub_cfg.instructions or "",
@@ -1980,8 +1998,24 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
                         )
                         tools.append(tool)
+                        try:
+                            debug_print("[tools]", f"Tool added: {sub_cfg.name or sub_name}; tools_count={len(tools)}")
+                        except Exception:
+                            pass
                     except Exception:
-                        continue
+                        try:
+                            from call.app.utils.common import format_exception_text as _fmt
+                        except Exception:
+                            _fmt = None
+                        try:
+                            debug_print("[tools]", f"Error building tool for {sub_name}: " + (_fmt(Exception()) if _fmt else ""))
+                        except Exception:
+                            pass
+            elif _build_cfg and not entries:
+                try:
+                    debug_print("[tools]", "No tool entries found in cfg.attributes")
+                except Exception:
+                    pass
         except Exception:
             pass
 
