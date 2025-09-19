@@ -670,14 +670,13 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     if name:
         payload["target"] = name
     ctx_items: list = []
-    reply_text_for_input: str = ""
+    reply_text: str = ""
     try:
         if update.message and update.message.reply_to_message:
             r = update.message.reply_to_message
             r_text = (r.text or r.caption or "").strip()
             if r_text:
-                reply_text_for_input = r_text
-                ctx_items.append({"type": "text", "text": r_text})
+                reply_text = r_text
             # Document URL
             try:
                 if getattr(r, "document", None):
@@ -695,16 +694,14 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
         pass
     if ctx_items:
         payload["context"] = ctx_items
-        # Also include 'replay' for consumers expecting a simple field
-        if len(ctx_items) == 1 and "text" in ctx_items[0] and not ctx_items[0].get("url"):
-            payload["replay"] = ctx_items[0]["text"]
-        else:
-            payload["replay"] = ctx_items
-    # Prefer main_text; if absent, fall back to reply text
+    # Replay: prefer reply text when available; else mirror docs list
+    if reply_text:
+        payload["replay"] = reply_text
+    elif ctx_items:
+        payload["replay"] = ctx_items
+    # Input only when user provided main_text (do not derive from reply text)
     if (main_text or "").strip():
         payload["input"] = main_text.strip()
-    elif reply_text_for_input:
-        payload["input"] = reply_text_for_input
 
     if payload:
         # Debug-dump payload JSON (safe length)

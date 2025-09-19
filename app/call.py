@@ -698,15 +698,8 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
             message = await async_retry(_op_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
         elif "thread not found" in emsg:
             # Fallback: resend without thread id and without reply parameters
-            def _op_no_thread():
-                return bot.send_message(
-                    chat_id=eff_chat_id,
-                    text=safe_text,
-                    parse_mode=chosen_parse_mode,
-                    reply_markup=reply_markup,
-                )
-            debug_print("[TG] BadRequest thread not found, retrying without thread id")
-            message = await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+            debug_print("[TG] BadRequest thread not found, retrying without thread id via safe_send_message")
+            message = await safe_send_message(chat_id=eff_chat_id, text=safe_text, parse_mode=chosen_parse_mode, reply_markup=reply_markup)
         else:
             raise
     return message
