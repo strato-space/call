@@ -131,15 +131,19 @@ from dataclasses import dataclass
 
 @dataclass
 class RunnableConfig:
+    """Minimal ready-to-run config consumed by app.build_and_run_agent.
+
+    KISS: keep only fields that are actually used at runtime.
+    """
     name: Optional[str] = None
     project: Optional[str] = None
     prompt_override: Optional[str] = None
-    merge: bool = True
+    merge: bool = False
     agent_yaml_path: Optional[str] = None
     base_dir: Optional[str] = None
-    instructions: Optional[List[str]] = None
+    instructions: str = ""
     model: Optional[str] = None
-    vs_list: Optional[List[str]] = None
+    # Attributes from cards (unresolved). app layer may derive vs_list from here.
     attributes: Optional[Dict[str, Any]] = None
 
 
@@ -148,7 +152,7 @@ def build_runnable_instructions_config(
     project: Optional[str],
     agent: Optional[str],
     prompt: Optional[str] = None,
-    merge: bool = True,
+    merge: bool = False,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
 
@@ -161,49 +165,157 @@ def build_runnable_instructions_config(
       - Fills name, project, prompt_override, merge, agent_yaml_path, base_dir
       - Best-effort parse of agent.yaml to populate attributes/instructions/model/vs_list if present
     """
+    # Local helpers (avoid importing app layer):
+    import os as _os
+    from pathlib import Path as _Path
+    import yaml as _yaml
+
+    def _read(p):
+        try:
+            return _Path(p).read_text(encoding="utf-8")
+        except Exception:
+            return ""
+
+    def _parse_md(md_text: str) -> tuple[Dict[str, Any], str]:
+        meta: Dict[str, Any] = {}
+        body: str = md_text or ""
+        try:
+            start_tag = "<!-- METADATA:START -->"
+            if start_tag in md_text:
+                y0 = md_text.index(start_tag)
+                y1 = md_text.index("```yaml", y0) + len("```yaml")
+                y2 = md_text.index("```", y1)
+                meta = _yaml.safe_load(md_text[y1:y2]) or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+        except Exception:
+            meta = {}
+        try:
+            p0_tag = "<!-- PROMPT:START -->"
+            p1_tag = "<!-- PROMPT:END -->"
+            if p0_tag in md_text and p1_tag in md_text:
+                p0 = md_text.index(p0_tag) + len(p0_tag)
+                p1 = md_text.index(p1_tag, p0)
+                body = md_text[p0:p1].strip()
+        except Exception:
+            body = (md_text or "").strip()
+        return meta, body
+
+    def _load_card(path: _Path | None) -> tuple[Dict[str, Any], str, str]:
+        if not path or not _Path(path).exists():
+            return {}, "", ""
+        text = _read(path)
+        if not text:
+            return {}, "", ""
+        if str(path).lower().endswith(('.md', '.markdown')):
+            meta, body = _parse_md(text)
+            return meta if isinstance(meta, dict) else {}, body, text
+        try:
+            y = _yaml.safe_load(text) or {}
+            if not isinstance(y, dict):
+                y = {}
+            instr = str(y.get("instructions") or y.get("goal") or "")
+            return y, instr, text
+        except Exception:
+            return {}, "", text
+
+    # Resolve single agent selection (path, project, name)
     try:
         env = resolve_agent(project=project, agent=agent, prompt=prompt)
     except Exception as e:
         return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
     if not isinstance(env, dict) or not env.get("ok"):
-        # Normalize to error dict similar to _error_payload
         err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="no data found", status=404, code="NO_DATA_FOUND", project=project)
         return None, err
 
     resolved = env.get("resolved") or {}
-    name = resolved.get("name") or ""
+    name = str(resolved.get("name") or "")
     proj = resolved.get("project") or project
     path = resolved.get("path")
+    path_p = _Path(path) if path else None
 
-    cfg = RunnableConfig()
-    cfg.name = name
-    cfg.project = proj
-    cfg.prompt_override = (prompt or None)
-    cfg.merge = bool(merge)
-    cfg.agent_yaml_path = str(path) if path else None
-    try:
-        import os
-        cfg.base_dir = os.path.dirname(str(path)) if path else None
-    except Exception:
-        cfg.base_dir = None
+    # Load cards: project, agent, prompt
+    from call.lib.discovery import discover_agent_repo as _discover_agent_repo, resolve_prompt as _resolve_prompt, discover_prompt_repo as _discover_prompt_repo
 
-    # Enrich from YAML if available
+    proj_yaml = None
+    if proj:
+        try:
+            repo = _discover_agent_repo()
+            p = _Path(repo) / str(proj) / "project.yaml"
+            proj_yaml = p if p.exists() else None
+        except Exception:
+            proj_yaml = None
+
+    pr_path = None
+    if isinstance(prompt, str) and prompt.strip():
+        try:
+            pr_path = _resolve_prompt(prompt.strip(), project=proj, agent=name, prefer_ready=True, repo=_discover_prompt_repo())
+        except Exception:
+            pr_path = None
+
+    proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
+    ag_attrs, ag_instr, ag_raw = _load_card(path_p)
+    pr_attrs, pr_instr, pr_raw = _load_card(_Path(pr_path) if pr_path else None)
+
+    # Build instructions and attributes based on merge
+    attributes: Dict[str, Any] = {}
+    instr: str = ""
+    if merge:
+        for src in (proj_attrs, ag_attrs, pr_attrs):
+            if isinstance(src, dict):
+                attributes.update({k: v for k, v in src.items() if k not in {"alias", "aliases"}})
+        core = pr_instr or ag_instr or proj_instr or ""
+        blocks = [core]
+        if ag_raw:
+            blocks.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
+        if proj_raw:
+            blocks.append("<project>\n" + proj_raw.strip() + "\n</project>")
+        instr = "\n\n".join([b for b in blocks if b.strip()])
+    else:
+        if pr_instr or pr_attrs:
+            attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
+            instr = pr_instr
+        elif ag_instr or ag_attrs:
+            attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
+            instr = ag_instr
+        elif proj_instr or proj_attrs:
+            attributes = proj_attrs if isinstance(proj_attrs, dict) else {}
+            instr = proj_instr
+        else:
+            attributes = {}
+            instr = ""
+
+    # Non-empty preview guarantee when agent/prompt provided
     try:
-        if path:
-            y = load_yaml(path) or {}
-            if isinstance(y, dict):
-                cfg.attributes = y.get("attributes") or y.get("meta") or None
-                # Optional hints
-                if isinstance(y.get("instructions"), list):
-                    cfg.instructions = [str(x) for x in y["instructions"]]
-                if isinstance(y.get("model"), str):
-                    cfg.model = y["model"]
-                if isinstance(y.get("vs_list"), list):
-                    cfg.vs_list = [str(x) for x in y["vs_list"]]
+        if (agent or prompt) and not (instr or "").strip():
+            if pr_raw and str(pr_raw).strip():
+                instr = pr_raw
+            elif ag_raw and str(ag_raw).strip():
+                instr = ag_raw
+            elif proj_raw and str(proj_raw).strip():
+                instr = proj_raw
     except Exception:
-        # Non-fatal; proceed with minimal DTO
         pass
+
+    cfg = RunnableConfig(
+        name=name,
+        project=proj,
+        prompt_override=(prompt or None),
+        merge=bool(merge),
+        agent_yaml_path=(str(path_p) if path_p else None),
+        base_dir=(str(path_p.parent) if path_p else None),
+        instructions=str(instr or ""),
+        model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
+        attributes=attributes if isinstance(attributes, dict) else {},
+    )
+
+    # Default model if still absent
+    if not cfg.model:
+        try:
+            cfg.model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
+        except Exception:
+            cfg.model = "gpt-5"
 
     return cfg, None
 
@@ -484,9 +596,6 @@ async def call_async(
 
     # No welcome banner here (avoid duplicate messages). The pipeline will emit a single digest.
 
-    # Resolve default samples dir from the app layer
-    default_samples_dir = getattr(app_call, "default_samples_dir", None)
-
     # Optionally enable periodic asyncio tasks dump (for diagnosing long waits)
     dump_period_s = 0
     try:
@@ -547,17 +656,33 @@ async def call_async(
             except Exception:
                 pass
 
-            # Use the app layer context manager to build and run the agent once.
-            # This eliminates the run_digest_pipeline indirection.
+            # Use the app layer context manager to build and run the agent once with a ready config.
+            # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
+            # when a monkeypatched test function expects (name, samples_dir, ...).
             cm = getattr(app_call, "build_and_run_agent")
-            async with cm(
-                (cfg.name if cfg and isinstance(cfg.name, str) else (chosen_name if isinstance(chosen_name, str) else "")),
-                default_samples_dir,
-                user_input=(input or ""),
-                prompt_override=((cfg.prompt_override if cfg else None) or (prompt or None)),
-                project_name=((cfg.project if cfg else None) or (project or None)),
-                merge=(cfg.merge if cfg is not None else merge),
-            ) as (agent_obj, _cfg, _session):
+            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions="", model=None, attributes={}))
+            try:
+                async with cm(cfg=_cfg_obj, user_input=(input or "")) as (agent_obj, _cfg, _session):
+                    final_output = getattr(_cfg, "_last_final_output", None)
+                    try:
+                        actual_sid = getattr(_session, "id", None)
+                    except Exception:
+                        actual_sid = None
+            except TypeError:
+                # Legacy compatibility: (name, samples_dir, user_input, prompt_override, project_name, merge)
+                async with cm(
+                    (_cfg_obj.name if isinstance(_cfg_obj.name, str) else (chosen_name or "")),
+                    None,
+                    user_input=(input or ""),
+                    prompt_override=(_cfg_obj.prompt_override or (prompt or None)),
+                    project_name=(_cfg_obj.project or (project or None)),
+                    merge=bool(_cfg_obj.merge),
+                ) as (agent_obj, _cfg, _session):
+                    final_output = getattr(_cfg, "_last_final_output", None)
+                    try:
+                        actual_sid = getattr(_session, "id", None)
+                    except Exception:
+                        actual_sid = None
                 final_output = getattr(_cfg, "_last_final_output", None)
                 # Try to read actual session id from session object
                 try:
@@ -656,7 +781,7 @@ def call(
     session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
-    merge: bool = True,
+    merge: bool = False,
 ) -> Dict[str, Any]:
     """
     Thin sync wrapper over call_async. All selection and error handling is in call_async.

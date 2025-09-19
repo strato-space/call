@@ -88,27 +88,17 @@ def cmd_call(args: argparse.Namespace) -> int:
             if not sel.get("ok"):
                 _safe_print(json.dumps(sel, ensure_ascii=False))
                 return 1
-            try:
-                # Build config to get merged instructions
-                from call.app.call import build_agent_config
-                cfg = call_api.asyncio.run(build_agent_config(agent, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=not bool(getattr(args, "no_merge", False))))  # type: ignore[attr-defined]
-                _safe_print(cfg.instructions or "")
-                return 0
-            except Exception as e:
-                # Uniform error envelope with error_code for this path
-                msg = str(e)
-                status = 404 if "not found" in msg.lower() else 400
-                err = {
-                    "ok": False,
-                    "error_code": status,
-                    "description": msg,
-                    "agent": agent or "",
-                    "project": (args.project or ""),
-                    "final_output": None,
-                    "echo": bool(getattr(args, "echo", False)),
-                }
+            cfg, err = call_api.build_runnable_instructions_config(
+                project=(args.project or None),
+                agent=(agent or None),
+                prompt=(args.prompt or None),
+                merge=bool(getattr(args, "merge", False)),
+            )
+            if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
                 return 1
+            _safe_print((cfg.instructions if cfg else "") or "")
+            return 0
 
         # Optional periodic stack dumps for debugging long runs
         if getattr(args, "trace", 0):
@@ -261,18 +251,16 @@ def main() -> int:
 
         # Optional: print instructions only
         if getattr(args, "print_instructions", False):
-            try:
-                # Build config to get merged instructions
-                from call.app.call import build_agent_config
-                name = args.agent or ""
-                cfg = call_api.asyncio.run(build_agent_config(name, prompt_override=(args.prompt or None), project_name=(args.project or None), merge=True))  # type: ignore[attr-defined]
-            except Exception:
-                import asyncio as _asyncio
-                async def _go():
-                    from call.app.call import build_agent_config
-                    return await build_agent_config(args.agent or "", prompt_override=(args.prompt or None), project_name=(args.project or None), merge=True)
-                cfg = _asyncio.run(_go())
-            _safe_print(cfg.instructions or "")
+            cfg, err = call_api.build_runnable_instructions_config(
+                project=(args.project or None),
+                agent=(args.agent or None),
+                prompt=(args.prompt or None),
+                merge=True,
+            )
+            if err:
+                _safe_print(json.dumps(err, ensure_ascii=False))
+                return 1
+            _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 
         # Execute via call API, passing payload as input JSON string
