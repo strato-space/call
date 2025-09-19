@@ -109,6 +109,7 @@ import yaml
 import inspect
 import httpx
 from openai import OpenAI
+import html as _html
 
 # Import agent utilities (internal copy)
 try:
@@ -1121,12 +1122,12 @@ class MCPServerStdioHook(MCPServerStdio):
         """Send a new Telegram message for this MCP instance and cache it."""
         # Prefix with MCP title and sanitize; use common send path with consistent target selection
         header = f"<b>{self._mcp_title}</b>\n\n"
-        safe_text = header + (text or "")
-        # Clean and truncate to avoid Telegram 4096 limit and user's 3800 limit
-        cleaned = clean_html_for_telegram(safe_text)
-        if len(cleaned) > 3800:
-            cleaned = cleaned[:3797] + "..."
-        cleaned = '<code>' + cleaned + '</code>'
+        # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
+        escaped_body = _html.escape(text or "")
+        payload = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
+        # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
+        cleaned = clean_html_for_telegram(payload)
+        cleaned = telegram_truncate_html_safe(cleaned, 3800)
         msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
         self.__telegram_last_message = msg
         self.__last_tg_text = cleaned
@@ -1135,14 +1136,15 @@ class MCPServerStdioHook(MCPServerStdio):
     async def __edit_message_text(self, text: str) -> None:
         """Edit this instance's message; if missing, send a new one."""
         header = f"<b>{self._mcp_title}</b>\n\n"
-        safe_text = header + (text or "")
+        # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
+        escaped_body = _html.escape(text or "")
+        safe_text = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
         if not self.__telegram_last_message:
             await self.__send_message(safe_text)
             return
         # Clean and truncate
         cleaned = clean_html_for_telegram(safe_text)
-        if len(cleaned) > 3800:
-            cleaned = cleaned[:3797] + "..."
+        cleaned = telegram_truncate_html_safe(cleaned, 3800)
         # Skip edit if content is unchanged (prevents BadRequest: Message is not modified)
         if self.__last_tg_text == cleaned:
             return
