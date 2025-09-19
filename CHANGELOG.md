@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 - Removal (App): Deprecated `call.app.call.build_agent_config` removed. Tests were updated to use the new DTO builder from the library.
 - Tests: Full suite green — 66 passed.
 
+ - Feat (API): Prompt-only fallback & global prompt discovery. When an agent cannot be resolved but a prompt id/name is provided (or in `target`), the API resolves the prompt path directly (first in the project, then globally across all projects), loads METADATA (project/agent/id), and builds a runnable config. This allows `/call @PromptId` to work immediately after adding a file to `prompt/draft` or `prompt/ready`.
+ - Feat (API): Suggestions in `NO_DATA_FOUND` for prompts. When wildcard or exact prompt lookup returns no results, the error envelope includes a best-effort `options` list of suggestions (substring match in-scope, then globally).
+ - Feat (Logging): When a prompt is resolved globally (outside the current project scope), a warning is emitted via the standard logger `call.api` (level WARNING) and a debug line is printed via `debug_print` (gated by `CALL_DEBUG`).
+ - Change (App): `build_and_run_agent()` now uses `agents.run.DEFAULT_MAX_TURNS` for `Runner.run(..., max_turns=...)`. At import, Call sets `DEFAULT_MAX_TURNS` from the `AGENTS_DEFAULT_MAX_TURNS` env (default 150). Set `AGENTS_DEFAULT_MAX_TURNS=300` in `.env` for longer runs.
+
 ## 2025-09-17
 - Change: enforce strict case-sensitive agent and prompt names across discovery, API, CLI, and Telegram bot (KISS). Removed `to_pascal_case` normalization and any case-insensitive fallbacks. Files updated: `call/lib/discovery.py`, `call/app/call.py`, `call/telegram_bot/bot.py`.
 - Feat (CLI): added `prompts` subcommand to list prompts in flat form (table or JSON) with fields `prompt_id`, `name`, `agent`, `project`, `state`, `url`, `path`. File: `call/cli/main.py`.

@@ -587,6 +587,25 @@ Notes:
   - `TELEGRAM_THREAD_ID` is optional. If not set or set to `0`, it is treated as `None` and no thread id is sent to Telegram.
   - The library will also automatically retry without a thread id when Telegram returns `BadRequest: Message thread not found` (see `safe_send_message()` wrapper).
 
+### Prompt discovery and target resolution (Updated Sep 19, 2025)
+
+- Target precedence: `prompt > agent > project`.
+- Prompt discovery is live and file-system based — new files in `prompt/draft/` or `prompt/ready/` are discoverable immediately without rebuilding indices.
+- Global fallback for prompts: when a prompt is not found within a project scope, Call will search across all projects. A warning is emitted:
+  - JSON logs: `call.api` logger at WARNING level.
+  - Debug line (gated by `CALL_DEBUG=1`): `[api] [WARN] prompt resolved globally (outside project scope)` with prompt/project/agent context.
+- Ambiguity and not found:
+  - Multiple prompts matched your criteria → `code: "TOO_MANY_ROWS"` with `options`.
+  - Not found (including wildcard) → `code: "NO_DATA_FOUND"` with a best-effort `options` list of suggestions (substring-based within scope, then globally).
+
+### Max turns configuration (Updated Sep 19, 2025)
+
+- The agents runner library defaults to `DEFAULT_MAX_TURNS=10`. Call increases the defaults to avoid premature termination of long runs:
+  - Environment: `AGENTS_DEFAULT_MAX_TURNS` (default `150`).
+  - At import time, `call.app.call` sets `agents.run.DEFAULT_MAX_TURNS` from this env variable.
+  - The main run in `build_and_run_agent` uses `max_turns=_agents_run.DEFAULT_MAX_TURNS` (was a fixed 150 earlier).
+  - Set `AGENTS_DEFAULT_MAX_TURNS=300` in `.env` if you need longer sessions.
+
 ### Digest notification helper (Updated Sep 12, 2025)
 
 Function: `call.app.call.send_digest_notification(*, text: str | None = None, chat_id: int | None = None, message_thread_id: int | None = None, agent_name: str | None = None, agent_path: str | Path | None = None, input_text: str | None = None, image_path: str | Path | None = None) -> telegram.Message | None`
