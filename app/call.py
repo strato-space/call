@@ -958,8 +958,24 @@ def compose_welcome_html(
     header = f"🔌 <b><a href='{gh_url}'>{title}</a></b>" if gh_url else f"🔌 <b>{title}</b>"
 
     preview = (user_input or "").strip()
-    if len(preview) > 3800:
-        preview = preview[:3797] + "..."
+    # Try to pretty print JSON payloads for readability
+    pretty_preview: str | None = None
+    try:
+        if preview and (preview.startswith("{") or preview.startswith("[")):
+            import json as _json
+            obj = _json.loads(preview)
+            pretty = _json.dumps(obj, ensure_ascii=False, indent=2)
+            # Clamp to safe length
+            if len(pretty) > 3600:
+                pretty = pretty[:3597] + "..."
+            # Escape for HTML inside code block
+            import html as _html
+            pretty_preview = f"<pre><code>{_html.escape(pretty)}</code></pre>"
+    except Exception:
+        pretty_preview = None
+    if not pretty_preview:
+        if len(preview) > 3800:
+            preview = preview[:3797] + "..."
 
     # Collect MCP server names (best-effort)
     mcp_names: list[str] = []
@@ -975,7 +991,7 @@ def compose_welcome_html(
 
     parts = [header]
     # Build preview line and attrs lines separately to control spacing
-    preview_line = f"<code>{preview}</code>" if preview else None
+    preview_line = pretty_preview if pretty_preview else (f"<code>{preview}</code>" if preview else None)
     attr_lines: list[str] = []
     if mcp_names:
         attr_lines.append(f"<code>mcp: {mcp_names}</code>")
