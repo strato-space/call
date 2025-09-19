@@ -60,24 +60,21 @@ def test_resolve_prompt_agent_folder_fallback(tmp_path, monkeypatch):
 
 
 def test_build_agent_config_merge_prompt_md(monkeypatch):
-    # Prepare required env for call.app.call imports
+    # Prepare required env for imports
     monkeypatch.setenv("TELEGRAM_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAPH_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "2820582847")
     monkeypatch.setenv("TELEGRAM_SECOND_CHAT_ID", "2820582847")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
 
-    async def _go():
-        from call.app.call import build_agent_config
-        cfg = await build_agent_config(
-            agent_name="DialogPostAnalysis",
-            prompt_override="33-Questioning",
-            project_name="UxFab",
-            merge=True,
-        )
-        return cfg
-
-    cfg = asyncio.run(_go())
+    from call.lib.api import build_runnable_instructions_config
+    cfg, err = build_runnable_instructions_config(
+        project="UxFab",
+        agent="DialogPostAnalysis",
+        prompt="33-Questioning",
+        merge=True,
+    )
+    assert err is None
     assert isinstance(cfg.instructions, str) and len(cfg.instructions) > 0
     # Should contain text from the MD body
     assert "Формирует вопросы" in cfg.instructions

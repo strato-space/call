@@ -92,12 +92,28 @@ def cmd_call(args: argparse.Namespace) -> int:
                 project=(args.project or None),
                 agent=(agent or None),
                 prompt=(args.prompt or None),
-                # For printing, force merge to show <agent>/<project> blocks
-                merge=True,
+                merge=bool(getattr(args, "merge", False)),
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
                 return 1
+            # Validate/normalize once and dump in DEBUG
+            try:
+                from dataclasses import asdict as _asdict
+                from call.lib.logging import debug_print as _dbg
+                snap = _asdict(cfg) if cfg is not None else {}
+                # Minimal normalization for readability
+                if cfg is not None:
+                    snap["name"] = cfg.name
+                    snap["project"] = cfg.project
+                    snap["merge"] = cfg.merge
+                    snap["model"] = cfg.model
+                    snap["instructions_len"] = len(cfg.instructions or "")
+                    # avoid dumping full instructions
+                    snap.pop("instructions", None)
+                _dbg("[cli]", "[CFG]", json.dumps(cfg, ensure_ascii=False))
+            except Exception:
+                pass
             _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 
@@ -256,11 +272,25 @@ def main() -> int:
                 project=(args.project or None),
                 agent=(args.agent or None),
                 prompt=(args.prompt or None),
-                merge=True,
+                merge=bool(getattr(args, "merge", False)),
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
                 return 1
+            try:
+                from dataclasses import asdict as _asdict
+                from call.lib.logging import debug_print as _dbg
+                snap = _asdict(cfg) if cfg is not None else {}
+                if cfg is not None:
+                    snap["name"] = cfg.name
+                    snap["project"] = cfg.project
+                    snap["merge"] = cfg.merge
+                    snap["model"] = cfg.model
+                    snap["instructions_len"] = len(cfg.instructions or "")
+                    snap.pop("instructions", None)
+                _dbg("[cli]", "[CFG]", json.dumps(snap, ensure_ascii=False))
+            except Exception:
+                pass
             _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 

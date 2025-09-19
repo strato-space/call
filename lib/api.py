@@ -291,9 +291,20 @@ def build_runnable_instructions_config(
             blocks.append("<project>\n" + proj_raw.strip() + "\n</project>")
         instr = "\n\n".join([b for b in blocks if b.strip()])
     else:
-        if pr_instr or pr_attrs:
+        if pr_instr or pr_attrs or pr_raw:
+            # Prefer prompt attributes/body; include agent raw block for richer preview
             attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
-            instr = pr_instr
+            instr = pr_instr or ""
+            try:
+                if ag_raw and str(ag_raw).strip():
+                    parts = []
+                    if instr.strip():
+                        parts.append(instr.strip())
+                    parts.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
+                    instr = "\n\n".join(parts)
+            except Exception:
+                # Fallback to prompt text only on any error
+                instr = pr_instr or ""
         elif ag_instr or ag_attrs:
             attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
             instr = ag_instr
@@ -565,6 +576,71 @@ async def call_async(
     except Exception as _e:
         # If bot init fails, continue; downstream may still function without telegram
         pass
+
+    # Special case: no selection provided (no project/agent/prompt/target). Run a blank agent with empty instructions.
+    if not (str(project or "").strip() or str(agent or "").strip() or str(prompt or "").strip() or str(target or "").strip()):
+        chosen_name = ""
+        chosen_project = project or ""
+        yaml_path = None
+        # Routing and session selection (same as below)
+        sel_chat: Optional[int] = None
+        sel_thread: Optional[int] = None
+        sid_override = (session_id or "").strip()
+        if sid_override:
+            c, t = _parse_session_id(sid_override)
+            sel_chat, sel_thread = c, t
+        else:
+            if (chat_id is not None) or (thread_id is not None):
+                sel_chat = chat_id if chat_id is not None else app_call.TELEGRAM_CHAT_ID
+                sel_thread = thread_id if thread_id is not None else (app_call.TELEGRAM_THREAD_ID or None)
+            else:
+                sel_chat, sel_thread = None, None
+
+        selected_chat_id = sel_chat
+        selected_thread_id = sel_thread
+        app_call.selected_chat_id = selected_chat_id
+        app_call.selected_thread_id = selected_thread_id
+        try:
+            setattr(app_call, "force_no_session", bool(selected_chat_id is None))
+        except Exception:
+            pass
+
+        # Run with a minimal cfg
+        final_output = None
+        actual_sid = None
+        try:
+            cm = getattr(app_call, "build_and_run_agent")
+            _cfg_obj = RunnableConfig(name="", project=(project or None), instructions=str("") )
+            async with cm(cfg=_cfg_obj, user_input=(input or "")) as (agent_obj, _cfg, _session):
+                final_output = getattr(_cfg, "_last_final_output", None)
+                try:
+                    actual_sid = getattr(_session, "id", None)
+                except Exception:
+                    actual_sid = None
+        except Exception as e:
+            return _error_payload(agent="", input=(input or ""), exc=e, status=500, echo=echo, debug=debug, code="PIPELINE_ERROR", project=(project or None))
+
+        # Session id computation for blank agent
+        session_id_out = None
+        try:
+            session_id_out = actual_sid if (locals().get("actual_sid") is not None) else None
+        except Exception:
+            session_id_out = None
+        if not session_id_out and (selected_chat_id is not None):
+            try:
+                session_id_out = f":{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f":{selected_chat_id}"
+            except Exception:
+                session_id_out = None
+
+        return {
+            "ok": True,
+            "agent": "",
+            "agent_path": None,
+            "final_output": final_output,
+            "echo": bool(echo),
+            "resolved": {"project": chosen_project, "name": "", "path": None, "aliases": [], "prompts": []},
+            **({"session_id": session_id_out} if session_id_out else {}),
+        }
 
     # Resolve agent selection first
     resolved_env = resolve_agent(project=project, agent=agent, prompt=prompt)

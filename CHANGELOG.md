@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-19
+- Refactor (API): Introduced `RunnableConfig` DTO and `build_runnable_instructions_config(project, agent, prompt, merge=False)` that returns a ready-to-run config with string `instructions`, `model`, `attributes`, `agent_yaml_path`, and `base_dir`. Defaults are dot-safe so callers can use direct attribute access (e.g., `cfg.name`).
+- Change (Builder): When `merge=False` and a prompt is selected, CLI print-instructions previews now include the prompt body plus an `<agent>...</agent>` block. With `merge=True`, the preview includes `<agent>` and `<project>` blocks.
+- Change (CLI): `--print-instructions` honors the `--merge` flag (default off). After building the config, the CLI validates once and prints a normalized snapshot to debug logs (gated by `CALL_DEBUG`).
+- Feat (API): Strict parsing of prompt METADATA YAML; malformed blocks return a `{ ok:false, error_code:400, code:"BAD_REQUEST" }` envelope.
+- Feat (API): Blank-agent path — when no `project|agent|prompt|target` is provided, the pipeline runs with empty instructions and passes the input through. This enables pure text uses in Telegram when no `@Target` is specified.
+- Feat (Bot): Bot mention handling — the bot strips its own `@BotName` at the start. It only treats a target when the first token after stripping starts with `@`. Otherwise, no target is passed and only the input is used.
+- Feat (Bot): Reply payload — when a `/call` command or a plain message is a reply, the bot constructs a JSON payload: `{ target?, input?, context?, replay? }`. `context` includes items like `{type:"text", text:"..."}` and `{type:"text", url:"https://api.telegram.org/file/bot<token>/..."}` for replied documents. If `input` is empty, it falls back to the reply text. `replay` is a convenience field (string or array) mirroring the reply content.
+- Change (Errors): Standardized "not found" wording in error envelopes where applicable (e.g., `NO_DATA_FOUND`).
+- Removal (App): Deprecated `call.app.call.build_agent_config` removed. Tests were updated to use the new DTO builder from the library.
+- Tests: Full suite green — 66 passed.
+
 ## 2025-09-17
 - Change: enforce strict case-sensitive agent and prompt names across discovery, API, CLI, and Telegram bot (KISS). Removed `to_pascal_case` normalization and any case-insensitive fallbacks. Files updated: `call/lib/discovery.py`, `call/app/call.py`, `call/telegram_bot/bot.py`.
 - Feat (CLI): added `prompts` subcommand to list prompts in flat form (table or JSON) with fields `prompt_id`, `name`, `agent`, `project`, `state`, `url`, `path`. File: `call/cli/main.py`.

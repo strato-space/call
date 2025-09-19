@@ -617,7 +617,9 @@ async def _call_task(
         )
         debug_print("[bot]", "[CALL_TASK]", f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}")
         # Delegate to lib; it will publish to Telegram via its own utilities
-        proj = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
+        proj_baseline = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
+        # If no explicit target name, do not pass project — let library run a blank agent
+        proj = (proj_baseline if (name or "").strip() else None)
         res = await call_api.call_async(
             project=proj,
             agent=None,
@@ -705,11 +707,12 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 echo_flag = True
                 continue
             filtered.append(p)
-        # Also handle form: first token equals our @bot token (e.g., after users typed "/call @Bot @Name ...")
+        # Remove leading own @Bot token if present again after flags
         try:
             if filtered:
                 own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
-                if own and filtered[0].lstrip().startswith("@") and filtered[0].lstrip()[1:] == own:
+                own_at = ("@" + own) if own else ""
+                if own_at and filtered[0].lstrip().startswith(own_at):
                     filtered = filtered[1:]
         except Exception:
             pass
@@ -717,7 +720,13 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not t2:
             raise ValueError("Usage: /call [--echo] @Name <input>")
         name_tok, rest = (t2.split(maxsplit=1) + [""])[:2]
-        name = name_tok[1:] if name_tok.startswith("@") else name_tok
+        # Only treat target when first token starts with '@'; otherwise no target
+        if name_tok.startswith("@"):
+            name = name_tok[1:]
+            main_text = rest
+        else:
+            name = ""
+            main_text = t2
         debug_print("[bot]", "[CALL]", f"parsed name={name!r} echo={echo_flag}")
     except ValueError as ve:
         await m.reply(str(ve), parse_mode=None)
@@ -734,11 +743,55 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         app_call.reply_to_message_id = update.message.message_id if update and update.message else None
     except Exception:
         pass
+    # Build JSON payload when replying to a message (text/docs)
+    try:
+        payload: dict = {}
+        if name:
+            payload["target"] = name
+        # Collect reply context if present
+        ctx_items: list = []
+        reply_text_for_input: str = ""
+        if update.message and update.message.reply_to_message:
+            r = update.message.reply_to_message
+            r_text = (r.text or r.caption or "").strip()
+            if r_text:
+                reply_text_for_input = r_text
+                ctx_items.append({"type": "text", "text": r_text})
+            # Document URL
+            try:
+                if getattr(r, "document", None):
+                    file = await context.bot.get_file(r.document.file_id)
+                    url = getattr(file, "file_path", "")
+                    if url and not url.startswith("http"):
+                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
+                        if token:
+                            url = f"https://api.telegram.org/file/bot{token}/{url}"
+                    if url:
+                        ctx_items.append({"type": "text", "url": url})
+            except Exception:
+                pass
+        if ctx_items:
+            payload["context"] = ctx_items
+            # Also include 'replay' for consumers expecting a simple field
+            if len(ctx_items) == 1 and "text" in ctx_items[0] and not ctx_items[0].get("url"):
+                payload["replay"] = ctx_items[0]["text"]
+            else:
+                payload["replay"] = ctx_items
+        # Prefer main_text; if absent, fall back to reply text
+        if (main_text or "").strip():
+            payload["input"] = main_text.strip()
+        elif reply_text_for_input:
+            payload["input"] = reply_text_for_input
+        # Fallback to simple string when nothing to structure
+        input_arg = json.dumps(payload, ensure_ascii=False) if payload else (main_text or "")
+    except Exception:
+        input_arg = main_text or ""
+
     asyncio.create_task(
         _call_task(
             m,
-            name,
-            rest,
+            name or None,
+            input_arg,
             echo=echo_flag,
             chat_id=cid,
             thread_id=tid,
@@ -817,20 +870,60 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
-    base = _get_bot_project(update)
-    chat_type = getattr(getattr(update, "effective_chat", None), "type", "") or ""
-    is_private = (chat_type == "private")
-    name, inp, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
-    if not should_handle:
-        debug_print("[bot]", "[PLAIN]", f"ignored text={text!r}")
-        return
+    # Strip leading own @Bot mention, if present
+    try:
+        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+        own_at = ("@" + own) if own else ""
+        if own_at and text.startswith(own_at):
+            text = text[len(own_at):].lstrip()
+    except Exception:
+        pass
+    # After stripping bot mention: only treat target when first token starts with '@'
+    tokens = text.split(maxsplit=1)
+    first = tokens[0] if tokens else ""
+    if first.startswith("@"):
+        name = first[1:]
+        main_text = tokens[1] if len(tokens) > 1 else ""
+    else:
+        name = ""
+        main_text = text
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
+    # Build JSON payload from reply context if present
+    try:
+        payload: dict = {}
+        if name:
+            payload["target"] = name
+        ctx_items: list = []
+        if update.message and update.message.reply_to_message:
+            r = update.message.reply_to_message
+            r_text = (r.text or r.caption or "").strip()
+            if r_text:
+                ctx_items.append({"type": "text", "text": r_text})
+            try:
+                if getattr(r, "document", None):
+                    file = await context.bot.get_file(r.document.file_id)
+                    url = getattr(file, "file_path", "")
+                    if url and not url.startswith("http"):
+                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
+                        if token:
+                            url = f"https://api.telegram.org/file/bot{token}/{url}"
+                    if url:
+                        ctx_items.append({"type": "text", "url": url})
+            except Exception:
+                pass
+        if ctx_items:
+            payload["context"] = ctx_items
+        if (main_text or "").strip():
+            payload["input"] = main_text.strip()
+        input_arg = json.dumps(payload, ensure_ascii=False) if payload else (main_text or "")
+    except Exception:
+        input_arg = main_text or ""
     asyncio.create_task(
         _call_task(
             Messenger(context=context, update=update),
-            name,
-            inp,
+            name or None,
+            input_arg,
             echo=False,
             chat_id=cid,
             thread_id=tid,
