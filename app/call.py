@@ -547,7 +547,7 @@ async def send_digest_notification(
         eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
 
         if image_path:
-            message_obj = await telegram_send_photo(
+            message_obj = await safe_send_photo(
                 image_path=image_path,
                 caption=text,
                 chat_id=eff_chat_id,
@@ -555,14 +555,14 @@ async def send_digest_notification(
                 reply_markup=reply_markup,
             )
         else:
-            # KISS: rely on globally selected_* targets updated once in main()
-            message_obj = await telegram_send_message(
+            message_obj = await safe_send_message(
                 chat_id=eff_chat_id,
+                message_thread_id=eff_thread_id,
                 text=text,
+                parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup,
-                message_thread_id=eff_thread_id)
-
-        debug_print("[app]", f"Digest notification sent id={message_obj.message_id} chat={message_obj.chat_id}")
+            )
+        debug_print(f"send_digest_notification result=true publish_url={local_url}")
         return message_obj
     except Exception as e:
         debug_print("[app]", f"Error sending Telegram message/photo: {e}")
@@ -705,6 +705,54 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
     return message
 
 
+async def safe_send_photo(*, chat_id: int | None, image_path: str | Path, caption: str | None = None, message_thread_id: int | None = None, reply_markup: InlineKeyboardMarkup | None = None) -> Message:
+    """Wrapper for bot.send_photo with 'thread not found' fallback and retry.
+
+    - Applies HTML sanitization/truncation for captions similar to telegram_send_photo
+    - On BadRequest 'thread not found', retries without thread id
+    """
+    eff_chat_id = chat_id if chat_id is not None else selected_chat_id
+    eff_thread_id = message_thread_id if message_thread_id is not None else selected_thread_id
+    # Prepare caption
+    safe_caption = None
+    parse_mode = None
+    if caption:
+        try:
+            safe_caption, cmode = telegram_prepare_html(caption or "", 1024)
+            parse_mode = ParseMode.HTML if cmode == "HTML" else None
+        except Exception:
+            safe_caption = (caption or "")
+            if len(safe_caption) > 1024:
+                safe_caption = safe_caption[: 1023] + "…"
+            parse_mode = None
+        # Truncate if needed
+        try:
+            MAX_CAPTION_LEN = 1024
+            if parse_mode == ParseMode.HTML and safe_caption:
+                safe_caption = telegram_truncate_html_safe(safe_caption, MAX_CAPTION_LEN)
+            elif parse_mode == ParseMode.MARKDOWN and safe_caption:
+                safe_caption = telegram_truncate_markdown_safe(safe_caption, MAX_CAPTION_LEN)
+            else:
+                if safe_caption and len(safe_caption) > MAX_CAPTION_LEN:
+                    safe_caption = safe_caption[: MAX_CAPTION_LEN - 1] + "…"
+        except Exception:
+            pass
+    async def _op():
+        await init_bot()
+        with open(image_path, 'rb') as f:
+            return await bot.send_photo(chat_id=eff_chat_id, photo=f, caption=safe_caption, parse_mode=parse_mode, message_thread_id=eff_thread_id, reply_markup=reply_markup)
+    try:
+        return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+    except BadRequest as e:
+        if "thread not found" in str(e).lower():
+            async def _op_no_thread():
+                await init_bot()
+                with open(image_path, 'rb') as f:
+                    return await bot.send_photo(chat_id=eff_chat_id, photo=f, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+            debug_print("[TG] BadRequest thread not found, retrying photo without thread id")
+            return await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
+        raise
+
 async def safe_send_message(*, chat_id: int | None, text: str, message_thread_id: int | None = None, parse_mode: str | None = None, reply_markup: InlineKeyboardMarkup | None = None, reply_to_message_id: int | None = None) -> Message:
     """Wrapper around bot.send_message with retry and 'thread not found' fallback.
 
@@ -774,35 +822,8 @@ async def telegram_send_photo(image_path: str | Path, caption: str | None = None
         # Best-effort; on any error, fall back to original caption
         pass
 
-    async def _op():
-        await init_bot()
-        with open(image_path, 'rb') as f:
-            return await bot.send_photo(
-                chat_id=eff_chat_id,
-                photo=f,
-                caption=safe_caption,
-                parse_mode=parse_mode,
-                message_thread_id=eff_thread_id,
-                reply_markup=reply_markup,
-            )
-    try:
-        return await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-    except BadRequest as e:
-        if "thread not found" in str(e).lower():
-            async def _op_no_thread():
-                await init_bot()
-                with open(image_path, 'rb') as f:
-                    return await bot.send_photo(
-                        chat_id=eff_chat_id,
-                        photo=f,
-                        caption=safe_caption,
-                        parse_mode=parse_mode,
-                        reply_markup=reply_markup,
-                    )
-            debug_print("[TG] BadRequest thread not found, retrying photo without thread id")
-            return await async_retry(_op_no_thread, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
-        raise
-    return message
+    # Delegate to safe helper for consistency
+    return await safe_send_photo(chat_id=eff_chat_id, image_path=image_path, caption=safe_caption, message_thread_id=eff_thread_id, reply_markup=reply_markup)
 
 
 logging.getLogger("openai").setLevel(logging.DEBUG)
@@ -2071,8 +2092,8 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
     # Ensure bot exists before sending welcome
     await init_bot()
     # Send clean welcome banner without any progress bar
-    telegram_last_message = await telegram_send_message(
-        chat_id=chat_id,
+    telegram_last_message = await safe_send_message(
+        chat_id=chat_id or telegram_last_message.chat_id,
         text=text,
         message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None))
     )
