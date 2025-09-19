@@ -968,9 +968,9 @@ def compose_welcome_html(
             # Clamp to safe length
             if len(pretty) > 3600:
                 pretty = pretty[:3597] + "..."
-            # Escape for HTML inside code block
+            # Escape for HTML inside code block and add Telegram-supported language tag
             import html as _html
-            pretty_preview = f"<pre><code>{_html.escape(pretty)}</code></pre>"
+            pretty_preview = f"<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
     except Exception:
         pretty_preview = None
     if not pretty_preview:
