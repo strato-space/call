@@ -33,26 +33,13 @@ def interpret_target(
         if p_regex:
             try:
                 items = _lib_prompts(project=project, agent=agent, state=None)
-            except Exception:
-                items = []
-            for x in (items or []):
-                pid = str(x.get("prompt_id") or "")
-                nm = str(x.get("name") or "")
-                if (p_regex.match(pid) or p_regex.match(nm)):
-                    prompt_matches.append(x)
-            # Global fallback: if no project-scoped matches, try across all projects
-            global_prompt_hit = False
-            if (not prompt_matches):
-                try:
-                    items_all = _lib_prompts(project=None, agent=None, state=None)
-                except Exception:
-                    items_all = []
-                for x in (items_all or []):
+                for x in (items or []):
                     pid = str(x.get("prompt_id") or "")
                     nm = str(x.get("name") or "")
                     if (p_regex.match(pid) or p_regex.match(nm)):
                         prompt_matches.append(x)
-                        global_prompt_hit = True
+            except Exception:
+                pass
         if prompt_matches and not (prompt or "").strip():
             if len(prompt_matches) == 1:
                 prompt = str(prompt_matches[0].get("prompt_id") or prompt_matches[0].get("name") or tgt)
@@ -65,20 +52,6 @@ def interpret_target(
                     ag = prompt_matches[0].get("agent")
                     if isinstance(ag, str):
                         agent = ag
-                # Warn when resolved globally outside current project scope
-                try:
-                    if 'global_prompt_hit' in locals() and global_prompt_hit:
-                        from call.lib.logging import debug_print as _dbg, get_logger as _get_logger
-                        _dbg("[api]", "[WARN]", "prompt resolved globally (outside project scope)", f"prompt={prompt}", f"project={project}", f"agent={agent}")
-                        try:
-                            _get_logger("api").warning(
-                                "prompt resolved globally (outside project scope): prompt=%s project=%s agent=%s",
-                                str(prompt), str(project), str(agent)
-                            )
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
                 return project, agent, prompt, None
             return project, agent, prompt, {
                 "code": "TOO_MANY_ROWS",
@@ -345,46 +318,60 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # Prompt-only fallback: if a prompt exists in prompt repo, run using its metadata
-            try:
-                from call.lib.discovery import resolve_prompt as _rp, discover_prompt_repo as _dpr
-                _pq = (prompt or target or "").strip()
-                pr_path_fallback = _rp(_pq, project=project, agent=(agent or None), prefer_ready=True, repo=_dpr()) if _pq else None
-                # If not found under project, try globally
-                if not pr_path_fallback and _pq:
-                    pr_path_fallback = _rp(_pq, project=None, agent=(agent or None), prefer_ready=True, repo=_dpr())
-            except Exception:
-                pr_path_fallback = None
-            if pr_path_fallback:
-                # Try to read metadata (project/agent) from the prompt file (MD)
-                pr_meta_local: Dict[str, Any] | None = None
+            # If agent resolution fails but prompt is provided, try to resolve prompt directly within project scope
+            if prompt:
                 try:
-                    _text = _read(pr_path_fallback)
-                    start_tag = "<!-- METADATA:START -->"
-                    if start_tag in _text:
-                        y0 = _text.index(start_tag)
-                        y1 = _text.index("```yaml", y0) + len("```yaml")
-                        y2 = _text.index("```", y1)
-                        pr_meta_local = _yaml.safe_load(_text[y1:y2]) or {}
-                        if not isinstance(pr_meta_local, dict):
-                            pr_meta_local = None
-                except Exception:
-                    pr_meta_local = None
-                # Use prompt metadata to set project/agent when available; allow empty agent
-                name = str((pr_meta_local or {}).get("agent") or "")
-                proj = (pr_meta_local or {}).get("project") or project
-                # Ensure prompt field is set for downstream pr_path resolution
-                try:
-                    from pathlib import Path as __Path
-                    pid = str((pr_meta_local or {}).get("id") or __Path(pr_path_fallback).stem)
-                    if pid:
-                        prompt = pid
-                except Exception:
+                    pr_path = resolve_prompt(
+                        name=prompt,
+                        project=project,
+                        agent=agent,
+                        state=None,
+                        prefer_ready=True,
+                    )
+                    if pr_path:
+                        # Read prompt file to get metadata
+                        pr_content = Path(pr_path).read_text(encoding="utf-8")
+                        pr_meta = _extract_metadata(pr_content)
+                        if pr_meta and not project and pr_meta.get("project"):
+                            project = pr_meta.get("project")
+                        if pr_meta and not agent and pr_meta.get("agent"):
+                            agent = pr_meta.get("agent")
+                        if pr_meta and pr_meta.get("id"):
+                            prompt = pr_meta.get("id")
+                        # Retry agent resolution with updated project/agent
+                        env = resolve_agent(project=project, agent=agent, prompt=prompt)
+                        if env and env.get("ok"):
+                            resolved = env.get("resolved") or {}
+                            name = str(resolved.get("name") or "")
+                            proj = resolved.get("project") or project
+                            path = resolved.get("path")
+                            path_p = _Path(path) if path else None
+                            # Successfully resolved agent with prompt, continue with normal flow
+                        else:
+                            # If we still can't resolve after trying with prompt metadata, return not found
+                            err = _error_payload(
+                                agent=(agent or ""),
+                                input="",
+                                exc=f"No agent found for prompt '{prompt}' in project '{project}'",
+                                status=404,
+                                code="NO_DATA_FOUND",
+                                project=project
+                            )
+                            return None, err
+                except Exception as e:
+                    debug_print("[api]", "[WARN]", "prompt resolution failed:", str(e))
                     pass
-                path_p = None
-                # Note: we purposefully do not error here; continue to build config from prompt
-            else:
-                err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project)
+            
+            if not env or not env.get("ok"):
+                # If we get here, we couldn't resolve the agent or prompt
+                err = _error_payload(
+                    agent=(agent or ""),
+                    input="",
+                    exc=f"No agent found matching criteria (project={project}, agent={agent}, prompt={prompt})",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project
+                )
                 return None, err
         else:
             resolved = env.get("resolved") or {}
