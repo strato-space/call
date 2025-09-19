@@ -1930,8 +1930,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
     cfg_yaml: dict | None = None
     yaml_path = _call_dir / "mcp_config.yaml"
     # Start MCP servers only if we have a meaningful selection (KISS)
-    name_hint = str(getattr(cfg, "name", "") or "").strip()
-    proj_hint = str(getattr(cfg, "project", "") or "").strip()
+    name_hint = str(cfg.name or "").strip()
+    proj_hint = str(cfg.project or "").strip()
     prompt_hint = str(getattr(cfg, "prompt_override", "") or "").strip()
     should_start_mcp = bool(name_hint or proj_hint or prompt_hint)
     if should_start_mcp and yaml_path.exists():
@@ -1963,7 +1963,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # Build tools based on cfg.attributes.vs (resolve via vector store index)
         tools = [WebSearchTool()]
         try:
-            vs_ids = await resolve_vector_stores(((getattr(cfg, "attributes", {}) or {}).get("vs")))
+            vs_ids = await resolve_vector_stores((cfg.attributes or {}).get("vs"))
             if vs_ids:
                 tools.append(FileSearchTool(vector_store_ids=vs_ids))
         except Exception:
@@ -1972,13 +1972,13 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         mcp_servers = mcp_servers_started
         # Decide final model with diagnostics
         env_model = os.environ.get("LLM_MODEL")
-        yaml_model = (getattr(cfg, "model", None) or None)
+        yaml_model = (cfg.model or None)
         final_model = yaml_model or env_model or "gpt-5"
         debug_print("[app]", f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
         # Debug: print instructions length and a short preview
         try:
-            _instr = getattr(cfg, "instructions", "") or ""
+            _instr = cfg.instructions or ""
             _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
             debug_print("[app]", "Agent instructions len=", str(len(_instr)))
             debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
@@ -1986,8 +1986,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             pass
 
         agent = Agent(
-            name=f"{getattr(cfg, 'name', '')} [agent]",
-            instructions=(getattr(cfg, "instructions", "") or ""),
+            name=f"{cfg.name} [agent]",
+            instructions=(cfg.instructions or ""),
             model_settings=ModelSettings(
                 model=final_model,
             ),
@@ -2000,12 +2000,12 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
         try:
-            await init_bot(project_name=(proj_hint or None))
+            await init_bot(project_name=(cfg.project or None))
         except Exception:
             pass
         
         merged_output = _merge_outputs(
-            (_load_yaml(getattr(cfg, "agent_yaml_path", None)).get("output") if getattr(cfg, "agent_yaml_path", None) else None),
+            (_load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
             None,
         )
         m_chat, m_thread = _extract_tg_targets(merged_output)
@@ -2053,19 +2053,19 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         else:
             session = None
 
-        debug_print(f"[INFO] Agent yaml: {getattr(cfg, 'agent_yaml_path', None)}")
+        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
 
         # Send welcome message with agent link and run context (after config is ready)
         if selected_chat_id is not None:
             try:
                 welcome_html = compose_welcome_html(
-                    agent_name=(getattr(cfg, 'name', '') or ''),
-                    agent_yaml_path=(getattr(cfg, 'agent_yaml_path', None) or None),
+                    agent_name=(cfg.name or ''),
+                    agent_yaml_path=(cfg.agent_yaml_path or None),
                     user_input=user_input,
                     mcp_servers_started=mcp_servers_started,
-                    vs_list=((getattr(cfg, 'attributes', {}) or {}).get('vs')),
-                    model=(getattr(cfg, 'model', None) or None),
+                    vs_list=((cfg.attributes or {}).get('vs')),
+                    model=(cfg.model or None),
                 )
                 # Debug log the welcome HTML only when CALL_DEBUG is enabled
                 debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
@@ -2122,8 +2122,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 use_chat_id = selected_chat_id
                 use_thread_id = selected_thread_id
                 await send_digest_notification(
-                    agent_name=(getattr(cfg, 'name', '') or ''),
-                    agent_path=(str(getattr(cfg, 'agent_yaml_path', '')) if getattr(cfg, 'agent_yaml_path', None) else None),
+                    agent_name=(cfg.name or ''),
+                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
                     input_text=initial_input,
                     text=(step1_output or ""),
                     chat_id=use_chat_id,
@@ -2133,7 +2133,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             except Exception:
                 pass
             try:
-                await post_run_git_push(agent_name=(getattr(cfg, 'name', '') or ''), user_input=user_input)
+                await post_run_git_push(agent_name=(cfg.name or ''), user_input=user_input)
             except Exception:
                 pass
 
