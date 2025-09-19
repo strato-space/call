@@ -2095,7 +2095,8 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
     telegram_last_message = await safe_send_message(
         chat_id=chat_id or telegram_last_message.chat_id,
         text=text,
-        message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None))
+        message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None)),
+        parse_mode=ParseMode.HTML,
     )
     debug_print("[app]",
         f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
