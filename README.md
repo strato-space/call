@@ -568,7 +568,7 @@ python -m call.telegram_bot.bot --bot-name StratoSpaceAiBot
 Notes:
 - Only the dot notation `TELEGRAM_TOKEN.Name` is supported for named bots.
 
-### Telegram formatting and routing (Updated Sep 13, 2025)
+### Telegram formatting and routing (Updated Sep 19, 2025)
 
 - KISS policy: the Telegram bot does not validate agent names. It forwards the name exactly as typed to `call.lib.api.call_async`, which performs discovery/validation and returns a structured error when an agent is unknown.
   - The bot now passes the parsed token as `target` so the library decides whether it is a prompt, agent, or project (precedence: prompt > agent > project; supports `*`).
@@ -582,6 +582,10 @@ Notes:
   - Agent YAML `output.tg.chat_id/thread_id` → used only if no explicit chat/thread was provided.
   - `.env` defaults (`TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`) → last fallback.
   - The pipeline passes explicit chat/thread through the final notification to avoid races with globals.
+
+- Optional thread id:
+  - `TELEGRAM_THREAD_ID` is optional. If not set or set to `0`, it is treated as `None` and no thread id is sent to Telegram.
+  - The library will also automatically retry without a thread id when Telegram returns `BadRequest: Message thread not found` (see `safe_send_message()` wrapper).
 
 ### Digest notification helper (Updated Sep 12, 2025)
 
@@ -600,6 +604,26 @@ Notes:
 
 - The helper prints concise debug lines: `[DEBUG] send_digest_notification args: ...` and `[DEBUG] send_digest_notification publish_url=...`.
 - Empty/whitespace-only `text` is normalized to `None` to avoid Telegram errors.
+
+### Bot reply payload (New Sep 19, 2025)
+
+When the `/call` command or a plain text message is sent as a reply, the bot constructs a structured payload and passes it as the input string to the pipeline. The payload shape is:
+
+```json
+{
+  "target": "@Name or PromptId",   // only when the first token in the message starts with '@'
+  "input": "main text",            // falls back to reply text when main text is empty
+  "context": [                       // optional, present when replying to a message
+    { "type": "text", "text": "<reply text>" },
+    { "type": "text", "url": "https://api.telegram.org/file/bot<token>/<path>" }
+  ],
+  "replay": "<reply text>" | [ ... ] // convenience field mirroring reply content
+}
+```
+
+Notes:
+- Replied documents are resolved to direct Telegram file URLs via `get_file(file_id)`.
+- The bot logs the built payload with `debug_print` under the tag `[bot] [PAYLOAD]` (gated by `CALL_DEBUG`).
 
 ### Python dependencies
 
