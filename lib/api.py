@@ -498,11 +498,9 @@ def _error_payload(
 
 
 def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]:
-    """Extract chat_id and thread_id from a session id.
+    """Extract chat_id and thread_id from session id in the form "chat" or "chat:thread".
 
-    Supported formats (backward-compat):
-      - "AgentName:chat" or "AgentName:chat:thread" (legacy)
-      - "chat" or "chat:thread" (new, agentless)
+    No AgentName prefix is supported.
     Returns (chat_id, thread_id).
     """
     if not raw:
@@ -512,17 +510,8 @@ def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]
         parts = s.split(":")
         if not parts:
             return None, None
-        # New format: first token numeric => chat[:thread]
-        try:
-            if parts and parts[0] and str(parts[0]).lstrip("-").isdigit():
-                chat = int(parts[0])
-                thread = int(parts[1]) if len(parts) > 1 and parts[1] else None
-                return chat, thread
-        except Exception:
-            pass
-        # Legacy format: AgentName:chat[:thread]
-        chat = int(parts[1]) if len(parts) > 1 and parts[1] else None
-        thread = int(parts[2]) if len(parts) > 2 and parts[2] else None
+        chat = int(parts[0]) if parts[0] else None
+        thread = int(parts[1]) if len(parts) > 1 and parts[1] else None
         return chat, thread
     except Exception:
         return None, None
@@ -934,11 +923,9 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
 async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]) -> Dict[str, Any]:
     """Clear conversation session(s) for this chat/thread from SQLite.
 
-    Rules:
-    - If `name` is given: delete only that exact session id.
-      Supports both legacy ("AgentName:chat[:thread]") and new ("chat[:thread]") formats.
-    - If `name` is empty/None: delete all sessions for this chat/thread
-      by exact match on new format and LIKE pattern on legacy format.
+    Rules (agentless ids only):
+    - If `name` is given: ignored for session id derivation; delete only "chat[:thread]" for the provided chat/thread.
+    - If `name` is empty/None: same behavior — delete only "chat[:thread]".
 
     We operate on two tables if present: messages(session_id) and sessions(id).
     """
@@ -946,10 +933,6 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
     # Validate inputs
     if not chat_id:
         return {"ok": False, "error_code": 400, "description": "chat_id is required"}
-
-    def _sid_legacy(agent: str, chat: int, thread: Optional[int]) -> str:
-        agent_raw = (agent or "").strip() if agent else ""
-        return f"{agent_raw}:{chat}:{thread}" if thread is not None else f"{agent_raw}:{chat}"
 
     def _sid_new(chat: int, thread: Optional[int]) -> str:
         return f"{chat}:{thread}" if thread is not None else f"{chat}"
@@ -966,29 +949,15 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
         has_sessions = bool(cur.fetchone())
 
-        # Build candidate session ids
+        # Single candidate: new format only
         sids: List[str] = []
-        if isinstance(name, str) and name.strip():
-            # Delete exact legacy and new ids for this agent/chat/thread
-            sids = [_sid_legacy(name, int(chat_id), thread_id), _sid_new(int(chat_id), thread_id)]
-        else:
-            # Pattern-based lookup (legacy) + exact match (new)
-            pattern = f":{int(chat_id)}:{int(thread_id)}" if thread_id is not None else f":{int(chat_id)}"
-            # Exact (new) in sessions
-            if has_sessions:
-                cur.execute("SELECT id FROM sessions WHERE id = ?", (_sid_new(int(chat_id), thread_id),))
-                sids += [row[0] for row in cur.fetchall()]
-            # Exact (new) in messages
-            if has_messages:
-                cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id = ?", (_sid_new(int(chat_id), thread_id),))
-                sids += [row[0] for row in cur.fetchall()]
-            # Legacy patterns
-            if has_sessions:
-                cur.execute("SELECT id FROM sessions WHERE id LIKE ?", (f"%{pattern}",))
-                sids += [row[0] for row in cur.fetchall()]
-            if has_messages:
-                cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id LIKE ?", (f"%{pattern}",))
-                sids += [row[0] for row in cur.fetchall()]
+        candidate = _sid_new(int(chat_id), thread_id)
+        if has_sessions:
+            cur.execute("SELECT id FROM sessions WHERE id = ?", (candidate,))
+            sids += [row[0] for row in cur.fetchall()]
+        if has_messages:
+            cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id = ?", (candidate,))
+            sids += [row[0] for row in cur.fetchall()]
 
         if not sids:
             cur.close(); conn.close()
