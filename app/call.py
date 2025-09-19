@@ -200,6 +200,16 @@ async def async_retry(
         except retry_on as e:
             if attempt >= retries:
                 raise
+            delay = base_delay * (2 ** attempt)
+            # Apply jitter within ±jitter seconds
+            if jitter:
+                delay = max(0.0, delay + random.uniform(-jitter, jitter))
+            try:
+                await asyncio.sleep(delay)
+            except Exception:
+                # If sleep fails for some reason, proceed immediately
+                pass
+            attempt += 1
 
 
 async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, parse_mode: str | None = None) -> Message | None:
@@ -242,16 +252,7 @@ async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, pa
     except Exception:
         # Never propagate; keep pipelines running
         return None
-            delay = base_delay * (2 ** attempt)
-            # Apply jitter within ±jitter seconds
-            if jitter:
-                delay = max(0.0, delay + random.uniform(-jitter, jitter))
-            try:
-                await asyncio.sleep(delay)
-            except Exception:
-                # If sleep fails for some reason, proceed immediately
-                pass
-            attempt += 1
+            
 
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
@@ -2118,7 +2119,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                                                 rtxt = _html.escape(rtxt)
                                                 updated = f"{title} {caller}\n<b>✓ Completed</b>\n<pre><code>{rtxt}</code></pre>"
                                                 updated = clean_html_for_telegram(updated)
-                                                await bot.edit_message_text(chat_id=tg_msg.chat_id, message_id=tg_msg.message_id, text=updated, parse_mode=ParseMode.HTML)
+                                                await safe_edit_message_text(chat_id=tg_msg.chat_id, message_id=tg_msg.message_id, text=updated, parse_mode=ParseMode.HTML)
                                             except _BadReq:
                                                 # Fallback: send a new message
                                                 await safe_send_message(chat_id=tg_msg.chat_id, text=f"{title} {caller} — ✓ Completed", parse_mode=ParseMode.HTML)
