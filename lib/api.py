@@ -145,6 +145,9 @@ class RunnableConfig:
     model: str = "gpt-5"
     # Attributes from cards (unresolved). app layer may derive vs_list from here.
     attributes: Dict[str, Any] = field(default_factory=dict)
+    # Convenience: carry original selection for downstream consumers
+    target: Optional[str] = None
+    input: Optional[str] = None
 
 
 def build_runnable_instructions_config(
@@ -152,6 +155,8 @@ def build_runnable_instructions_config(
     project: Optional[str],
     agent: Optional[str],
     prompt: Optional[str] = None,
+    target: Optional[str] = None,
+    input: Optional[str] = None,
     merge: bool = False,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
@@ -218,6 +223,59 @@ def build_runnable_instructions_config(
             return y, instr, text
         except Exception:
             return {}, "", text
+
+    # 0) Target interpretation (prompt > agent > project) and wildcard prompt resolution
+    try:
+        proj2, agent2, prompt2, terr = interpret_target(project=project, agent=agent, prompt=prompt, target=target)
+    except Exception:
+        proj2, agent2, prompt2, terr = project, agent, prompt, None
+    if terr is not None:
+        err = _error_payload(
+            agent=(agent or ""), input=(input or ""), exc=terr.get("description", "bad target"),
+            status=int(terr.get("status", 400)), code=str(terr.get("code")), project=project, options=terr.get("options") or []
+        )
+        return None, err
+    project, agent, prompt = proj2, agent2, prompt2
+
+    # Prompt wildcard: narrow to unique match using repository filters
+    try:
+        if isinstance(prompt, str) and ("*" in prompt):
+            import re as _re
+            rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
+            try:
+                items = _lib_prompts(project=project, agent=agent, state=None)
+            except Exception:
+                items = []
+            matches = [x for x in (items or []) if rx.match(str(x.get("prompt_id") or "")) or rx.match(str(x.get("name") or ""))]
+            if not matches:
+                return None, _error_payload(
+                    agent=(agent or ""), input=(input or ""), exc="not found",
+                    status=404, code="NO_DATA_FOUND", project=project, options=[]
+                )
+            if len(matches) > 1:
+                return None, _error_payload(
+                    agent=(agent or ""), input=(input or ""), exc="Multiple prompts matched your criteria",
+                    status=400, code="TOO_MANY_ROWS", project=project, options=matches
+                )
+            prompt = str(matches[0].get("prompt_id") or matches[0].get("name") or prompt)
+    except Exception:
+        pass
+
+    # Special case: blank selection (no project/agent/prompt/target) — build empty cfg
+    if not (str(project or "").strip() or str(agent or "").strip() or str(prompt or "").strip() or str(target or "").strip()):
+        return RunnableConfig(
+            name="",
+            project=(project or None),
+            prompt_override=None,
+            merge=bool(merge),
+            agent_yaml_path=None,
+            base_dir=None,
+            instructions="",
+            model=str(_os.environ.get("LLM_MODEL", "gpt-5")),
+            attributes={},
+            target=None,
+            input=(input or None),
+        ), None
 
     # Resolve single agent selection (path, project, name)
     try:
@@ -337,6 +395,8 @@ def build_runnable_instructions_config(
         instructions=str(instr or ""),
         model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
         attributes=attributes if isinstance(attributes, dict) else {},
+        target=(target or None),
+        input=(input or None),
     )
 
     # Default model if still absent
@@ -514,26 +574,9 @@ async def call_async(
     except Exception:
         pass
 
-    # Interpret 'target' shortcut before agent resolution using provided filters
-    proj2, agent2, prompt2, terr = interpret_target(project=project, agent=agent, prompt=prompt, target=target)
-    if terr is not None:
-        return _error_payload(
-            agent=(agent or ""),
-            input=(input or ""),
-            exc=terr.get("description") or "Ambiguous selection",
-            status=int(terr.get("status") or 400),
-            echo=echo,
-            debug=debug,
-            code=str(terr.get("code") or "BAD_REQUEST"),
-            project=proj2,
-            options=terr.get("options"),
-            session_id=(session_id or None),
-        )
-    project, agent, prompt = proj2, agent2, prompt2
-
-    # Build initial runnable config (DTO) for the resolved selection (non-breaking usage for now)
+    # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
     try:
-        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, merge=merge)
+        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, target=target, input=input, merge=merge)
     except Exception:
         cfg, cfg_err = None, None
     if isinstance(cfg_err, dict):
@@ -545,27 +588,15 @@ async def call_async(
             pass
         return cfg_err
 
-    # If prompt contains wildcard, resolve it against repository with filters first
+    # cfg is ready; dump a normalized snapshot in DEBUG
     try:
-        if isinstance(prompt, str) and ("*" in prompt):
-            import re as _re
-            rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
-            try:
-                items = _lib_prompts(project=project, agent=agent, state=None)
-            except Exception:
-                items = []
-            matches = [x for x in (items or []) if rx.match(str(x.get("prompt_id") or "")) or rx.match(str(x.get("name") or ""))]
-            if not matches:
-                return _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc="not found",
-                    status=404, echo=echo, debug=debug, code="NO_DATA_FOUND", project=project, options=[]
-                )
-            if len(matches) > 1:
-                return _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc="Multiple prompts matched your criteria",
-                    status=400, echo=echo, debug=debug, code="TOO_MANY_ROWS", project=project, options=matches
-                )
-            prompt = str(matches[0].get("prompt_id") or matches[0].get("name") or prompt)
+        from dataclasses import asdict as _asdict
+        from call.lib.logging import debug_print as _dbg
+        snap = _asdict(cfg) if cfg is not None else {}
+        if cfg is not None:
+            snap["instructions_len"] = len(cfg.instructions or "")
+            snap.pop("instructions", None)
+        _dbg("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False))
     except Exception:
         pass
 
@@ -577,86 +608,17 @@ async def call_async(
         # If bot init fails, continue; downstream may still function without telegram
         pass
 
-    # Special case: no selection provided (no project/agent/prompt/target). Run a blank agent with empty instructions.
-    if not (str(project or "").strip() or str(agent or "").strip() or str(prompt or "").strip() or str(target or "").strip()):
-        chosen_name = ""
-        chosen_project = project or ""
-        yaml_path = None
-        # Routing and session selection (same as below)
-        sel_chat: Optional[int] = None
-        sel_thread: Optional[int] = None
-        sid_override = (session_id or "").strip()
-        if sid_override:
-            c, t = _parse_session_id(sid_override)
-            sel_chat, sel_thread = c, t
-        else:
-            if (chat_id is not None) or (thread_id is not None):
-                sel_chat = chat_id if chat_id is not None else app_call.TELEGRAM_CHAT_ID
-                sel_thread = thread_id if thread_id is not None else (app_call.TELEGRAM_THREAD_ID or None)
-            else:
-                sel_chat, sel_thread = None, None
-
-        selected_chat_id = sel_chat
-        selected_thread_id = sel_thread
-        app_call.selected_chat_id = selected_chat_id
-        app_call.selected_thread_id = selected_thread_id
-        try:
-            setattr(app_call, "force_no_session", bool(selected_chat_id is None))
-        except Exception:
-            pass
-
-        # Run with a minimal cfg
-        final_output = None
-        actual_sid = None
-        try:
-            cm = getattr(app_call, "build_and_run_agent")
-            _cfg_obj = RunnableConfig(name="", project=(project or None), instructions=str("") )
-            async with cm(cfg=_cfg_obj, user_input=(input or "")) as (agent_obj, _cfg, _session):
-                final_output = getattr(_cfg, "_last_final_output", None)
-                try:
-                    actual_sid = getattr(_session, "id", None)
-                except Exception:
-                    actual_sid = None
-        except Exception as e:
-            return _error_payload(agent="", input=(input or ""), exc=e, status=500, echo=echo, debug=debug, code="PIPELINE_ERROR", project=(project or None))
-
-        # Session id computation for blank agent
-        session_id_out = None
-        try:
-            session_id_out = actual_sid if (locals().get("actual_sid") is not None) else None
-        except Exception:
-            session_id_out = None
-        if not session_id_out and (selected_chat_id is not None):
-            try:
-                session_id_out = f":{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f":{selected_chat_id}"
-            except Exception:
-                session_id_out = None
-
-        return {
-            "ok": True,
-            "agent": "",
-            "agent_path": None,
-            "final_output": final_output,
-            "echo": bool(echo),
-            "resolved": {"project": chosen_project, "name": "", "path": None, "aliases": [], "prompts": []},
-            **({"session_id": session_id_out} if session_id_out else {}),
-        }
-
-    # Resolve agent selection first
-    resolved_env = resolve_agent(project=project, agent=agent, prompt=prompt)
-    if not resolved_env.get("ok"):
-        # Error envelope already prepared
-        if isinstance(resolved_env, dict) and (session_id or ""):
-            try:
-                # Inject session_id for downstream callers if provided
-                resolved_env["session_id"] = session_id
-            except Exception:
-                pass
-        return resolved_env
-    resolved = resolved_env.get("resolved") or {}
-    chosen_name = resolved.get("name")
-    chosen_project = resolved.get("project") or (project or "")
-    yaml_path = resolved.get("path")
+    # Proceed with cfg-driven run; build 'resolved' from cfg
+    chosen_name = cfg.name if cfg else ""
+    chosen_project = (cfg.project if cfg else None) or (project or "")
+    yaml_path = cfg.agent_yaml_path if cfg else None
+    resolved = {
+        "project": chosen_project,
+        "name": chosen_name,
+        "path": yaml_path,
+        "aliases": [],
+        "prompts": [],
+    }
 
     # Align with app/main: set effective targets according to session rules
     # Priority:
@@ -699,38 +661,7 @@ async def call_async(
     dump_file_path = os.environ.get("CALL_DUMP_TASKS_FILE", "")
     dump_fp = None
 
-    async def _dump_tasks_periodically(period: int):
-        # Delay once to let the run start
-        await asyncio.sleep(period)
-        while True:
-            try:
-                out = dump_fp if dump_fp is not None else sys.stderr
-                # Gate stderr dumps behind CALL_DEBUG to reduce noise in production
-                if dump_fp is None:
-                    try:
-                        enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in ("1", "true", "yes", "on")
-                    except Exception:
-                        enabled = False
-                    if not enabled:
-                        await asyncio.sleep(period)
-                        continue
-                print("\n=== asyncio tasks dump ===", file=out)
-                for t in asyncio.all_tasks():
-                    if t is asyncio.current_task():
-                        continue
-                    print(f"Task: {t!r}", file=out)
-                    for fr in t.get_stack(limit=20):
-                        traceback.print_stack(f=fr, file=out)
-                    print("---", file=out)
-                print("=== end ===\n", file=out)
-                if dump_fp is not None:
-                    try:
-                        dump_fp.flush()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            await asyncio.sleep(period)
+    from call.lib.utils import dump_tasks_periodically as _dump_tasks_periodically
 
     dump_task = None
     try:
@@ -740,7 +671,7 @@ async def call_async(
                     dump_fp = open(dump_file_path, "a", encoding="utf-8", buffering=1)
                 except Exception:
                     dump_fp = None
-            dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s))
+            dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s, dump_fp))
 
         try:
             # TEST HOOK: simulate a tracing 403 error when requested
@@ -754,9 +685,9 @@ async def call_async(
             # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
             # when a monkeypatched test function expects (name, samples_dir, ...).
             cm = getattr(app_call, "build_and_run_agent")
-            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions=""))
+            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions="", input=(input or None), target=(target or None)))
             try:
-                async with cm(cfg=_cfg_obj, user_input=(input or "")) as (agent_obj, _cfg, _session):
+                async with cm(cfg=_cfg_obj, user_input=((_cfg_obj.input or input) or "")) as (agent_obj, _cfg, _session):
                     final_output = getattr(_cfg, "_last_final_output", None)
                     try:
                         actual_sid = getattr(_session, "id", None)
