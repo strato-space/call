@@ -591,12 +591,10 @@ Notes:
 
 - Target precedence: `prompt > agent > project`.
 - Prompt discovery is live and file-system based — new files in `prompt/draft/` or `prompt/ready/` are discoverable immediately without rebuilding indices.
-- Global fallback for prompts: when a prompt is not found within a project scope, Call will search across all projects. A warning is emitted:
-  - JSON logs: `call.api` logger at WARNING level.
-  - Debug line (gated by `CALL_DEBUG=1`): `[api] [WARN] prompt resolved globally (outside project scope)` with prompt/project/agent context.
+- Prompt resolution is strictly scoped to the specified project for security reasons.
 - Ambiguity and not found:
   - Multiple prompts matched your criteria → `code: "TOO_MANY_ROWS"` with `options`.
-  - Not found (including wildcard) → `code: "NO_DATA_FOUND"` with a best-effort `options` list of suggestions (substring-based within scope, then globally).
+  - Not found (including wildcard) → `code: "NO_DATA_FOUND"` with a descriptive error message.
 
 ### Max turns configuration (Updated Sep 19, 2025)
 
