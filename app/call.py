@@ -1865,6 +1865,9 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - attributes: dict | None (may contain 'vs')
       - agent_yaml_path: str | None
     """
+    # Ensure we can read/update routing/session globals anywhere in this function
+    global selected_chat_id, selected_thread_id, force_no_session
+
     # Optional YAML config to control MCP servers
     cfg_yaml: dict | None = None
     yaml_path = _call_dir / "mcp_config.yaml"
@@ -2117,7 +2120,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
 
         # Save globally for subsequent messages
-        global selected_chat_id, selected_thread_id, force_no_session
         # Respect previously selected targets (e.g., set by lib.api from Telegram update).
         # If current value equals env default, allow agent YAML/output to override.
         # Otherwise, keep the explicit value set by the caller.
