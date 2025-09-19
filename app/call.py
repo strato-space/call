@@ -1915,18 +1915,25 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
 
 
 @asynccontextmanager
-async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str = "", *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = False):
-    """Async context manager that creates MCP servers and builds an Agent by name.
+async def build_and_run_agent(cfg, user_input: str = ""):
+    """Async context manager that builds an Agent from a ready-to-run cfg and runs one turn.
 
-    Usage:
-        async with build_agent_by_name(name, samples_dir) as (agent, cfg):
-            ...
+    Expected cfg attributes (duck-typed DTO):
+      - name: str
+      - project: str | None
+      - instructions: str
+      - model: str | None
+      - attributes: dict | None (may contain 'vs')
+      - agent_yaml_path: str | None
     """
     # Optional YAML config to control MCP servers
     cfg_yaml: dict | None = None
     yaml_path = _call_dir / "mcp_config.yaml"
-    # Determine whether we should start MCP servers at all for this run
-    should_start_mcp = bool((agent_name or "").strip() or (prompt_override or "").strip() or (project_name or "").strip())
+    # Start MCP servers only if we have a meaningful selection (KISS)
+    name_hint = str(getattr(cfg, "name", "") or "").strip()
+    proj_hint = str(getattr(cfg, "project", "") or "").strip()
+    prompt_hint = str(getattr(cfg, "prompt_override", "") or "").strip()
+    should_start_mcp = bool(name_hint or proj_hint or prompt_hint)
     if should_start_mcp and yaml_path.exists():
         try:
             with open(yaml_path, "r", encoding="utf-8") as f:
@@ -1953,19 +1960,19 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             except Exception:
                 mcp_servers_started = []
 
-        # Build agent (respect optional prompt override)
-        cfg = await build_agent_config(agent_name, prompt_override=prompt_override, project_name=project_name, merge=merge)
+        # Build tools based on cfg.attributes.vs (resolve via vector store index)
         tools = [WebSearchTool()]
-        if cfg.vs_list:
-            try:
-                tools.append(FileSearchTool(vector_store_ids=cfg.vs_list))
-            except Exception:
-                pass
+        try:
+            vs_ids = await resolve_vector_stores(((getattr(cfg, "attributes", {}) or {}).get("vs")))
+            if vs_ids:
+                tools.append(FileSearchTool(vector_store_ids=vs_ids))
+        except Exception:
+            pass
         # If YAML provided, use what we started; otherwise none
         mcp_servers = mcp_servers_started
         # Decide final model with diagnostics
         env_model = os.environ.get("LLM_MODEL")
-        yaml_model = (cfg.model or None)
+        yaml_model = (getattr(cfg, "model", None) or None)
         final_model = yaml_model or env_model or "gpt-5"
         debug_print("[app]", f"Model selection: env={env_model} yaml={yaml_model} -> effective={final_model}")
 
@@ -1979,8 +1986,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             pass
 
         agent = Agent(
-            name=f"{cfg.name} [agent]",
-            instructions=cfg.instructions,
+            name=f"{getattr(cfg, 'name', '')} [agent]",
+            instructions=(getattr(cfg, "instructions", "") or ""),
             model_settings=ModelSettings(
                 model=final_model,
             ),
@@ -1991,15 +1998,14 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
 
-        # Initialize bot only when project_name provided (lib already initialized it upstream)
-        if project_name:
-            try:
-                await init_bot(project_name=project_name)
-            except Exception:
-                pass
+        # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
+        try:
+            await init_bot(project_name=(proj_hint or None))
+        except Exception:
+            pass
         
         merged_output = _merge_outputs(
-            (_load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
+            (_load_yaml(getattr(cfg, "agent_yaml_path", None)).get("output") if getattr(cfg, "agent_yaml_path", None) else None),
             None,
         )
         m_chat, m_thread = _extract_tg_targets(merged_output)
@@ -2047,19 +2053,19 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         else:
             session = None
 
-        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+        debug_print(f"[INFO] Agent yaml: {getattr(cfg, 'agent_yaml_path', None)}")
         debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
 
         # Send welcome message with agent link and run context (after config is ready)
         if selected_chat_id is not None:
             try:
                 welcome_html = compose_welcome_html(
-                    agent_name=cfg.name,
-                    agent_yaml_path=(cfg.agent_yaml_path if cfg.agent_yaml_path else None),
+                    agent_name=(getattr(cfg, 'name', '') or ''),
+                    agent_yaml_path=(getattr(cfg, 'agent_yaml_path', None) or None),
                     user_input=user_input,
                     mcp_servers_started=mcp_servers_started,
-                    vs_list=cfg.vs_list,
-                    model=cfg.model,
+                    vs_list=((getattr(cfg, 'attributes', {}) or {}).get('vs')),
+                    model=(getattr(cfg, 'model', None) or None),
                 )
                 # Debug log the welcome HTML only when CALL_DEBUG is enabled
                 debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
@@ -2116,8 +2122,8 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
                 use_chat_id = selected_chat_id
                 use_thread_id = selected_thread_id
                 await send_digest_notification(
-                    agent_name=cfg.name,
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
+                    agent_name=(getattr(cfg, 'name', '') or ''),
+                    agent_path=(str(getattr(cfg, 'agent_yaml_path', '')) if getattr(cfg, 'agent_yaml_path', None) else None),
                     input_text=initial_input,
                     text=(step1_output or ""),
                     chat_id=use_chat_id,
@@ -2127,7 +2133,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
             except Exception:
                 pass
             try:
-                await post_run_git_push(agent_name=cfg.name, user_input=user_input)
+                await post_run_git_push(agent_name=(getattr(cfg, 'name', '') or ''), user_input=user_input)
             except Exception:
                 pass
 
@@ -2140,20 +2146,13 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         yield agent, cfg, session
         
 
-async def run_digest_pipeline(samples_dir: str, user_input: str = "", cli_agent_name: str = "", initial_history: List[Dict[str, Any]] | None = None, *, prompt_override: str | None = None, project_name: str | None = None, merge: bool = False):
-    async with build_and_run_agent(cli_agent_name, samples_dir, user_input=user_input, prompt_override=prompt_override, project_name=project_name, merge=merge) as (agent, cfg, session):
-        # Return simplified triple: no history, just final output from cfg attribute
-        final_output = getattr(cfg, "_last_final_output", None)
-        return agent, [], final_output
-
 async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = "", prompt_name: str = "", merge: bool = False):
-    samples_dir = default_samples_dir
-    agent, history, step1_output = await run_digest_pipeline(
-        samples_dir,
-        user_input=user_input,
-        cli_agent_name=agent_name,
-        project_name=(project_name or None),
-    )
+    """Legacy entrypoint: delegate to lib.api.call for simplicity."""
+    try:
+        from call.lib import api as _api
+        await _api.call_async(project=(project_name or None), agent=(agent_name or None), prompt=(prompt_name or None), input=(user_input or ""), merge=bool(merge))
+    except Exception:
+        pass
 
 
 async def republish_results() -> str:
