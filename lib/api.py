@@ -126,7 +126,7 @@ from call.lib.discovery import (
 )
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -135,16 +135,16 @@ class RunnableConfig:
 
     KISS: keep only fields that are actually used at runtime.
     """
-    name: Optional[str] = None
+    name: str = ""
     project: Optional[str] = None
     prompt_override: Optional[str] = None
     merge: bool = False
     agent_yaml_path: Optional[str] = None
     base_dir: Optional[str] = None
     instructions: str = ""
-    model: Optional[str] = None
+    model: str = "gpt-5"
     # Attributes from cards (unresolved). app layer may derive vs_list from here.
-    attributes: Optional[Dict[str, Any]] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
 
 def build_runnable_instructions_config(
@@ -226,7 +226,7 @@ def build_runnable_instructions_config(
         return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
     if not isinstance(env, dict) or not env.get("ok"):
-        err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="no data found", status=404, code="NO_DATA_FOUND", project=project)
+        err = env if isinstance(env, dict) else _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project)
         return None, err
 
     resolved = env.get("resolved") or {}
@@ -248,11 +248,29 @@ def build_runnable_instructions_config(
             proj_yaml = None
 
     pr_path = None
+    pr_meta: Dict[str, Any] | None = None
     if isinstance(prompt, str) and prompt.strip():
         try:
             pr_path = _resolve_prompt(prompt.strip(), project=proj, agent=name, prefer_ready=True, repo=_discover_prompt_repo())
         except Exception:
             pr_path = None
+        # Strictly parse METADATA YAML when prompt is present (matches prior behavior)
+        if pr_path and str(pr_path).lower().endswith(('.md', '.markdown')):
+            try:
+                _text = _read(pr_path)
+                start_tag = "<!-- METADATA:START -->"
+                if start_tag in _text:
+                    y0 = _text.index(start_tag)
+                    y1 = _text.index("```yaml", y0) + len("```yaml")
+                    y2 = _text.index("```", y1)
+                    pr_meta = _yaml.safe_load(_text[y1:y2]) or {}
+                    if not isinstance(pr_meta, dict):
+                        raise ValueError(f"Invalid METADATA YAML in prompt '{prompt}'")
+            except ValueError:
+                # Consistent 400 error
+                return None, _error_payload(agent=(agent or ""), input="", exc=f"Invalid METADATA YAML in prompt '{prompt}'", status=400, code="BAD_REQUEST", project=project)
+            except Exception as e:
+                return None, _error_payload(agent=(agent or ""), input="", exc=f"Failed to parse METADATA YAML in prompt '{prompt}': {e}", status=400, code="BAD_REQUEST", project=project)
 
     proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
     ag_attrs, ag_instr, ag_raw = _load_card(path_p)
@@ -528,7 +546,7 @@ async def call_async(
             matches = [x for x in (items or []) if rx.match(str(x.get("prompt_id") or "")) or rx.match(str(x.get("name") or ""))]
             if not matches:
                 return _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc="no data found",
+                    agent=(agent or ""), input=(input or ""), exc="not found",
                     status=404, echo=echo, debug=debug, code="NO_DATA_FOUND", project=project, options=[]
                 )
             if len(matches) > 1:
@@ -660,7 +678,7 @@ async def call_async(
             # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
             # when a monkeypatched test function expects (name, samples_dir, ...).
             cm = getattr(app_call, "build_and_run_agent")
-            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions="", model=None, attributes={}))
+            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions=""))
             try:
                 async with cm(cfg=_cfg_obj, user_input=(input or "")) as (agent_obj, _cfg, _session):
                     final_output = getattr(_cfg, "_last_final_output", None)
@@ -876,7 +894,7 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             matches.append({"project": pr.get("name"), **a})
 
     if not matches:
-        return _error_payload(agent=(agent or ""), input="", exc="no data found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+        return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
     if len(matches) > 1:
         return _error_payload(agent=(agent or ""), input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=matches)
 

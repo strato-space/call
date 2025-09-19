@@ -92,7 +92,8 @@ def cmd_call(args: argparse.Namespace) -> int:
                 project=(args.project or None),
                 agent=(agent or None),
                 prompt=(args.prompt or None),
-                merge=bool(getattr(args, "merge", False)),
+                # For printing, force merge to show <agent>/<project> blocks
+                merge=True,
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
