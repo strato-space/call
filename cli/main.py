@@ -97,21 +97,11 @@ def cmd_call(args: argparse.Namespace) -> int:
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
                 return 1
-            # Validate/normalize once and dump in DEBUG
+            # Dump full cfg in DEBUG (pretty JSON)
             try:
                 from dataclasses import asdict as _asdict
                 from call.lib.logging import debug_print as _dbg
-                snap = _asdict(cfg) if cfg is not None else {}
-                # Minimal normalization for readability
-                if cfg is not None:
-                    snap["name"] = cfg.name
-                    snap["project"] = cfg.project
-                    snap["merge"] = cfg.merge
-                    snap["model"] = cfg.model
-                    snap["instructions_len"] = len(cfg.instructions or "")
-                    # avoid dumping full instructions
-                    snap.pop("instructions", None)
-                _dbg("[cli]", "[CFG]", json.dumps(cfg, ensure_ascii=False))
+                _dbg("[cli]", "[CFG]", json.dumps(_asdict(cfg) if cfg is not None else {}, ensure_ascii=False, indent=2))
             except Exception:
                 pass
             _safe_print((cfg.instructions if cfg else "") or "")
@@ -281,14 +271,7 @@ def main() -> int:
                 from dataclasses import asdict as _asdict
                 from call.lib.logging import debug_print as _dbg
                 snap = _asdict(cfg) if cfg is not None else {}
-                if cfg is not None:
-                    snap["name"] = cfg.name
-                    snap["project"] = cfg.project
-                    snap["merge"] = cfg.merge
-                    snap["model"] = cfg.model
-                    snap["instructions_len"] = len(cfg.instructions or "")
-                    snap.pop("instructions", None)
-                _dbg("[cli]", "[CFG]", json.dumps(snap, ensure_ascii=False))
+                _dbg("[cli]", "[CFG]", json.dumps(snap, ensure_ascii=False, indent=2))
             except Exception:
                 pass
             _safe_print((cfg.instructions if cfg else "") or "")
