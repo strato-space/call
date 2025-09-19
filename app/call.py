@@ -288,6 +288,9 @@ def format_exception_text(e: Exception) -> str:
 # Initialize bot at module level
 global bot
 bot: Bot
+# When set to a non-empty string, this overrides any project-scoped token selection
+# in init_bot() so the app pipeline reuses the token of the running Telegram bot.
+telegram_token_override: str | None = None
 
 def get_project_token(project_name: str) -> str:
     """Return TELEGRAM_TOKEN.<project_name> from environment.
@@ -319,14 +322,19 @@ async def init_bot(*, project_name: str | None = None):
     if project_name is None and "bot" in globals() and isinstance(bot, Bot):
         return bot
 
-    # Resolve token based on preference order
+    # Resolve token based on preference order (override > project > default)
     token: str | None = None
-    if project_name:
-        try:
-            token = get_project_token(project_name)
-        except Exception:
-            # If project-scoped token missing, fall back to default env token
-            token = None
+    try:
+        if isinstance(telegram_token_override, str) and telegram_token_override.strip():
+            token = telegram_token_override.strip()
+    except Exception:
+        token = None
+    if not token:
+        if project_name:
+            try:
+                token = get_project_token(project_name)
+            except Exception:
+                token = None
     if not token:
         token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     if not token:
