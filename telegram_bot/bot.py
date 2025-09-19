@@ -680,14 +680,22 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
             # Document URL
             try:
                 if getattr(r, "document", None):
-                    file = await context.bot.get_file(r.document.file_id)
+                    doc = r.document
+                    file = await context.bot.get_file(doc.file_id)
                     url = getattr(file, "file_path", "")
                     if url and not url.startswith("http"):
                         token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
                         if token:
                             url = f"https://api.telegram.org/file/bot{token}/{url}"
                     if url:
-                        ctx_items.append({"type": "file", "url": url})
+                        item = {"type": "file", "url": url}
+                        try:
+                            fname = getattr(doc, "file_name", None)
+                            if fname:
+                                item["name"] = str(fname)
+                        except Exception:
+                            pass
+                        ctx_items.append(item)
             except Exception:
                 pass
     except Exception:
