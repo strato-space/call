@@ -272,7 +272,7 @@ def main() -> int:
                 project=(args.project or None),
                 agent=(args.agent or None),
                 prompt=(args.prompt or None),
-                merge=bool(getattr(args, "merge", False)),
+                merge=True,
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
