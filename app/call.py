@@ -156,7 +156,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool, SQLiteSession
-from agents.tool import FileSearchTool
+from agents.tool import FileSearchTool, FunctionTool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -1123,10 +1123,9 @@ class MCPServerStdioHook(MCPServerStdio):
         header = f"<b>{self._mcp_title}</b>\n\n"
         safe_text = header + (text or "")
         # Clean and truncate to avoid Telegram 4096 limit and user's 3800 limit
-        
+        cleaned = clean_html_for_telegram(safe_text)
         if len(cleaned) > 3800:
             cleaned = cleaned[:3797] + "..."
-        cleaned = '<code>' + cleaned(safe_text) + '</code>'
         msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
         self.__telegram_last_message = msg
         self.__last_tg_text = cleaned
