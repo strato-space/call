@@ -627,6 +627,7 @@ async def _call_task(
             echo=echo,
             chat_id=chat_id,
             thread_id=thread_id,
+            merge=False,
         )
         try:
             ok = bool(res.get("ok")) if isinstance(res, dict) else None
@@ -728,6 +729,11 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # These values should take precedence over any Agent card defaults or env variables downstream.
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
+    # Provide original message id for reply threading in the app pipeline
+    try:
+        app_call.reply_to_message_id = update.message.message_id if update and update.message else None
+    except Exception:
+        pass
     asyncio.create_task(
         _call_task(
             m,
@@ -872,11 +878,6 @@ def main() -> None:
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
-    # Ensure the app pipeline uses the same token as this bot (no project token override)
-    try:
-        app_call.telegram_token_override = polling_token
-    except Exception:
-        pass
     app = (
         ApplicationBuilder()
         .token(polling_token)

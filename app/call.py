@@ -223,15 +223,13 @@ def ensure_env(var: str, default: str = None) -> str:
 
 # debug_print is imported from call.lib.logging
 
-# Global variables for Telegram routing and session behavior
 telegram_last_message: Optional[Message] = None
 selected_chat_id: Optional[int] = None
 selected_thread_id: Optional[int] = None
 # When True, the pipeline must NOT create a SQLite session and must NOT send Telegram messages
 force_no_session: bool = False
-# When True, respect the chat/thread provided by the caller and do NOT override
-# them with agent/prompt or environment defaults inside the app pipeline.
-prefer_caller_targets: bool = False
+# Optional original Telegram message id to reply to
+reply_to_message_id: Optional[int] = None
 
 def get_telegram_chat_id(env_var: str, default: str = None) -> int:
     """Safely get and convert Telegram chat ID from environment."""
@@ -288,9 +286,7 @@ def format_exception_text(e: Exception) -> str:
 # Initialize bot at module level
 global bot
 bot: Bot
-# When set to a non-empty string, this overrides any project-scoped token selection
-# in init_bot() so the app pipeline reuses the token of the running Telegram bot.
-telegram_token_override: str | None = None
+ 
 
 def get_project_token(project_name: str) -> str:
     """Return TELEGRAM_TOKEN.<project_name> from environment.
@@ -322,19 +318,13 @@ async def init_bot(*, project_name: str | None = None):
     if project_name is None and "bot" in globals() and isinstance(bot, Bot):
         return bot
 
-    # Resolve token based on preference order (override > project > default)
+    # Resolve token based on preference order (project > default)
     token: str | None = None
-    try:
-        if isinstance(telegram_token_override, str) and telegram_token_override.strip():
-            token = telegram_token_override.strip()
-    except Exception:
-        token = None
-    if not token:
-        if project_name:
-            try:
-                token = get_project_token(project_name)
-            except Exception:
-                token = None
+    if project_name:
+        try:
+            token = get_project_token(project_name)
+        except Exception:
+            token = None
     if not token:
         token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     if not token:
@@ -652,13 +642,26 @@ async def telegram_send_message(chat_id: int = None, text: str = None, message_t
     await init_bot()
 
     async def _op():
-        return await bot.send_message(
+        try:
+            from telegram import ReplyParameters as _ReplyParameters
+        except Exception:
+            _ReplyParameters = None
+        kwargs = dict(
             chat_id=eff_chat_id,
             message_thread_id=eff_thread_id,
             text=safe_text,
             parse_mode=chosen_parse_mode,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
+        try:
+            if reply_to_message_id is not None:
+                if _ReplyParameters:
+                    kwargs["reply_parameters"] = _ReplyParameters(message_id=reply_to_message_id, allow_sending_without_reply=True)
+                else:
+                    kwargs["reply_to_message_id"] = reply_to_message_id
+        except Exception:
+            pass
+        return await bot.send_message(**kwargs)
     try:
         debug_print(f"[TG] send_message parse_mode={chosen_parse_mode}")
         message = await async_retry(_op, retries=2, base_delay=1.0, jitter=0.2, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
@@ -1946,7 +1949,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
         # Debug: print instructions length and a short preview
         try:
             _instr = getattr(cfg, "instructions", "") or ""
-            _instr_preview = _instr[:600] + ("…" if len(_instr) > 600 else "")
+            _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
             debug_print("[app]", "Agent instructions len=", str(len(_instr)))
             debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
         except Exception:
@@ -1982,7 +1985,7 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
 
         # Save globally for subsequent messages
-        global selected_chat_id, selected_thread_id, force_no_session, prefer_caller_targets
+        global selected_chat_id, selected_thread_id, force_no_session
         # Respect previously selected targets (e.g., set by lib.api from Telegram update).
         # If current value equals env default, allow agent YAML/output to override.
         # Otherwise, keep the explicit value set by the caller.
@@ -1991,15 +1994,10 @@ async def build_and_run_agent(agent_name: str, samples_dir: str, user_input: str
 
         no_session = bool(force_no_session)
         if not no_session:
-            # If caller explicitly provided routing (prefer_caller_targets), never override it
-            if not bool(prefer_caller_targets):
-                if selected_chat_id is None or selected_chat_id == env_chat:
-                    selected_chat_id = (prompt_chat_id or env_chat)
-                # else: keep caller-provided selected_chat_id
-
-                if selected_thread_id is None or selected_thread_id == env_thread:
-                    selected_thread_id = (prompt_thread_id or env_thread)
-                # else: keep caller-provided selected_thread_id
+            if selected_chat_id is None or selected_chat_id == env_chat:
+                selected_chat_id = (prompt_chat_id or env_chat)
+            if selected_thread_id is None or selected_thread_id == env_thread:
+                selected_thread_id = (prompt_thread_id or env_thread)
         else:
             # Explicitly disable routing and sessions
             selected_chat_id = None
