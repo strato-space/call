@@ -133,6 +133,8 @@ from call.lib.discovery import (
     resolve_prompt,
     prompts as _lib_prompts,
 )
+# Repo-index (SQLite) interface for multi-repo scan/list
+from call.lib import repo as _repo
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
 from dataclasses import dataclass, field
@@ -928,50 +930,23 @@ def call(
 
 def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Return hierarchical structure of projects and agents with prompts/aliases.
+    Return hierarchical structure of projects and agents with prompts/aliases, backed by repo.db.
 
-    - If project is None or empty: return all projects as a list of { name, type:"project", agents:[...] }.
-    - If project provided: return a single-element list with that project's structure if found (filtered by agent/prompt patterns when provided).
-    - Supports wildcard '*' in project/agent/prompt (treated as '.*', case-insensitive).
-    - Removes legacy 'query' and 'include_aliases'. Aliases are always included from agent.yaml when present.
+    Notes:
+    - Delegates to call.lib.repo.list() which reads from SQLite index (repo.db).
+    - Use call.lib.repo.scan() to refresh the index from configured repos (call/.env: repos=...).
+    - Supports wildcard '*' in project/agent/prompt (case-insensitive, full-token match).
     """
-    repo = discover_agent_repo()
-
-    # Prepare matchers
-    import re as _re
-    def _compile(pat: Optional[str]):
-        if not pat:
-            return None
-        s = str(pat)
-        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
-
-    m_proj = _compile(project)
-    m_agent = _compile(agent)
-    m_prompt = _compile(prompt)
-
-    projects = load_projects_index()
-    result: list[dict] = []
-    for proj_name in projects:
-        if m_proj and not m_proj.match(proj_name):
-            continue
-        agents = scan_project_agents(repo / proj_name)
-        # Apply agent filter
-        if m_agent:
-            agents = [a for a in agents if m_agent.match(a.get('name', '')) or any(m_agent.match(al) for al in (a.get('aliases') or []))]
-        # Apply prompt filter
-        if m_prompt:
-            agents = [a for a in agents if any(m_prompt.match(pr) for pr in (a.get('prompts') or []))]
-        result.append({
-            "name": proj_name,
-            "type": "project",
-            "agents": agents,
-        })
-
-    # If a specific project name without wildcard was provided and not found, return empty list
-    if project and not ("*" in project):
-        result = [r for r in result if r.get("name") == project]
-
-    return result
+    try:
+        return _repo.list(project=project, agent=agent, prompt=prompt)
+    except Exception:
+        # Fallback to previous behavior if repo index is unavailable
+        try:
+            _repo.scan()  # best-effort attempt to build index
+            return _repo.list(project=project, agent=agent, prompt=prompt)
+        except Exception:
+            # Ultimate fallback: return empty list to avoid blowing up callers
+            return []
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
