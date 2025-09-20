@@ -15,6 +15,10 @@ from call.lib.api import list as list_lib
 from call.lib.api import interpret_exec_payload
 from call.lib import repo as call_repo
 
+# Expose thin wrappers for test monkeypatching
+def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
+    return call_repo.list_prompts(project=project, agent=agent, prompt=prompt, state=state, target=target)
+
 
 app = FastAPI(title="Call Actions API", version="1.0.0")
 
@@ -170,5 +174,5 @@ def prompts(
     if st not in (None, "ready", "draft"):
         err = {"ok": False, "error_code": 400, "description": "Invalid state; use 'ready' or 'draft'", "code": "BAD_REQUEST"}
         return JSONResponse(content=err, status_code=400)
-    items = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
+    items = list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
     return items if isinstance(items, list) else ([items] if items else [])

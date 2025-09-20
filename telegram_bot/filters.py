@@ -41,6 +41,10 @@ def parse_prompts_filters(text: str, *, command: str, default_project: str | Non
             if low.startswith("--target"):
                 target = (next(it, "").strip() or target)
                 continue
+            # Ignore other unknown long flags (like --state) here; parse_prompts_and_state handles them
+            if low.startswith("--"):
+                _ = next(it, "")  # consume potential value if present; safe to ignore
+                continue
             if "=" in t:
                 k, v = t.split("=", 1)
                 k = k.strip().lower(); v = v.strip()

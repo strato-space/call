@@ -396,7 +396,9 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     """
     conn = _ensure_db(); cur = conn.cursor()
     rx_t = _rx(target)
-    where, params = _build_where_and_params(project, agent, prompt, state)
+    rx_p = _rx(prompt)
+    # IMPORTANT: do NOT filter by prompt in SQL — we need agent-level rows (prompt="")
+    where, params = _build_where_and_params(project, agent, None, state)
     sql = "SELECT project, agent, prompt, path, state, target FROM repo WHERE " + " AND ".join(where)
     cur.execute(sql, tuple(params))
     rows = cur.fetchall()
@@ -408,6 +410,9 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
         # project/agent/prompt
         # target (applied last)
         if rx_t and not (tgt and rx_t.match(tgt)):
+            continue
+        # prompt filter: keep agent-level rows (pr == ""), and only include prompt rows that match
+        if rx_p and pr and not rx_p.match(pr):
             continue
         items.append((prj or "", ag or "", pr or "", path or "", st or "", tgt or ""))
 
