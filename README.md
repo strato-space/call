@@ -72,18 +72,18 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 Use the project virtual environment interpreter for consistency.
 
 ```powershell
-.python -m call.cli.main list --project UxFab
-.python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
-.python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
+python -m call.cli.main list --project UxFab
+python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
+python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 .
 # Scan repositories and print result as YAML
-.python -m call.cli.main scan --repos agent,prompt --format yaml
+python -m call.cli.main scan --repos agent,prompt --format yaml
 
 # List agents/projects as text
-.python -m call.cli.main agents --project * --format text
+python -m call.cli.main agents --project * --format text
 
 # List prompts with engine/orchestration columns
-.python -m call.cli.main prompts --project * --agent * --state ready --format table
+python -m call.cli.main prompts --project * --agent * --state ready --format table
 ```
 
 - Agents/list filters:
@@ -118,11 +118,11 @@ Use the project virtual environment interpreter for consistency.
   - Library usage assumes logging is already configured by the host application.
   - Set `CALL_LOG_JSON=1` to emit JSON logs from the stdlib logger (stderr). Example:
     ```powershell
-    $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+    $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
   - CLI also supports `--json-logs` to force JSON output regardless of env:
     ```powershell
-    .python -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
+    python -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
   - Set `CALL_LOG_FILE=logs/app.log` to write logs to a file in addition to stderr. The directory will be created if needed.
 
@@ -139,7 +139,7 @@ JSON log sample (stderr):
 Example (PowerShell):
 
 ```powershell
-$env:CALL_DEBUG=1; .python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+$env:CALL_DEBUG=1; python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
 ```
 
 ## Key Concepts
@@ -334,8 +334,8 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
   `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
   - Test hook for CI/manual checks:
-  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; .python -m call.cli.main exec --agent DialogPostAnalysis`
-  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && .python -m call.cli.main exec --agent DialogPostAnalysis`
+  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; python -m call.cli.main exec --agent DialogPostAnalysis`
+  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && python -m call.cli.main exec --agent DialogPostAnalysis`
   - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
@@ -343,10 +343,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
 ```powershell
 # PowerShell
-.python -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
+python -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
 
 # cmd.exe
-cmd /c ".python -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
+cmd /c "python -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
 ```
 
 ### Projects-aware discovery (Updated Sep 17, 2025)
@@ -505,8 +505,8 @@ See also the strategy doc:
 - Use the project virtual environment for tests:
 
 ```powershell
-.python -m pytest -q
-.python -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
+python -m pytest -q
+python -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
 ```
 
 - Useful env flags:
