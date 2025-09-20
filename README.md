@@ -73,6 +73,14 @@ Use the project virtual environment interpreter for consistency.
 .venv\Scripts\python.exe -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 ```
 
+- Agents/list filters:
+  - `--state` — filter prompts nested under agents by state (`ready|draft`, supports `*`)
+  - `--target` — unified filter applied last (supports `*`). Matches `p:`, `a:`, or `r:` targets.
+  - Alias `projects` is available for the `agents` command: `python -m call.cli.main projects`.
+
+- Prompts filters:
+  - `--target` — unified filter applied last (supports `*`), in addition to `--project`, `--agent`, `--prompt`, and `--state`.
+
 - Exit codes: `0` on success (`ok:true`), `1` on error envelopes (`ok:false`).
   - PowerShell: check `$LASTEXITCODE`
   - cmd.exe: check `%ERRORLEVEL%`
@@ -242,9 +250,9 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   # Call an agent (keyword-only API). Use exact case-sensitive names.
   python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--session-id AgentName:-100123[:thread]] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
 
-  # List prompts (flat). Filters: --project, --agent, --prompt (all support *)
+  # List prompts (flat). Filters: --project, --agent, --prompt, --state, --target (all support *)
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
-  python -m call.cli.main prompts --project * --agent * --prompt 10* --format json
+  python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.
   python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
