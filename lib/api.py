@@ -32,7 +32,7 @@ def interpret_target(
         prompt_matches: list[dict] = []
         if p_regex:
             try:
-                items = _repo.list_prompts(project=project, agent=agent)
+                items = call_repo.list_prompts(project=project, agent=agent)
             except Exception:
                 items = []
             for x in (items or []):
@@ -61,7 +61,7 @@ def interpret_target(
             }
         # 2) Project using repo tree
         try:
-            tree = _repo.list()  # list of {name, agents:[...]}
+            tree = call_repo.list()  # list of {name, agents:[...]}
         except Exception:
             tree = []
         m = _compile_wildcard_regex(tgt)
@@ -122,7 +122,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Union
 
 # Repo-index (SQLite) interface for multi-repo scan/list (single source of truth)
-from call.lib import repo as _repo
+from call.lib import repo as call_repo
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
 from dataclasses import dataclass, field
@@ -242,7 +242,7 @@ def build_runnable_instructions_config(
             import re as _re
             rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
             try:
-                items = _repo.list_prompts(project=project, agent=agent)
+                items = call_repo.list_prompts(project=project, agent=agent)
             except Exception:
                 items = []
             matches = [x for x in (items or []) if rx.match(str(x.get("prompt") or ""))]
@@ -250,7 +250,7 @@ def build_runnable_instructions_config(
                 # Build fuzzy suggestions from available prompts in scope (then globally)
                 def _suggest(prj, ag, pat):
                     try:
-                        pool = _repo.list_prompts(project=prj, agent=ag)
+                        pool = call_repo.list_prompts(project=prj, agent=ag)
                     except Exception:
                         pool = []
                     pat_l = str(pat or "").lower()
@@ -306,22 +306,13 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # If agent resolution fails but prompt is provided, try to resolve prompt via repo index and retry agent resolution
+            # If agent resolution fails but prompt is provided, try strict prompt resolution within the provided scope only.
             if prompt:
                 try:
-                    recs = _repo.find_prompts(project=project, agent=agent, prompt=prompt)
-                    if not recs and project:
-                        recs = _repo.find_prompts(project=project, agent=None, prompt=prompt)
-                    if not recs and agent:
-                        recs = _repo.find_prompts(project=None, agent=agent, prompt=prompt)
-                    if not recs:
-                        recs = _repo.find_prompts(project=None, agent=None, prompt=prompt)
+                    recs = call_repo.find_prompts(project=project, agent=agent, prompt=prompt)
                     rec = recs[0] if recs else None
                     if rec:
-                        if (not project) and rec.get("project"):
-                            project = rec.get("project")
-                        if (not agent) and rec.get("agent"):
-                            agent = rec.get("agent")
+                        # Do NOT broaden project/agent beyond what was explicitly provided by the caller
                         env = resolve_agent(project=project, agent=agent, prompt=prompt)
                 except Exception:
                     env = None
@@ -348,7 +339,7 @@ def build_runnable_instructions_config(
     proj_yaml: _Path | None = None
     try:
         if proj:
-            recs_proj = _repo.find_projects(project=proj)
+            recs_proj = call_repo.find_projects(project=proj)
             rec_proj = recs_proj[0] if recs_proj else None
             if rec_proj and rec_proj.get("path"):
                 _p = _Path(rec_proj["path"])  # type: ignore[index]
@@ -360,13 +351,7 @@ def build_runnable_instructions_config(
     pr_meta: Dict[str, Any] | None = None
     try:
         if isinstance(prompt, str) and prompt.strip():
-            recs_pr = _repo.find_prompts(project=proj, agent=name, prompt=prompt.strip())
-            if not recs_pr and proj:
-                recs_pr = _repo.find_prompts(project=proj, agent=None, prompt=prompt.strip())
-            if not recs_pr and name:
-                recs_pr = _repo.find_prompts(project=None, agent=name, prompt=prompt.strip())
-            if not recs_pr:
-                recs_pr = _repo.find_prompts(project=None, agent=None, prompt=prompt.strip())
+            recs_pr = call_repo.find_prompts(project=proj, agent=name, prompt=prompt.strip())
             rec_pr = recs_pr[0] if recs_pr else None
             if rec_pr and rec_pr.get("path"):
                 _pp = _Path(rec_pr["path"])  # type: ignore[index]
@@ -893,7 +878,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     - Use call.lib.repo.scan() externally (e.g., Telegram /reload) to refresh the index.
     - Supports wildcard '*' in project/agent/prompt (case-insensitive, full-token match).
     """
-    return _repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
+    return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:

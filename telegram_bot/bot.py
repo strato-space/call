@@ -44,7 +44,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
-from call.lib.logging import debug_print, configure_logging, get_logger
+from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -52,7 +52,11 @@ from call.app.utils.telegram_text import (
 )
 from call.app.call import get_project_token
 from call.app import call as app_call
-from call.lib import repo as _repo
+from call.lib import repo as call_repo
+from call.telegram_bot.filters import (
+    parse_prompts_filters as _parse_filters_mod,
+    parse_prompts_and_state as _parse_filters_state_mod,
+)
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -495,61 +499,11 @@ def _format_prompts_markdown(items: list[dict]) -> str:
 
 
 def _parse_prompts_filters(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None]:
-    """Parse command text into (project, agent, prompt, target) with AND semantics.
+    return _parse_filters_mod(text, command=command, default_project=default_project)
 
-    Accepted forms (order-insensitive after the command token):
-    - --project X, --agent X, --prompt X, --target X
-    - project=X, agent=X, prompt=X, target=X
-    - @Agent (agent shorthand)
-    - Bare token as project when none set; extra bare token as prompt
-    """
-    try:
-        s = (text or "").strip()
-        tokens = s.split()
-        if tokens and tokens[0].startswith(command):
-            tokens = tokens[1:]
-        project = None
-        agent = None
-        prompt = None
-        target = None
-        it = iter(tokens)
-        for tok in it:
-            t = tok.strip()
-            if not t:
-                continue
-            low = t.lower()
-            if low.startswith("--project"):
-                project = (next(it, "").strip() or project)
-                continue
-            if low.startswith("--agent"):
-                agent = (next(it, "").strip().lstrip("@") or agent)
-                continue
-            if low.startswith("--prompt"):
-                prompt = (next(it, "").strip() or prompt)
-                continue
-            if low.startswith("--target"):
-                target = (next(it, "").strip() or target)
-                continue
-            if "=" in t:
-                k, v = t.split("=", 1)
-                k = k.strip().lower(); v = v.strip()
-                if k == "project": project = v or project
-                elif k == "agent": agent = v.lstrip("@") or agent
-                elif k == "prompt": prompt = v or prompt
-                elif k == "target": target = v or target
-                continue
-            if t.startswith("@"):
-                agent = t[1:]
-            elif project is None:
-                project = t
-            else:
-                prompt = (prompt or t)
-        if not project:
-            project = default_project or None
-        return project, agent, prompt, target
-    except Exception:
-        # Fallback to safest defaults
-        return (default_project or None), None, None, None
+
+def _parse_prompts_and_state(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    return _parse_filters_state_mod(text, command=command, default_project=default_project)
 
 
 async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: str | None = None, max_len: int = 3800) -> None:
@@ -590,7 +544,7 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_ready", default_project=proj_default)
-        items = _repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
+        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
@@ -608,7 +562,7 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_draft", default_project=proj_default)
-        items = _repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
+        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
@@ -620,11 +574,32 @@ async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Rescan repositories and rebuild the SQLite repo index."""
     m = Messenger(context=context, update=update)
     try:
-        res = _repo.scan()
+        res = call_repo.scan()
         scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
         await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
     except Exception as e:
         await m.reply(f"Reload failed: {type(e).__name__}: {e}", parse_mode=None)
+
+
+@_require_allowed_users
+async def handle_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Unified prompts lister. Usage: /prompts [--state ready|draft] [filters]
+
+    Filters support --project/--agent/--prompt/--target and key=value forms; @Agent shorthand.
+    """
+    m = Messenger(context=context, update=update)
+    try:
+        text = (update.message.text or "").strip() if update.message else ""
+        proj_default = _get_bot_project(update) or None
+        project, agent, prompt, target, state = _parse_prompts_and_state(text, command="/prompts", default_project=proj_default)
+        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
+        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
+        header = None
+        if state:
+            header = f"State: {state}"
+        await _send_markdown_rows_chunked(m, rows, header=header)
+    except Exception as e:
+        await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 async def _call_task(
     m: Messenger,
@@ -954,10 +929,9 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def main() -> None:
-    # CLIasync def main():
     # Configure logging once per bot process (DEBUG if CALL_DEBUG=1, else INFO)
     try:
-        configure_logging()
+        call_logging()
     except Exception:
         pass
     # Parse CLI args
@@ -1013,6 +987,7 @@ def main() -> None:
     app.add_handler(CommandHandler("projects", handle_projects))
     app.add_handler(CommandHandler("prompts_ready", handle_prompts_ready))
     app.add_handler(CommandHandler("prompts_draft", handle_prompts_draft))
+    app.add_handler(CommandHandler("prompts", handle_prompts))
     app.add_handler(CommandHandler("reload", handle_reload))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
