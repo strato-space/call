@@ -52,7 +52,7 @@ from call.app.utils.telegram_text import (
 )
 from call.app.call import get_project_token
 from call.app import call as app_call
-from call.lib.discovery import prompts as _lib_prompts
+from call.lib import repo as _repo
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -409,6 +409,7 @@ Commands:
 - /call [--echo] Name <input>  (equivalent to @Name)
 - /agents [--aliases] [--q "filter"]
 - /clear [@Name]  (clear conversation session for current chat/thread; all agents if name omitted)
+- /reload  (rescan repositories and rebuild repo index)
 
 Startup options:
 - --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
@@ -551,10 +552,8 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
                 agent = t
         # Use default project if none provided
         project = project or proj_default
-        items = _lib_prompts(project=project, agent=agent, state='ready')
-        if not items and proj_default and not (project and project != proj_default):
-            items = _lib_prompts(project=None, agent=agent, state='ready')
-        rows = [_format_prompt_markdown_row(x) for x in items]
+        items = _repo.list_prompts(project=project, agent=agent, state='ready')
+        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
@@ -588,14 +587,23 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 agent = t
         project = project or proj_default
-        items = _lib_prompts(project=project, agent=agent, state='draft')
-        if not items and proj_default and not (project and project != proj_default):
-            items = _lib_prompts(project=None, agent=agent, state='draft')
-        rows = [_format_prompt_markdown_row(x) for x in items]
+        items = _repo.list_prompts(project=project, agent=agent, state='draft')
+        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
+
+@_require_allowed_users
+async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Rescan repositories and rebuild the SQLite repo index."""
+    m = Messenger(context=context, update=update)
+    try:
+        res = _repo.scan()
+        scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
+        await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await m.reply(f"Reload failed: {type(e).__name__}: {e}", parse_mode=None)
 
 async def _call_task(
     m: Messenger,
@@ -984,6 +992,7 @@ def main() -> None:
     app.add_handler(CommandHandler("projects", handle_projects))
     app.add_handler(CommandHandler("prompts_ready", handle_prompts_ready))
     app.add_handler(CommandHandler("prompts_draft", handle_prompts_draft))
+    app.add_handler(CommandHandler("reload", handle_reload))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
 

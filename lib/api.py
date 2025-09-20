@@ -28,29 +28,29 @@ def interpret_target(
         if not tgt:
             return project, agent, prompt, None
         p_regex = _compile_wildcard_regex(tgt)
-        # 1) Prompt match
+        # 1) Prompt match via repo index
         prompt_matches: list[dict] = []
         if p_regex:
             try:
-                items = _lib_prompts(project=project, agent=agent, state=None)
-                for x in (items or []):
-                    pid = str(x.get("prompt_id") or "")
-                    nm = str(x.get("name") or "")
-                    if (p_regex.match(pid) or p_regex.match(nm)):
-                        prompt_matches.append(x)
+                items = _repo.list_prompts(project=project, agent=agent)
             except Exception:
-                pass
+                items = []
+            for x in (items or []):
+                pid = str(x.get("prompt") or "")
+                if pid and p_regex.match(pid):
+                    prompt_matches.append(x)
         if prompt_matches and not (prompt or "").strip():
             if len(prompt_matches) == 1:
-                prompt = str(prompt_matches[0].get("prompt_id") or prompt_matches[0].get("name") or tgt)
-                # If project/agent are unset, derive from prompt metadata
+                match = prompt_matches[0]
+                prompt = str(match.get("prompt") or tgt)
+                # If project/agent are unset, derive from the match row
                 if not (project or "").strip():
-                    prj = prompt_matches[0].get("project")
+                    prj = match.get("project")
                     if isinstance(prj, str) and prj.strip():
                         project = prj
                 if not (agent or "").strip():
-                    ag = prompt_matches[0].get("agent")
-                    if isinstance(ag, str):
+                    ag = match.get("agent")
+                    if isinstance(ag, str) and ag.strip():
                         agent = ag
                 return project, agent, prompt, None
             return project, agent, prompt, {
@@ -59,13 +59,13 @@ def interpret_target(
                 "options": prompt_matches,
                 "description": "Multiple prompts matched your criteria",
             }
-        # 2) Project
+        # 2) Project using repo tree
         try:
-            projects = load_projects_index()
+            tree = _repo.list()  # list of {name, agents:[...]}
         except Exception:
-            projects = []
+            tree = []
         m = _compile_wildcard_regex(tgt)
-        proj_candidates = [p for p in (projects or []) if (m.match(p) if m else p == tgt)]
+        proj_candidates = [n.get("name") for n in (tree or []) if n.get("name") and (m.match(n.get("name")) if m else n.get("name") == tgt)]
         if proj_candidates and not (project or "").strip():
             if len(proj_candidates) == 1:
                 project = proj_candidates[0]
@@ -108,9 +108,9 @@ Behavior:
 - Failure: { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [...], agent, project, final_output: null, echo, session_id? }
   Codes: INTERNAL_ERROR, NOT_FOUND, NO_DATA_FOUND, TOO_MANY_ROWS, PIPELINE_ERROR
 
-This module reuses discovery and pipeline utilities from `call/app/call.py`. It focuses on a
-stable facade for the CLI and Telegram bot, including selection, wildcard filtering, and structured
-errors suitable for LLM consumption.
+This module uses the repo index (SQLite, built by call.lib.repo) and the app pipeline utilities
+from `call/app/call.py`. It focuses on a stable facade for the CLI and Telegram bot, including
+selection, wildcard filtering, and structured errors suitable for LLM consumption.
 """
 
 import asyncio
@@ -121,19 +121,7 @@ import traceback
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
 
-# Discovery helpers are centralized in call.lib.discovery to avoid circular imports
-from call.lib.discovery import (
-    discover_agent_repo,
-    _ensure_indices,           # private helper; internal use by the lib facade
-    _load_agents_index,        # private helper; internal use by the lib facade
-    discover_agent_yaml,
-    load_yaml,
-    load_projects_index,
-    scan_project_agents,
-    resolve_prompt,
-    prompts as _lib_prompts,
-)
-# Repo-index (SQLite) interface for multi-repo scan/list
+# Repo-index (SQLite) interface for multi-repo scan/list (single source of truth)
 from call.lib import repo as _repo
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
@@ -254,24 +242,23 @@ def build_runnable_instructions_config(
             import re as _re
             rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
             try:
-                items = _lib_prompts(project=project, agent=agent, state=None)
+                items = _repo.list_prompts(project=project, agent=agent)
             except Exception:
                 items = []
-            matches = [x for x in (items or []) if rx.match(str(x.get("prompt_id") or "")) or rx.match(str(x.get("name") or ""))]
+            matches = [x for x in (items or []) if rx.match(str(x.get("prompt") or ""))]
             if not matches:
                 # Build fuzzy suggestions from available prompts in scope (then globally)
                 def _suggest(prj, ag, pat):
                     try:
-                        pool = _lib_prompts(project=prj, agent=ag, state=None)
+                        pool = _repo.list_prompts(project=prj, agent=ag)
                     except Exception:
                         pool = []
                     pat_l = str(pat or "").lower()
                     sugg = []
                     for it in pool or []:
-                        pid = str(it.get("prompt_id") or "").lower()
-                        nm = str(it.get("name") or "").lower()
-                        if (pat_l and (pat_l in pid or pat_l in nm)):
-                            sugg.append(it)
+                        pid = str(it.get("prompt") or "").lower()
+                        if (pat_l and (pat_l in pid)):
+                            sugg.append({"prompt": it.get("prompt"), "project": it.get("project"), "agent": it.get("agent")})
                             if len(sugg) >= 12:
                                 break
                     return sugg
@@ -287,7 +274,7 @@ def build_runnable_instructions_config(
                     agent=(agent or ""), input=(input or ""), exc="Multiple prompts matched your criteria",
                     status=400, code="TOO_MANY_ROWS", project=project, options=matches
                 )
-            prompt = str(matches[0].get("prompt_id") or matches[0].get("name") or prompt)
+            prompt = str(matches[0].get("prompt") or prompt)
     except Exception:
         pass
 
@@ -307,8 +294,7 @@ def build_runnable_instructions_config(
             input=(input or None),
         ), None
 
-    # Resolve selection. If only a project is provided (no agent/prompt), treat it as a
-    # valid selection and build a project-level cfg from project.yaml (no resolve_agent).
+    # Resolve selection to determine agent path and effective project/name
     path_p = None
     if (project and not (agent or prompt)):
         name = str(project)
@@ -320,52 +306,27 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # If agent resolution fails but prompt is provided, try to resolve prompt directly within project scope
+            # If agent resolution fails but prompt is provided, try to resolve prompt via repo index and retry agent resolution
             if prompt:
                 try:
-                    pr_path = resolve_prompt(
-                        name=prompt,
-                        project=project,
-                        agent=agent,
-                        state=None,
-                        prefer_ready=True,
-                    )
-                    if pr_path:
-                        # Read prompt file to get metadata
-                        pr_content = Path(pr_path).read_text(encoding="utf-8")
-                        pr_meta = _extract_metadata(pr_content)
-                        if pr_meta and not project and pr_meta.get("project"):
-                            project = pr_meta.get("project")
-                        if pr_meta and not agent and pr_meta.get("agent"):
-                            agent = pr_meta.get("agent")
-                        if pr_meta and pr_meta.get("id"):
-                            prompt = pr_meta.get("id")
-                        # Retry agent resolution with updated project/agent
+                    recs = _repo.find_prompts(project=project, agent=agent, prompt=prompt)
+                    if not recs and project:
+                        recs = _repo.find_prompts(project=project, agent=None, prompt=prompt)
+                    if not recs and agent:
+                        recs = _repo.find_prompts(project=None, agent=agent, prompt=prompt)
+                    if not recs:
+                        recs = _repo.find_prompts(project=None, agent=None, prompt=prompt)
+                    rec = recs[0] if recs else None
+                    if rec:
+                        if (not project) and rec.get("project"):
+                            project = rec.get("project")
+                        if (not agent) and rec.get("agent"):
+                            agent = rec.get("agent")
                         env = resolve_agent(project=project, agent=agent, prompt=prompt)
-                        if env and env.get("ok"):
-                            resolved = env.get("resolved") or {}
-                            name = str(resolved.get("name") or "")
-                            proj = resolved.get("project") or project
-                            path = resolved.get("path")
-                            path_p = _Path(path) if path else None
-                            # Successfully resolved agent with prompt, continue with normal flow
-                        else:
-                            # If we still can't resolve after trying with prompt metadata, return not found
-                            err = _error_payload(
-                                agent=(agent or ""),
-                                input="",
-                                exc=f"No agent found for prompt '{prompt}' in project '{project}'",
-                                status=404,
-                                code="NO_DATA_FOUND",
-                                project=project
-                            )
-                            return None, err
-                except Exception as e:
-                    debug_print("[api]", "[WARN]", "prompt resolution failed:", str(e))
-                    pass
-            
+                except Exception:
+                    env = None
             if not env or not env.get("ok"):
-                # If we get here, we couldn't resolve the agent or prompt
+                # Couldn’t resolve the agent or prompt into an agent
                 err = _error_payload(
                     agent=(agent or ""),
                     input="",
@@ -375,50 +336,45 @@ def build_runnable_instructions_config(
                     project=project
                 )
                 return None, err
-        else:
-            resolved = env.get("resolved") or {}
-            name = str(resolved.get("name") or "")
-            proj = resolved.get("project") or project
-            path = resolved.get("path")
-            path_p = _Path(path) if path else None
+        # env ok
+        resolved = env.get("resolved") or {}
+        name = str(resolved.get("name") or "")
+        proj = resolved.get("project") or project
+        path = resolved.get("path")
+        from pathlib import Path as _Path
+        path_p = _Path(path) if path else None
 
-    # Load cards: project, agent, prompt
-    from call.lib.discovery import discover_agent_repo as _discover_agent_repo, resolve_prompt as _resolve_prompt, discover_prompt_repo as _discover_prompt_repo
+    # Load cards using repo index hints (project.yaml/agent.yaml/prompt.md|yaml)
+    proj_yaml: _Path | None = None
+    try:
+        if proj:
+            recs_proj = _repo.find_projects(project=proj)
+            rec_proj = recs_proj[0] if recs_proj else None
+            if rec_proj and rec_proj.get("path"):
+                _p = _Path(rec_proj["path"])  # type: ignore[index]
+                proj_yaml = _p if _p.exists() else None
+    except Exception:
+        proj_yaml = None
 
-    proj_yaml = None
-    if proj:
-        try:
-            repo = _discover_agent_repo()
-            p = _Path(repo) / str(proj) / "project.yaml"
-            proj_yaml = p if p.exists() else None
-        except Exception:
-            proj_yaml = None
-
-    pr_path = None
+    pr_path: _Path | None = None
     pr_meta: Dict[str, Any] | None = None
-    if isinstance(prompt, str) and prompt.strip():
-        try:
-            pr_path = _resolve_prompt(prompt.strip(), project=proj, agent=name, prefer_ready=True, repo=_discover_prompt_repo())
-        except Exception:
-            pr_path = None
-        # Strictly parse METADATA YAML when prompt is present (matches prior behavior)
-        if pr_path and str(pr_path).lower().endswith(('.md', '.markdown')):
-            try:
-                _text = _read(pr_path)
-                start_tag = "<!-- METADATA:START -->"
-                if start_tag in _text:
-                    y0 = _text.index(start_tag)
-                    y1 = _text.index("```yaml", y0) + len("```yaml")
-                    y2 = _text.index("```", y1)
-                    pr_meta = _yaml.safe_load(_text[y1:y2]) or {}
-                    if not isinstance(pr_meta, dict):
-                        raise ValueError(f"Invalid METADATA YAML in prompt '{prompt}'")
-            except ValueError:
-                # Consistent 400 error
-                return None, _error_payload(agent=(agent or ""), input="", exc=f"Invalid METADATA YAML in prompt '{prompt}'", status=400, code="BAD_REQUEST", project=project)
-            except Exception as e:
-                return None, _error_payload(agent=(agent or ""), input="", exc=f"Failed to parse METADATA YAML in prompt '{prompt}': {e}", status=400, code="BAD_REQUEST", project=project)
+    try:
+        if isinstance(prompt, str) and prompt.strip():
+            recs_pr = _repo.find_prompts(project=proj, agent=name, prompt=prompt.strip())
+            if not recs_pr and proj:
+                recs_pr = _repo.find_prompts(project=proj, agent=None, prompt=prompt.strip())
+            if not recs_pr and name:
+                recs_pr = _repo.find_prompts(project=None, agent=name, prompt=prompt.strip())
+            if not recs_pr:
+                recs_pr = _repo.find_prompts(project=None, agent=None, prompt=prompt.strip())
+            rec_pr = recs_pr[0] if recs_pr else None
+            if rec_pr and rec_pr.get("path"):
+                _pp = _Path(rec_pr["path"])  # type: ignore[index]
+                pr_path = _pp if _pp.exists() else None
+    except Exception:
+        pr_path = None
 
+    # Parse cards
     proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
     ag_attrs, ag_instr, ag_raw = _load_card(path_p)
     pr_attrs, pr_instr, pr_raw = _load_card(_Path(pr_path) if pr_path else None)
@@ -444,7 +400,7 @@ def build_runnable_instructions_config(
             instr = pr_instr or ""
             try:
                 if ag_raw and str(ag_raw).strip():
-                    parts = []
+                    parts: list[str] = []
                     if instr.strip():
                         parts.append(instr.strip())
                     parts.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
@@ -480,7 +436,7 @@ def build_runnable_instructions_config(
         prompt_override=(prompt or None),
         merge=bool(merge),
         agent_yaml_path=(str(path_p) if path_p else None),
-        base_dir=(str(path_p.parent) if path_p and path_p.parent else None),
+        base_dir=(str(path_p.parent) if path_p and getattr(path_p, 'parent', None) else None),
         instructions=str(instr or ""),
         model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
         attributes=attributes if isinstance(attributes, dict) else {},
@@ -627,10 +583,10 @@ async def call_async(
     - If agent discovery fails (when name is provided), returns 404 error envelope.
 
     Selection convenience:
-    - When 'target' is provided, we try to interpret it in this order using provided filters (project/agent/prompt):
-      1) prompt name (resolve_prompt)
-      2) agent name/alias (resolve_agent)
-      3) project name (load_projects_index contains it)
+    - When 'target' is provided, we interpret it with precedence using the repo index (SQLite):
+      1) prompt name
+      2) agent name/alias
+      3) project name
       The first match sets the corresponding field if it wasn't already set explicitly.
     """
     # Lazily import app-layer functions to avoid hard import at module load time
@@ -925,28 +881,19 @@ def call(
         return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project, session_id=(session_id or None))
 
 
-# No local wrapper for projects index; use discovery.load_projects_index() directly
+# Projects/agents listing is powered by the repo index (SQLite).
 
 
-def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, Any]]:
+def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Return hierarchical structure of projects and agents with prompts/aliases, backed by repo.db.
 
     Notes:
     - Delegates to call.lib.repo.list() which reads from SQLite index (repo.db).
-    - Use call.lib.repo.scan() to refresh the index from configured repos (call/.env: repos=...).
+    - Use call.lib.repo.scan() externally (e.g., Telegram /reload) to refresh the index.
     - Supports wildcard '*' in project/agent/prompt (case-insensitive, full-token match).
     """
-    try:
-        return _repo.list(project=project, agent=agent, prompt=prompt)
-    except Exception:
-        # Fallback to previous behavior if repo index is unavailable
-        try:
-            _repo.scan()  # best-effort attempt to build index
-            return _repo.list(project=project, agent=agent, prompt=prompt)
-        except Exception:
-            # Ultimate fallback: return empty list to avoid blowing up callers
-            return []
+    return _repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:

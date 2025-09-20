@@ -44,7 +44,7 @@ def _ensure_db() -> sqlite3.Connection:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    # Schema: minimal now, extensible later
+    # Schema: add 'state' to support ready/draft prompt state
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS repo (
@@ -52,7 +52,8 @@ def _ensure_db() -> sqlite3.Connection:
             project TEXT,
             agent   TEXT,
             prompt  TEXT,
-            path    TEXT
+            path    TEXT,
+            state   TEXT
         )
         """
     )
@@ -60,6 +61,16 @@ def _ensure_db() -> sqlite3.Connection:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_project ON repo(project)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_agent   ON repo(agent)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_prompt  ON repo(prompt)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_state   ON repo(state)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_target  ON repo(target)")
+    # Migration: if 'state' column missing, add it
+    try:
+        cur.execute("PRAGMA table_info(repo)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "state" not in cols:
+            cur.execute("ALTER TABLE repo ADD COLUMN state TEXT")
+    except Exception:
+        pass
     conn.commit()
     return conn
 
@@ -84,15 +95,15 @@ def _load_repos_from_env() -> List[str]:
     return [t for t in toks if t in {"agent", "prompt"}]
 
 
-def _upsert_row(cur: sqlite3.Cursor, *, target: str, project: str, agent: str, prompt: str, path: str) -> None:
+def _upsert_row(cur: sqlite3.Cursor, *, target: str, project: str, agent: str, prompt: str, path: str, state: str | None = None) -> None:
     try:
         cur.execute("SELECT path FROM repo WHERE target = ?", (target,))
         row = cur.fetchone()
         if row is not None and row[0] != path:
             debug_print("[repo.scan] overwrite", f"target={target}", f"old={row[0]}", f"new={path}")
         cur.execute(
-            "REPLACE INTO repo (target, project, agent, prompt, path) VALUES (?, ?, ?, ?, ?)",
-            (target, project, agent, prompt, path),
+            "REPLACE INTO repo (target, project, agent, prompt, path, state) VALUES (?, ?, ?, ?, ?, ?)",
+            (target, project, agent, prompt, path, state or ""),
         )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
@@ -120,7 +131,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
         proj_yaml = pdir / "project.yaml"
         proj_md   = pdir / "project.md"
         proj_path = str(proj_yaml if proj_yaml.exists() else (proj_md if proj_md.exists() else pdir))
-        _upsert_row(cur, target=f"p:{pname}", project=pname, agent="", prompt="", path=proj_path)
+        _upsert_row(cur, target=f"p:{pname}", project=pname, agent="", prompt="", path=proj_path, state="")
         scanned += 1
 
         # Root project agent (optional)
@@ -128,7 +139,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
             f = pdir / fname
             if f.exists():
                 ag_name = _read_agent_name(f, default=pname)
-                _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f))
+                _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="")
                 scanned += 1
                 break
 
@@ -141,7 +152,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                     f = child / fname
                     if f.exists():
                         ag_name = _read_agent_name(f, default=child.name)
-                        _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f))
+                        _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="")
                         scanned += 1
                         break
         except Exception:
@@ -197,9 +208,15 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                 try:
                     if p.suffix.lower() == ".md":
                         meta = _read_prompt_metadata(p) or {}
+                        # Warn when METADATA is missing or empty
+                        if not meta:
+                            debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}")
                         pr_id = str(meta.get("id") or p.stem)
                         proj = str(meta.get("project") or "")
                         agent = str(meta.get("agent") or "")
+                        # Warn when project/agent are not provided in metadata
+                        if (not proj) or (not agent):
+                            debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
                     else:
                         import yaml
                         y = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -209,7 +226,8 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                 except Exception:
                     pr_id = p.stem
                 target = f"r:{proj}/{agent}/{pr_id}" if (proj or agent) else f"r::{pr_id}"
-                _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p))
+                state = "draft" if ("draft" in str(p).lower()) else "ready"
+                _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p), state=state)
                 scanned += 1
         except Exception:
             continue
@@ -246,42 +264,78 @@ def scan() -> Dict[str, object]:
         cur.close(); conn.close()
 
 
-def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, object]]:
+def _rx(pattern: Optional[str]):
+    if not pattern:
+        return None
+    return re.compile("^" + re.escape(pattern).replace("\\*", ".*") + "$", re.IGNORECASE)
+
+
+def _like_pattern(pat: Optional[str]) -> Optional[str]:
+    """Convert wildcard '*' to SQL LIKE pattern ('%'). Escape existing '%' and '_' with backslash.
+    Returns None if pat is falsy.
+    """
+    if not pat:
+        return None
+    s = str(pat)
+    s = s.replace('%', r'\%').replace('_', r'\_')
+    s = s.replace('*', '%')
+    return s
+
+
+def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, object]]:
     """Query the repo.db index and return a hierarchical structure (projects -> agents -> prompts).
 
     Wildcards: '*' supported in filters (case-insensitive, full-token match).
     """
-    conn = _ensure_db()
-    cur = conn.cursor()
-
-    def _rx(pat: Optional[str]):
-        if not pat:
-            return None
-        return re.compile("^" + re.escape(pat).replace("\\*", ".*") + "$", re.IGNORECASE)
-
-    rx_p = _rx(project)
-    rx_a = _rx(agent)
-    rx_r = _rx(prompt)
-
-    cur.execute("SELECT project, agent, prompt, path FROM repo")
+    conn = _ensure_db(); cur = conn.cursor()
+    rx_t = _rx(target)
+    where: list[str] = ["1=1"]
+    params: list[str] = []
+    lp = _like_pattern(project)
+    la = _like_pattern(agent)
+    lr = _like_pattern(prompt)
+    ls = _like_pattern(state)
+    if lp:
+        if '*' in (project or ''):
+            where.append("project LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        else:
+            where.append("project = ? COLLATE NOCASE")
+        params.append(lp)
+    if la:
+        if '*' in (agent or ''):
+            where.append("agent LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        else:
+            where.append("agent = ? COLLATE NOCASE")
+        params.append(la)
+    if lr:
+        if '*' in (prompt or ''):
+            where.append("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        else:
+            where.append("prompt = ? COLLATE NOCASE")
+        params.append(lr)
+    if ls:
+        if '*' in (state or ''):
+            where.append("state LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        else:
+            where.append("state = ? COLLATE NOCASE")
+        params.append(ls)
+    sql = "SELECT project, agent, prompt, path, state, target FROM repo WHERE " + " AND ".join(where)
+    cur.execute(sql, tuple(params))
     rows = cur.fetchall()
     cur.close(); conn.close()
 
     # Filter in Python for simplicity
-    items: List[Tuple[str, str, str, str]] = []
-    for prj, ag, pr, path in rows:
-        if rx_p and not (prj and rx_p.match(prj)):
-            # Allow project-less prompts to pass only when no project filter
+    items: List[Tuple[str, str, str, str, str, str]] = []
+    for prj, ag, pr, path, st, tgt in rows:
+        # project/agent/prompt
+        # target (applied last)
+        if rx_t and not (tgt and rx_t.match(tgt)):
             continue
-        if rx_a and not ((ag and rx_a.match(ag)) or (not ag and agent is None)):
-            continue
-        if rx_r and not ((pr and rx_r.match(pr)) or (not pr and prompt is None)):
-            continue
-        items.append((prj or "", ag or "", pr or "", path or ""))
+        items.append((prj or "", ag or "", pr or "", path or "", st or "", tgt or ""))
 
     # Build hierarchy: project -> agents[] (name/path/prompts[])
     proj_map: Dict[str, Dict[str, object]] = {}
-    for prj, ag, pr, path in items:
+    for prj, ag, pr, path, st, tgt in items:
         # Ensure project bucket
         if prj not in proj_map:
             proj_map[prj] = {"name": prj, "type": "project", "agents": []}
@@ -298,6 +352,9 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
         # Add prompt if present
         if pr:
             prompts: List[str] = agent_entry["prompts"]  # type: ignore
+            if not isinstance(prompts, list):
+                prompts = []
+                agent_entry["prompts"] = prompts  # type: ignore
             if pr not in prompts:
                 prompts.append(pr)
         # Update path for agent rows when pr is empty (agent-level record)
@@ -309,3 +366,105 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     if project and "*" not in project:
         out = [x for x in out if x.get("name") == project]
     return out
+
+
+def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, str]]:
+    """Return a flat list of prompt rows from the index with fields {project, agent, prompt, path, state, target}.
+
+    Wildcards: '*' supported in project/agent/prompt/state/target. All filters are ANDed, with target applied last."""
+    conn = _ensure_db(); cur = conn.cursor()
+    try:
+        rx_t = _rx(target)
+        where: list[str] = ["prompt != ''"]
+        params: list[str] = []
+        lp = _like_pattern(project)
+        la = _like_pattern(agent)
+        lr = _like_pattern(prompt)
+        ls = _like_pattern(state)
+        if lp:
+            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
+            params.append(lp)
+        if la:
+            where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
+            params.append(la)
+        if lr:
+            where.append(("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (prompt or '')) else ("prompt = ? COLLATE NOCASE"))
+            params.append(lr)
+        if ls:
+            where.append(("state LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (state or '')) else ("state = ? COLLATE NOCASE"))
+            params.append(ls)
+        sql = "SELECT project, agent, prompt, path, state, target FROM repo WHERE " + " AND ".join(where)
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        out: List[Dict[str, str]] = []
+        for prj, ag, pr, path, st, tgt in rows:
+            if rx_t and not (tgt and rx_t.match(tgt)):
+                continue
+            out.append({
+                "project": prj or "",
+                "agent": ag or "",
+                "prompt": pr or "",
+                "path": path or "",
+                "state": st or "",
+                "target": tgt or (f"r:{prj}/{ag}/{pr}" if (prj or ag) else f"r::{pr}"),
+            })
+        return out
+    finally:
+        cur.close(); conn.close()
+
+
+def find_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
+    """Find prompt records with wildcard support. Returns an array of rows."""
+    return list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
+
+
+def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
+    """Find agent rows (prompt-empty) with wildcard filters. Returns an array of rows."""
+    conn = _ensure_db(); cur = conn.cursor()
+    try:
+        rx_t = _rx(target)
+        where: list[str] = ["(prompt IS NULL OR prompt = '')", "agent != ''"]
+        params: list[str] = []
+        lp = _like_pattern(project)
+        la = _like_pattern(agent)
+        if lp:
+            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
+            params.append(lp)
+        if la:
+            where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
+            params.append(la)
+        sql = "SELECT project, agent, path, target FROM repo WHERE " + " AND ".join(where)
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        out: List[Dict[str, str]] = []
+        for prj, ag, path, tgt in rows:
+            if rx_t and not (tgt and rx_t.match(tgt)):
+                continue
+            out.append({"project": prj or "", "agent": ag or "", "path": path or "", "target": tgt or f"a:{prj}/{ag}"})
+        return out
+    finally:
+        cur.close(); conn.close()
+
+
+def find_projects(*, project: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
+    """Find project rows with wildcard filters. Returns an array of rows."""
+    conn = _ensure_db(); cur = conn.cursor()
+    try:
+        rx_t = _rx(target)
+        where: list[str] = ["prompt = ''", "agent = ''", "project != ''"]
+        params: list[str] = []
+        lp = _like_pattern(project)
+        if lp:
+            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
+            params.append(lp)
+        sql = "SELECT project, path, target FROM repo WHERE " + " AND ".join(where)
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        out: List[Dict[str, str]] = []
+        for prj, path, tgt in rows:
+            if rx_t and not (tgt and rx_t.match(tgt)):
+                continue
+            out.append({"project": prj or "", "path": path or "", "target": tgt or f"p:{prj}"})
+        return out
+    finally:
+        cur.close(); conn.close()
