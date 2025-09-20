@@ -26,19 +26,22 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 ### Repo Index (New)
 
 - Call now maintains a single-source-of-truth SQLite index `call/repo.db` for projects, agents, and prompts.
-- Table: `repo(target PRIMARY KEY, project, agent, prompt, path, state)`
+- Table: `repo(target PRIMARY KEY, project, agent, prompt, path, state, engine, orchestration)`
   - `target` values:
     - projects: `p:<project>`
     - agents: `a:<project>/<agent>`
     - prompts: `r:<project>/<agent>/<prompt>` or `r::<prompt>` when project/agent are unknown
   - `state`: `draft` if file path contains the substring `draft`, otherwise `ready`.
+  - `engine`: runtime engine hint (e.g., `openai`, `openai-agents`) — pulled from METADATA YAML where present.
+  - `orchestration`: control flow (`llm`, `handoff`, `langgraph`, ...) — pulled from METADATA YAML where present.
 
-- Scanning: `from call.lib import repo as _repo; _repo.scan()`
+- Scanning: `from call.lib import repo as call_repo; call_repo.scan()`
   - Repos to scan are defined by `repos` in `.env` (e.g., `repos=agent, prompt`).
 
 - Listing:
   - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
   - Flat prompts: `call.lib.repo.list_prompts(project?, agent?, prompt?, state?, target?)`
+  - CLI supports output formats: `json | yaml | text`.
 
 - Find helpers (arrays):
   - `call.lib.repo.find_projects(project?, target?)`
@@ -60,7 +63,8 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 ## Telegram Bot (Updated)
 
 - New command: `/reload` — rescans configured repositories and rebuilds the SQLite repo index.
-- `/prompts_ready` and `/prompts_draft` are powered by the repo index with `state` filtering.
+- `/prompts`, `/prompts_ready`, and `/prompts_draft` are powered by the repo index with flexible filters and `state` support.
+  - Filters: `--project`, `--agent`, `--prompt`, `--target`, `--state ready|draft`, key=value forms, and `@Agent` shorthand. All filters are ANDed.
 - The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
 
 ### CLI Quickstart
@@ -71,6 +75,15 @@ Use the project virtual environment interpreter for consistency.
 .venv\Scripts\python.exe -m call.cli.main list --project UxFab
 .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
 .venv\Scripts\python.exe -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
+.
+# Scan repositories and print result as YAML
+.venv\Scripts\python.exe -m call.cli.main scan --repos agent,prompt --format yaml
+
+# List agents/projects as text
+.venv\Scripts\python.exe -m call.cli.main agents --project * --format text
+
+# List prompts with engine/orchestration columns
+.venv\Scripts\python.exe -m call.cli.main prompts --project * --agent * --state ready --format table
 ```
 
 - Agents/list filters:
@@ -80,6 +93,12 @@ Use the project virtual environment interpreter for consistency.
 
 - Prompts filters:
   - `--target` — unified filter applied last (supports `*`), in addition to `--project`, `--agent`, `--prompt`, and `--state`.
+  - Output formats: `--format json|yaml|table|text`.
+
+- Import conventions in examples:
+  - `from call.lib import api as call_api`
+  - `from call.lib import repo as call_repo`
+  - `from call.lib.logging import configure_logging as call_logging`
 
 - Exit codes: `0` on success (`ok:true`), `1` on error envelopes (`ok:false`).
   - PowerShell: check `$LASTEXITCODE`
@@ -244,15 +263,18 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - **Command Reference**:
 
   ```bash
-  # List projects, agents, prompts (hierarchical JSON)
-  python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft]
+  # List projects, agents, prompts (hierarchical)
+  python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft] --format json|yaml|text
 
   # Call an agent (keyword-only API). Use exact case-sensitive names.
   python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--session-id AgentName:-100123[:thread]] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
 
-  # List prompts (flat). Filters: --project, --agent, --prompt, --state, --target (all support *)
+  # List prompts (flat). Filters: --project, --agent, --prompt, --state, --target (all support *). Formats: json|yaml|table|text
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
-  python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format json
+  python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format yaml
+
+  # Scan repos and rebuild index
+  python -m call.cli.main scan --repos agent,prompt --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.
   python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \

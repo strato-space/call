@@ -25,19 +25,66 @@ import faulthandler
 
 from call.lib import api as call_api
 from call.lib import repo as call_repo
-from call.lib.logging import configure_logging
+from call.lib.logging import configure_logging as call_logging
+
+
+def _emit_output(obj, fmt: str) -> None:
+    fmt_l = (fmt or "json").lower()
+    if fmt_l == "json":
+        _safe_print(json.dumps(obj, ensure_ascii=False, indent=2))
+        return
+    if fmt_l == "yaml":
+        try:
+            import yaml  # type: ignore
+            _safe_print(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False))
+            return
+        except Exception:
+            _safe_print(json.dumps(obj, ensure_ascii=False, indent=2))
+            return
+    # text fallback
+    if isinstance(obj, (list, tuple)):
+        for it in obj:
+            _safe_print(str(it))
+    else:
+        _safe_print(str(obj))
+
+
+def _agents_tree_to_text(items: list[dict]) -> str:
+    lines: list[str] = []
+    for proj in (items or []):
+        pname = str(proj.get("name") or "").strip()
+        if not pname:
+            continue
+        lines.append(pname)
+        agents = proj.get("agents") or []
+        for ag in agents:
+            nm = str(ag.get("name") or "").strip()
+            if not nm:
+                continue
+            lines.append(f"  - {nm}")
+    return "\n".join(lines)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    items = call_api.list(
-        project=(args.project or None),
-        agent=(args.agent or None),
-        prompt=(args.prompt or None),
-        state=(args.state or None) if hasattr(args, "state") else None,
-        target=(args.target or None) if hasattr(args, "target") else None,
-    )
-    _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        items = call_api.list(
+            project=(args.project or None),
+            agent=(args.agent or None),
+            prompt=(args.prompt or None),
+            state=(args.state or None) if hasattr(args, "state") else None,
+            target=(args.target or None) if hasattr(args, "target") else None,
+        )
+        fmt = getattr(args, "format", "json")
+        if fmt == "text":
+            _safe_print(_agents_tree_to_text(items))
+        elif fmt == "yaml":
+            _emit_output(items, "yaml")
+        else:
+            _emit_output(items, "json")
+        return 0
+    except Exception as e:
+        print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
+        return 1
 
 
 def _safe_print(s: str) -> None:
@@ -142,8 +189,8 @@ def cmd_call(args: argparse.Namespace) -> int:
         _safe_print(json.dumps(result, ensure_ascii=False))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
     except Exception as e:
-        err = {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}
-        print(json.dumps(err, ensure_ascii=False))
+        err = {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
         return 1
     finally:
         # Cancel periodic dumps and close file if opened
@@ -170,6 +217,7 @@ def main() -> int:
     p_agents.add_argument("--prompt", default="", help="Prompt filter (supports *)")
     p_agents.add_argument("--state", default="", help="State filter for prompts within agents (ready|draft; supports *)")
     p_agents.add_argument("--target", default="", help="Target filter (supports *; applied last)")
+    p_agents.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_agents.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
@@ -188,26 +236,36 @@ def main() -> int:
 
     # prompts subcommand
     def cmd_prompts(args: argparse.Namespace) -> int:
-        rows = call_repo.list_prompts(
-            project=(args.project or None),
-            agent=(args.agent or None),
-            prompt=(args.prompt or None),
-            state=(args.state or None),
-            target=(args.target or None),
-        )
-        if (args.format or 'table').lower() == 'json':
-            _safe_print(json.dumps(rows, ensure_ascii=False, indent=2))
+        try:
+            rows = call_repo.list_prompts(
+                project=(args.project or None),
+                agent=(args.agent or None),
+                prompt=(args.prompt or None),
+                state=(args.state or None),
+                target=(args.target or None),
+            )
+            fmt = (args.format or 'table').lower()
+            if fmt == 'json':
+                _emit_output(rows, 'json')
+                return 0
+            if fmt == 'yaml':
+                _emit_output(rows, 'yaml')
+                return 0
+            # text/table view based on repo index fields
+            cols = [
+                ("prompt", "prompt"),
+                ("agent", "agent"),
+                ("project", "project"),
+                ("state", "state"),
+                ("engine", "engine"),
+                ("orchestration", "orchestr"),
+                ("target", "target"),
+            ]
+            _print_table(rows, cols)
             return 0
-        # table view based on repo index fields
-        cols = [
-            ("prompt", "prompt"),
-            ("agent", "agent"),
-            ("project", "project"),
-            ("state", "state"),
-            ("target", "target"),
-        ]
-        _print_table(rows, cols)
-        return 0
+        except Exception as e:
+            print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
+            return 1
 
     p_prompts = sub.add_parser("prompts", help="List prompts (flat)")
     p_prompts.add_argument("--project", default="", help="Filter by project")
@@ -215,8 +273,27 @@ def main() -> int:
     p_prompts.add_argument("--prompt", default="", help="Filter by prompt id or name (supports *)")
     p_prompts.add_argument("--state", default="", help="Filter by state (draft|ready; supports *)")
     p_prompts.add_argument("--target", default="", help="Filter by target (supports *; applied last)")
-    p_prompts.add_argument("--format", default="table", choices=["table", "json"], help="Output format")
+    p_prompts.add_argument("--format", default="table", choices=["table", "json", "yaml", "text"], help="Output format")
     p_prompts.set_defaults(func=cmd_prompts)
+
+    # scan subcommand
+    def cmd_scan(args: argparse.Namespace) -> int:
+        try:
+            repos = None
+            if args.repos:
+                raw = str(args.repos)
+                repos = [t.strip() for t in raw.replace(';', ',').split(',') if t.strip()]
+            res = call_repo.scan(repos=repos)
+            _emit_output(res, args.format or 'json')
+            return 0 if (isinstance(res, dict) and res.get('ok')) else 1
+        except Exception as e:
+            print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
+            return 1
+
+    p_scan = sub.add_parser("scan", help="Scan repositories and rebuild repo.db")
+    p_scan.add_argument("--repos", default="", help="Comma- or semicolon-separated list (agent,prompt)")
+    p_scan.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
+    p_scan.set_defaults(func=cmd_scan)
 
     # exec subcommand
     def _parse_content_item(raw: str) -> dict:
@@ -337,9 +414,10 @@ def main() -> int:
 
     # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
     try:
-        configure_logging(json=bool(getattr(args, "json_logs", False)))
+        call_logging(json=bool(getattr(args, "json_logs", False)))
     except Exception:
         pass
+
     return args.func(args)
 
 

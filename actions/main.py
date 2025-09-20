@@ -13,7 +13,7 @@ from .deps import bearer_guard
 from call.lib.api import call as call_lib
 from call.lib.api import list as list_lib
 from call.lib.api import interpret_exec_payload
-from call.lib.discovery import prompts as list_prompts
+from call.lib import repo as call_repo
 
 
 app = FastAPI(title="Call Actions API", version="1.0.0")
@@ -168,6 +168,7 @@ def prompts(
 ):
     st = (state or "").strip() or None
     if st not in (None, "ready", "draft"):
-        return JSONResponse(content={"error": "Invalid state; use 'ready' or 'draft'"}, status_code=400)
-    items = list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
+        err = {"ok": False, "error_code": 400, "description": "Invalid state; use 'ready' or 'draft'", "code": "BAD_REQUEST"}
+        return JSONResponse(content=err, status_code=400)
+    items = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
     return items if isinstance(items, list) else ([items] if items else [])

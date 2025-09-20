@@ -45,7 +45,7 @@ def _ensure_db() -> sqlite3.Connection:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    # Schema: add 'state' to support ready/draft prompt state
+    # Schema: add 'state' to support ready/draft prompt state, and engine/orchestration for runtime
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS repo (
@@ -54,7 +54,9 @@ def _ensure_db() -> sqlite3.Connection:
             agent   TEXT,
             prompt  TEXT,
             path    TEXT,
-            state   TEXT
+            state   TEXT,
+            engine  TEXT,
+            orchestration TEXT
         )
         """
     )
@@ -64,12 +66,16 @@ def _ensure_db() -> sqlite3.Connection:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_prompt  ON repo(prompt)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_state   ON repo(state)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_target  ON repo(target)")
-    # Migration: if 'state' column missing, add it
+    # Migration: add columns when missing
     try:
         cur.execute("PRAGMA table_info(repo)")
         cols = [r[1] for r in cur.fetchall()]
         if "state" not in cols:
             cur.execute("ALTER TABLE repo ADD COLUMN state TEXT")
+        if "engine" not in cols:
+            cur.execute("ALTER TABLE repo ADD COLUMN engine TEXT")
+        if "orchestration" not in cols:
+            cur.execute("ALTER TABLE repo ADD COLUMN orchestration TEXT")
     except Exception:
         pass
     conn.commit()
@@ -96,15 +102,15 @@ def _load_repos_from_env() -> List[str]:
     return [t for t in toks if t in {"agent", "prompt"}]
 
 
-def _upsert_row(cur: sqlite3.Cursor, *, target: str, project: str, agent: str, prompt: str, path: str, state: str | None = None) -> None:
+def _upsert_row(cur: sqlite3.Cursor, *, target: str, project: str, agent: str, prompt: str, path: str, state: str | None = None, engine: str | None = None, orchestration: str | None = None) -> None:
     try:
         cur.execute("SELECT path FROM repo WHERE target = ?", (target,))
         row = cur.fetchone()
         if row is not None and row[0] != path:
             debug_print("[repo.scan] overwrite", f"target={target}", f"old={row[0]}", f"new={path}")
         cur.execute(
-            "REPLACE INTO repo (target, project, agent, prompt, path, state) VALUES (?, ?, ?, ?, ?, ?)",
-            (target, project, agent, prompt, path, state or ""),
+            "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (target, project, agent, prompt, path, state or "", engine or "", orchestration or ""),
         )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
@@ -132,7 +138,32 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
         proj_yaml = pdir / "project.yaml"
         proj_md   = pdir / "project.md"
         proj_path = str(proj_yaml if proj_yaml.exists() else (proj_md if proj_md.exists() else pdir))
-        _upsert_row(cur, target=f"p:{pname}", project=pname, agent="", prompt="", path=proj_path, state="")
+        eng = ""; orch = ""
+        try:
+            # Prefer MD METADATA if available, else YAML top-level keys
+            if proj_md.exists():
+                try:
+                    text = proj_md.read_text(encoding="utf-8")
+                    y0 = text.index("<!-- METADATA:START -->")
+                    y1 = text.index("```yaml", y0) + len("```yaml")
+                    y2 = text.index("```", y1)
+                    import yaml as _yaml
+                    meta = _yaml.safe_load(text[y1:y2]) or {}
+                    eng = str(meta.get("engine") or "")
+                    orch = str(meta.get("orchestration") or "")
+                except Exception:
+                    pass
+            if (not eng or not orch) and proj_yaml.exists():
+                try:
+                    import yaml as _yaml
+                    y = _yaml.safe_load(proj_yaml.read_text(encoding="utf-8")) or {}
+                    eng = eng or str(y.get("engine") or "")
+                    orch = orch or str(y.get("orchestration") or "")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        _upsert_row(cur, target=f"p:{pname}", project=pname, agent="", prompt="", path=proj_path, state="", engine=eng, orchestration=orch)
         scanned += 1
 
         # Root project agent (optional)
@@ -140,7 +171,31 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
             f = pdir / fname
             if f.exists():
                 ag_name = _read_agent_name(f, default=pname)
-                _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="")
+                eng = ""; orch = ""
+                try:
+                    if str(f).lower().endswith(('.md', '.markdown')):
+                        try:
+                            text = f.read_text(encoding="utf-8")
+                            y0 = text.index("<!-- METADATA:START -->")
+                            y1 = text.index("```yaml", y0) + len("```yaml")
+                            y2 = text.index("```", y1)
+                            import yaml as _yaml
+                            meta = _yaml.safe_load(text[y1:y2]) or {}
+                            eng = str(meta.get("engine") or "")
+                            orch = str(meta.get("orchestration") or "")
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            import yaml as _yaml
+                            y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                            eng = str(y.get("engine") or "")
+                            orch = str(y.get("orchestration") or "")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                 scanned += 1
                 break
 
@@ -153,7 +208,31 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                     f = child / fname
                     if f.exists():
                         ag_name = _read_agent_name(f, default=child.name)
-                        _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="")
+                        eng = ""; orch = ""
+                        try:
+                            if str(f).lower().endswith(('.md', '.markdown')):
+                                try:
+                                    text = f.read_text(encoding="utf-8")
+                                    y0 = text.index("<!-- METADATA:START -->")
+                                    y1 = text.index("```yaml", y0) + len("```yaml")
+                                    y2 = text.index("```", y1)
+                                    import yaml as _yaml
+                                    meta = _yaml.safe_load(text[y1:y2]) or {}
+                                    eng = str(meta.get("engine") or "")
+                                    orch = str(meta.get("orchestration") or "")
+                                except Exception:
+                                    pass
+                            else:
+                                try:
+                                    import yaml as _yaml
+                                    y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                                    eng = str(y.get("engine") or "")
+                                    orch = str(y.get("orchestration") or "")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                         scanned += 1
                         break
         except Exception:
@@ -206,6 +285,7 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                 proj = ""
                 agent = ""
                 pr_id = ""
+                eng = ""; orch = ""
                 try:
                     if p.suffix.lower() == ".md":
                         meta = _read_prompt_metadata(p) or {}
@@ -215,6 +295,8 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                         pr_id = str(meta.get("id") or p.stem)
                         proj = str(meta.get("project") or "")
                         agent = str(meta.get("agent") or "")
+                        eng = str(meta.get("engine") or "")
+                        orch = str(meta.get("orchestration") or "")
                         # Warn when project/agent are not provided in metadata
                         if (not proj) or (not agent):
                             debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
@@ -224,18 +306,20 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                         pr_id = str(y.get("id") or p.stem)
                         proj = str(y.get("project") or "")
                         agent = str(y.get("agent") or "")
+                        eng = str(y.get("engine") or "")
+                        orch = str(y.get("orchestration") or "")
                 except Exception:
                     pr_id = p.stem
                 target = f"r:{proj}/{agent}/{pr_id}" if (proj or agent) else f"r::{pr_id}"
                 state = "draft" if ("draft" in str(p).lower()) else "ready"
-                _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p), state=state)
+                _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p), state=state, engine=eng, orchestration=orch)
                 scanned += 1
         except Exception:
             continue
     return scanned
 
 
-def scan() -> Dict[str, object]:
+def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
     """Scan configured repos and update the repo.db index.
 
     Returns: { ok: bool, scanned: <int> }
@@ -243,7 +327,7 @@ def scan() -> Dict[str, object]:
     conn = _ensure_db()
     cur = conn.cursor()
 
-    repos = _load_repos_from_env()
+    repos = (repos or []) or _load_repos_from_env()
     if not repos:
         # Default to scanning both if unspecified
         repos = ["agent", "prompt"]
@@ -260,7 +344,7 @@ def scan() -> Dict[str, object]:
         return {"ok": True, "scanned": scanned}
     except Exception as e:
         conn.rollback()
-        return {"ok": False, "error": str(e), "scanned": scanned}
+        return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR", "scanned": scanned}
     finally:
         cur.close(); conn.close()
 
@@ -283,13 +367,7 @@ def _like_pattern(pat: Optional[str]) -> Optional[str]:
     return s
 
 
-def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, object]]:
-    """Query the repo.db index and return a hierarchical structure (projects -> agents -> prompts).
-
-    Wildcards: '*' supported in filters (case-insensitive, full-token match).
-    """
-    conn = _ensure_db(); cur = conn.cursor()
-    rx_t = _rx(target)
+def _build_where_and_params(project: Optional[str], agent: Optional[str], prompt: Optional[str], state: Optional[str]) -> tuple[list[str], list[str]]:
     where: list[str] = ["1=1"]
     params: list[str] = []
     lp = _like_pattern(project)
@@ -297,29 +375,28 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     lr = _like_pattern(prompt)
     ls = _like_pattern(state)
     if lp:
-        if '*' in (project or ''):
-            where.append("project LIKE ? ESCAPE '\\' COLLATE NOCASE")
-        else:
-            where.append("project = ? COLLATE NOCASE")
+        where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
         params.append(lp)
     if la:
-        if '*' in (agent or ''):
-            where.append("agent LIKE ? ESCAPE '\\' COLLATE NOCASE")
-        else:
-            where.append("agent = ? COLLATE NOCASE")
+        where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
         params.append(la)
     if lr:
-        if '*' in (prompt or ''):
-            where.append("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE")
-        else:
-            where.append("prompt = ? COLLATE NOCASE")
+        where.append(("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (prompt or '')) else ("prompt = ? COLLATE NOCASE"))
         params.append(lr)
     if ls:
-        if '*' in (state or ''):
-            where.append("state LIKE ? ESCAPE '\\' COLLATE NOCASE")
-        else:
-            where.append("state = ? COLLATE NOCASE")
+        where.append(("state LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (state or '')) else ("state = ? COLLATE NOCASE"))
         params.append(ls)
+    return where, params
+
+
+def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, object]]:
+    """Query the repo.db index and return a hierarchical structure (projects -> agents -> prompts).
+
+    Wildcards: '*' supported in filters (case-insensitive, full-token match).
+    """
+    conn = _ensure_db(); cur = conn.cursor()
+    rx_t = _rx(target)
+    where, params = _build_where_and_params(project, agent, prompt, state)
     sql = "SELECT project, agent, prompt, path, state, target FROM repo WHERE " + " AND ".join(where)
     cur.execute(sql, tuple(params))
     rows = cur.fetchall()
@@ -376,29 +453,14 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
     conn = _ensure_db(); cur = conn.cursor()
     try:
         rx_t = _rx(target)
-        where: list[str] = ["prompt != ''"]
-        params: list[str] = []
-        lp = _like_pattern(project)
-        la = _like_pattern(agent)
-        lr = _like_pattern(prompt)
-        ls = _like_pattern(state)
-        if lp:
-            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
-            params.append(lp)
-        if la:
-            where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
-            params.append(la)
-        if lr:
-            where.append(("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (prompt or '')) else ("prompt = ? COLLATE NOCASE"))
-            params.append(lr)
-        if ls:
-            where.append(("state LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (state or '')) else ("state = ? COLLATE NOCASE"))
-            params.append(ls)
-        sql = "SELECT project, agent, prompt, path, state, target FROM repo WHERE " + " AND ".join(where)
+        where, params = _build_where_and_params(project, agent, prompt, state)
+        # Ensure we only select prompt rows
+        where = ["prompt != ''"] + [w for w in where if w != "1=1"]
+        sql = "SELECT project, agent, prompt, path, state, target, engine, orchestration FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         out: List[Dict[str, str]] = []
-        for prj, ag, pr, path, st, tgt in rows:
+        for prj, ag, pr, path, st, tgt, eng, orch in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
             out.append({
@@ -408,6 +470,8 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
                 "path": path or "",
                 "state": st or "",
                 "target": tgt or (f"r:{prj}/{ag}/{pr}" if (prj or ag) else f"r::{pr}"),
+                "engine": eng or "",
+                "orchestration": orch or "",
             })
         return out
     finally:
