@@ -13,6 +13,22 @@ cd "$BASE_DIR"
 
 echo "Working in: $PWD"
 
+# If running under a Windows-like shell (Git Bash/MSYS/Cygwin), set consistent EOL in the main workspace.
+# This matches the user's desired config:
+#   git -C "c:\\home\\strato-space" config core.autocrlf false
+#   git -C "c:\\home\\strato-space" config core.eol lf
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    WIN_ROOT="c:/home/strato-space"
+    if [ -d "$WIN_ROOT/.git" ]; then
+      git -C "$WIN_ROOT" config core.autocrlf false || true
+      git -C "$WIN_ROOT" config core.eol lf || true
+      echo "Applied Git EOL config to $WIN_ROOT (autocrlf=false, eol=lf)"
+    fi
+    ;;
+  *) ;;
+esac
+
 repo() {
   local url="$1"
   local dir
