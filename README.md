@@ -72,18 +72,18 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 Use the project virtual environment interpreter for consistency.
 
 ```powershell
-.venv\Scripts\python.exe -m call.cli.main list --project UxFab
-.venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
-.venv\Scripts\python.exe -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
+.python -m call.cli.main list --project UxFab
+.python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
+.python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 .
 # Scan repositories and print result as YAML
-.venv\Scripts\python.exe -m call.cli.main scan --repos agent,prompt --format yaml
+.python -m call.cli.main scan --repos agent,prompt --format yaml
 
 # List agents/projects as text
-.venv\Scripts\python.exe -m call.cli.main agents --project * --format text
+.python -m call.cli.main agents --project * --format text
 
 # List prompts with engine/orchestration columns
-.venv\Scripts\python.exe -m call.cli.main prompts --project * --agent * --state ready --format table
+.python -m call.cli.main prompts --project * --agent * --state ready --format table
 ```
 
 - Agents/list filters:
@@ -118,11 +118,11 @@ Use the project virtual environment interpreter for consistency.
   - Library usage assumes logging is already configured by the host application.
   - Set `CALL_LOG_JSON=1` to emit JSON logs from the stdlib logger (stderr). Example:
     ```powershell
-    $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+    $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; .python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
   - CLI also supports `--json-logs` to force JSON output regardless of env:
     ```powershell
-    .venv\Scripts\python.exe -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
+    .python -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
   - Set `CALL_LOG_FILE=logs/app.log` to write logs to a file in addition to stderr. The directory will be created if needed.
 
@@ -139,7 +139,7 @@ JSON log sample (stderr):
 Example (PowerShell):
 
 ```powershell
-$env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
+$env:CALL_DEBUG=1; .python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
 ```
 
 ## Key Concepts
@@ -150,6 +150,25 @@ $env:CALL_DEBUG=1; .venv\Scripts\python.exe -m call.cli.main call --project UxFa
 - **Case-sensitive matching (KISS)**: No normalization. Use the exact agent names and aliases as defined in YAML and directories.
 - **No registry scanning**: Removed complex metadata matching and registry file processing.
 - **Simple syntax**: `@AgentName` or just `AgentName`.
+
+### Target syntax and precedence (Updated Sep 20, 2025)
+
+- Precedence when `target` is provided: prompt > agent > project.
+  - The first category that yields a unique match sets the corresponding fields if not explicitly provided.
+- Supported forms:
+  - Unprefixed name with wildcards: `Ux*` (interprets as prompt name first, then agent, then project)
+  - Prefixes (optional):
+    - `p:UxFab` — project name
+    - `a:UxFab/DialogPostAnalysis` or `a:DialogPostAnalysis` — agent
+    - `r:UxFab/DialogPostAnalysis/33-*` or `r:33-*` — prompt
+  - Path-like notation: `path:project/agent/prompt`
+    - Examples:
+      - `path:UxFab/DialogPostAnalysis/33-*` — prompts under agent/project
+      - `path:UxFab/DialogPostAnalysis` — agent
+      - `path:UxFab` — project
+- All lookups respect wildcards `*` and are backed by the SQLite repo index.
+- Ambiguity returns an error envelope with `code: "TOO_MANY_ROWS"` and an `options` array.
+- No broadening of scope: if `project` or `agent` are explicitly provided, prompt resolution won’t widen the search.
 
 ### Agent Loading Logic
 
@@ -315,8 +334,8 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
   `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
   - Test hook for CI/manual checks:
-  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
-  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && .venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis`
+  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; .python -m call.cli.main exec --agent DialogPostAnalysis`
+  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && .python -m call.cli.main exec --agent DialogPostAnalysis`
   - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
@@ -324,10 +343,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
 ```powershell
 # PowerShell
-.venv\Scripts\python.exe -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
+.python -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
 
 # cmd.exe
-cmd /c ".venv\\Scripts\\python.exe -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
+cmd /c ".python -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
 ```
 
 ### Projects-aware discovery (Updated Sep 17, 2025)
@@ -486,8 +505,8 @@ See also the strategy doc:
 - Use the project virtual environment for tests:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\python.exe -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
+.python -m pytest -q
+.python -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
 ```
 
 - Useful env flags:

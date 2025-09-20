@@ -27,6 +27,101 @@ def interpret_target(
         tgt = (target or "").strip()
         if not tgt:
             return project, agent, prompt, None
+
+        # 0) Explicit path: syntax (path:project/agent/prompt) with wildcards
+        low = tgt.lower()
+        if low.startswith("path:"):
+            spec = tgt[5:]
+            parts = [p for p in spec.split("/")]
+            pr_pat = parts[0] if len(parts) > 0 and parts[0] else None
+            ag_pat = parts[1] if len(parts) > 1 and parts[1] else None
+            pr_prompt = parts[2] if len(parts) > 2 and parts[2] else None
+            # 3 segments -> prompt rows
+            if pr_prompt is not None:
+                rows = call_repo.list_prompts(project=pr_pat or None, agent=ag_pat or None, prompt=pr_prompt or None)
+                if len(rows) == 1:
+                    row = rows[0]
+                    if not (project or "").strip():
+                        project = row.get("project") or project
+                    if not (agent or "").strip():
+                        agent = row.get("agent") or agent
+                    if not (prompt or "").strip():
+                        prompt = row.get("prompt") or prompt
+                    return project, agent, prompt, None
+                if not rows:
+                    return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No prompt matched path", "options": []}
+                return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple prompts matched path", "options": rows[:20]}
+            # 2 segments -> agent rows
+            if ag_pat is not None:
+                rows = call_repo.find_agents(project=pr_pat or None, agent=ag_pat or None)
+                if len(rows) == 1:
+                    row = rows[0]
+                    if not (project or "").strip():
+                        project = row.get("project") or project
+                    if not (agent or "").strip():
+                        agent = row.get("agent") or agent
+                    return project, agent, prompt, None
+                if not rows:
+                    return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No agent matched path", "options": []}
+                return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple agents matched path", "options": rows[:20]}
+            # 1 segment -> project rows
+            if pr_pat:
+                rows = call_repo.find_projects(project=pr_pat or None)
+                if len(rows) == 1:
+                    row = rows[0]
+                    if not (project or "").strip():
+                        project = row.get("project") or project
+                    return project, agent, prompt, None
+                if not rows:
+                    return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No project matched path", "options": []}
+                return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple projects matched path", "options": rows[:20]}
+
+        # 0.1) Explicit type prefixes p:/a:/r: (optional)
+        if low.startswith("p:"):
+            pat = tgt[2:]
+            rows = call_repo.find_projects(project=pat or None)
+            if len(rows) == 1:
+                if not (project or "").strip():
+                    project = rows[0].get("project") or project
+                return project, agent, prompt, None
+            if not rows:
+                return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No project matched", "options": []}
+            return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple projects matched", "options": rows[:20]}
+        if low.startswith("a:"):
+            pat = tgt[2:]
+            # Support a:project/agent and a:agent
+            p2, a2 = (pat.split("/", 1) + [""])[:2] if ("/" in pat) else (None, pat)
+            rows = call_repo.find_agents(project=(p2 or None), agent=(a2 or None))
+            if len(rows) == 1:
+                row = rows[0]
+                if not (project or "").strip():
+                    project = row.get("project") or project
+                if not (agent or "").strip():
+                    agent = row.get("agent") or agent
+                return project, agent, prompt, None
+            if not rows:
+                return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No agent matched", "options": []}
+            return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple agents matched", "options": rows[:20]}
+        if low.startswith("r:"):
+            spec = tgt[2:]
+            parts = [p for p in spec.split("/")]
+            pr_pat = parts[0] if len(parts) > 0 and parts[0] else None
+            ag_pat = parts[1] if len(parts) > 1 and parts[1] else None
+            pr_prompt = parts[2] if len(parts) > 2 and parts[2] else (parts[0] if (len(parts) == 1) else None)
+            rows = call_repo.list_prompts(project=pr_pat or None, agent=ag_pat or None, prompt=pr_prompt or None)
+            if len(rows) == 1:
+                row = rows[0]
+                if not (project or "").strip():
+                    project = row.get("project") or project
+                if not (agent or "").strip():
+                    agent = row.get("agent") or agent
+                if not (prompt or "").strip():
+                    prompt = row.get("prompt") or prompt
+                return project, agent, prompt, None
+            if not rows:
+                return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No prompt matched", "options": []}
+            return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple prompts matched", "options": rows[:20]}
+
         p_regex = _compile_wildcard_regex(tgt)
         # 1) Prompt match via repo index
         prompt_matches: list[dict] = []
@@ -59,7 +154,17 @@ def interpret_target(
                 "options": prompt_matches,
                 "description": "Multiple prompts matched your criteria",
             }
-        # 2) Project using repo tree
+        # 2) Agent name/alias
+        try:
+            ra = resolve_agent(project=project, agent=tgt, prompt=prompt, target=None)
+        except Exception:
+            ra = {"ok": False}
+        if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
+            agent = tgt
+            return project, agent, prompt, None
+        elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
+            return project, agent, prompt, ra
+        # 3) Project using repo tree
         try:
             tree = call_repo.list()  # list of {name, agents:[...]}
         except Exception:
@@ -76,16 +181,6 @@ def interpret_target(
                 "options": [{"project": p} for p in proj_candidates],
                 "description": "Multiple projects matched your criteria",
             }
-        # 3) Agent name/alias (only if still not resolved as project)
-        try:
-            ra = resolve_agent(project=project, agent=tgt, prompt=prompt)
-        except Exception:
-            ra = {"ok": False}
-        if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
-            agent = tgt
-            return project, agent, prompt, None
-        elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
-            return project, agent, prompt, ra
         # Final conservative fallback: treat simple token as project
         if (not project) and (not agent) and (not prompt) and ('*' not in tgt):
             return tgt, agent, prompt, None
@@ -301,7 +396,7 @@ def build_runnable_instructions_config(
         proj = project
     else:
         try:
-            env = resolve_agent(project=project, agent=agent, prompt=prompt)
+            env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
         except Exception as e:
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
@@ -313,7 +408,7 @@ def build_runnable_instructions_config(
                     rec = recs[0] if recs else None
                     if rec:
                         # Do NOT broaden project/agent beyond what was explicitly provided by the caller
-                        env = resolve_agent(project=project, agent=agent, prompt=prompt)
+                        env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
                 except Exception:
                     env = None
             if not env or not env.get("ok"):
@@ -356,8 +451,8 @@ def build_runnable_instructions_config(
             if rec_pr and rec_pr.get("path"):
                 _pp = _Path(rec_pr["path"])  # type: ignore[index]
                 pr_path = _pp if _pp.exists() else None
-    except Exception:
-        pr_path = None
+    except Exception as e:
+        return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 
     # Parse cards
     proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
@@ -881,7 +976,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
 
 
-def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
+def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, target: Optional[str] = None) -> Dict[str, Any]:
     """Resolve a single agent using list() filters.
 
     Returns on success:
@@ -890,7 +985,7 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
     On error/ambiguity, returns _error_payload with code and optional options.
     """
     try:
-        projects = list(project=project, agent=agent, prompt=prompt)
+        projects = list(project=project, agent=agent, prompt=prompt, target=target)
     except Exception as e:
         return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 

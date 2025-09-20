@@ -488,16 +488,9 @@ def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, t
     conn = _ensure_db(); cur = conn.cursor()
     try:
         rx_t = _rx(target)
-        where: list[str] = ["(prompt IS NULL OR prompt = '')", "agent != ''"]
-        params: list[str] = []
-        lp = _like_pattern(project)
-        la = _like_pattern(agent)
-        if lp:
-            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
-            params.append(lp)
-        if la:
-            where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
-            params.append(la)
+        where, params = _build_where_and_params(project, agent, None, None)
+        # Only non-prompt agent rows
+        where = ["(prompt IS NULL OR prompt = '')", "agent != ''"] + [w for w in where if w != "1=1"]
         sql = "SELECT project, agent, path, target FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
@@ -516,12 +509,9 @@ def find_projects(*, project: Optional[str] = None, target: Optional[str] = None
     conn = _ensure_db(); cur = conn.cursor()
     try:
         rx_t = _rx(target)
-        where: list[str] = ["prompt = ''", "agent = ''", "project != ''"]
-        params: list[str] = []
-        lp = _like_pattern(project)
-        if lp:
-            where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
-            params.append(lp)
+        where, params = _build_where_and_params(project, None, None, None)
+        # Only project-level rows
+        where = ["prompt = ''", "agent = ''", "project != ''"] + [w for w in where if w != "1=1"]
         sql = "SELECT project, path, target FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
