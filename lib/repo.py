@@ -22,6 +22,7 @@ Public API:
 from __future__ import annotations
 
 import os
+import builtins
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -362,7 +363,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
             agent_entry["path"] = path
 
     # If project filter without wildcard, return only that project
-    out = list(proj_map.values())
+    out = builtins.list(proj_map.values())
     if project and "*" not in project:
         out = [x for x in out if x.get("name") == project]
     return out

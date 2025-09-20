@@ -24,7 +24,7 @@ import os
 import faulthandler
 
 from call.lib import api as call_api
-from call.lib import discovery as call_discovery
+from call.lib import repo as call_repo
 from call.lib.logging import configure_logging
 
 
@@ -33,6 +33,8 @@ def cmd_list(args: argparse.Namespace) -> int:
         project=(args.project or None),
         agent=(args.agent or None),
         prompt=(args.prompt or None),
+        state=(args.state or None) if hasattr(args, "state") else None,
+        target=(args.target or None) if hasattr(args, "target") else None,
     )
     _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
     return 0
@@ -162,10 +164,12 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_agents = sub.add_parser("agents", aliases=["list"], help="List projects and agents (hierarchical)")
+    p_agents = sub.add_parser("agents", aliases=["list", "projects"], help="List projects and agents (hierarchical)")
     p_agents.add_argument("--project", default="", help="Project filter (supports * wildcard)")
     p_agents.add_argument("--agent", default="", help="Agent filter (supports * and aliases)")
     p_agents.add_argument("--prompt", default="", help="Prompt filter (supports *)")
+    p_agents.add_argument("--state", default="", help="State filter for prompts within agents (ready|draft; supports *)")
+    p_agents.add_argument("--target", default="", help="Target filter (supports *; applied last)")
     p_agents.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
@@ -184,27 +188,33 @@ def main() -> int:
 
     # prompts subcommand
     def cmd_prompts(args: argparse.Namespace) -> int:
-        items = call_discovery.prompts(project=(args.project or None), agent=(args.agent or None), prompt=(args.prompt or None), state=(args.state or None))
+        rows = call_repo.list_prompts(
+            project=(args.project or None),
+            agent=(args.agent or None),
+            prompt=(args.prompt or None),
+            state=(args.state or None),
+            target=(args.target or None),
+        )
         if (args.format or 'table').lower() == 'json':
-            _safe_print(json.dumps(items, ensure_ascii=False, indent=2))
+            _safe_print(json.dumps(rows, ensure_ascii=False, indent=2))
             return 0
-        # table view
+        # table view based on repo index fields
         cols = [
-            ("prompt_id", "id"),
-            ("name", "name"),
+            ("prompt", "prompt"),
             ("agent", "agent"),
             ("project", "project"),
             ("state", "state"),
-            ("url", "url"),
+            ("target", "target"),
         ]
-        _print_table(items, cols)
+        _print_table(rows, cols)
         return 0
 
     p_prompts = sub.add_parser("prompts", help="List prompts (flat)")
     p_prompts.add_argument("--project", default="", help="Filter by project")
     p_prompts.add_argument("--agent", default="", help="Filter by agent")
     p_prompts.add_argument("--prompt", default="", help="Filter by prompt id or name (supports *)")
-    p_prompts.add_argument("--state", default="", help="Filter by state (draft|ready)")
+    p_prompts.add_argument("--state", default="", help="Filter by state (draft|ready; supports *)")
+    p_prompts.add_argument("--target", default="", help="Filter by target (supports *; applied last)")
     p_prompts.add_argument("--format", default="table", choices=["table", "json"], help="Output format")
     p_prompts.set_defaults(func=cmd_prompts)
 

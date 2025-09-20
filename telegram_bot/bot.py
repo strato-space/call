@@ -494,6 +494,64 @@ def _format_prompts_markdown(items: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def _parse_prompts_filters(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+    """Parse command text into (project, agent, prompt, target) with AND semantics.
+
+    Accepted forms (order-insensitive after the command token):
+    - --project X, --agent X, --prompt X, --target X
+    - project=X, agent=X, prompt=X, target=X
+    - @Agent (agent shorthand)
+    - Bare token as project when none set; extra bare token as prompt
+    """
+    try:
+        s = (text or "").strip()
+        tokens = s.split()
+        if tokens and tokens[0].startswith(command):
+            tokens = tokens[1:]
+        project = None
+        agent = None
+        prompt = None
+        target = None
+        it = iter(tokens)
+        for tok in it:
+            t = tok.strip()
+            if not t:
+                continue
+            low = t.lower()
+            if low.startswith("--project"):
+                project = (next(it, "").strip() or project)
+                continue
+            if low.startswith("--agent"):
+                agent = (next(it, "").strip().lstrip("@") or agent)
+                continue
+            if low.startswith("--prompt"):
+                prompt = (next(it, "").strip() or prompt)
+                continue
+            if low.startswith("--target"):
+                target = (next(it, "").strip() or target)
+                continue
+            if "=" in t:
+                k, v = t.split("=", 1)
+                k = k.strip().lower(); v = v.strip()
+                if k == "project": project = v or project
+                elif k == "agent": agent = v.lstrip("@") or agent
+                elif k == "prompt": prompt = v or prompt
+                elif k == "target": target = v or target
+                continue
+            if t.startswith("@"):
+                agent = t[1:]
+            elif project is None:
+                project = t
+            else:
+                prompt = (prompt or t)
+        if not project:
+            project = default_project or None
+        return project, agent, prompt, target
+    except Exception:
+        # Fallback to safest defaults
+        return (default_project or None), None, None, None
+
+
 async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: str | None = None, max_len: int = 3800) -> None:
     """Send a list of Markdown rows split across multiple Telegram messages.
 
@@ -530,29 +588,9 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
     debug_print("[bot]", "[PROMPTS_READY]", f"entry text={getattr(update.message, 'text', None)!r}")
     try:
         text = (update.message.text or "").strip() if update.message else ""
-        tokens = text.split()
-        # Drop the leading command token even if it has a @Bot suffix
-        if tokens and tokens[0].startswith("/prompts_ready"):
-            tokens = tokens[1:]
-        args = tokens
-        # Derive defaults: if a specific bot is used, default project from bot name
         proj_default = _get_bot_project(update) or None
-        project = None
-        agent = None
-        for tok in args:
-            t = tok.strip()
-            if not t:
-                continue
-            if t.startswith("@"):
-                agent = t[1:]
-            elif project is None:
-                project = t
-            else:
-                # If project already set, treat the next token as agent if not prefixed
-                agent = t
-        # Use default project if none provided
-        project = project or proj_default
-        items = _repo.list_prompts(project=project, agent=agent, state='ready')
+        project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_ready", default_project=proj_default)
+        items = _repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
@@ -568,26 +606,9 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
     debug_print("[bot]", "[PROMPTS_DRAFT]", f"entry text={getattr(update.message, 'text', None)!r}")
     try:
         text = (update.message.text or "").strip() if update.message else ""
-        tokens = text.split()
-        # Drop the leading command token even if it has a @Bot suffix
-        if tokens and tokens[0].startswith("/prompts_draft"):
-            tokens = tokens[1:]
-        args = tokens
         proj_default = _get_bot_project(update) or None
-        project = None
-        agent = None
-        for tok in args:
-            t = tok.strip()
-            if not t:
-                continue
-            if t.startswith("@"):
-                agent = t[1:]
-            elif project is None:
-                project = t
-            else:
-                agent = t
-        project = project or proj_default
-        items = _repo.list_prompts(project=project, agent=agent, state='draft')
+        project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_draft", default_project=proj_default)
+        items = _repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
