@@ -23,6 +23,46 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 > Recent changes: see `CHANGELOG.md`.
 
+### Repo Index (New)
+
+- Call now maintains a single-source-of-truth SQLite index `call/repo.db` for projects, agents, and prompts.
+- Table: `repo(target PRIMARY KEY, project, agent, prompt, path, state)`
+  - `target` values:
+    - projects: `p:<project>`
+    - agents: `a:<project>/<agent>`
+    - prompts: `r:<project>/<agent>/<prompt>` or `r::<prompt>` when project/agent are unknown
+  - `state`: `draft` if file path contains the substring `draft`, otherwise `ready`.
+
+- Scanning: `from call.lib import repo as _repo; _repo.scan()`
+  - Repos to scan are defined by `repos` in `.env` (e.g., `repos=agent, prompt`).
+
+- Listing:
+  - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
+  - Flat prompts: `call.lib.repo.list_prompts(project?, agent?, prompt?, state?, target?)`
+
+- Find helpers (arrays):
+  - `call.lib.repo.find_projects(project?, target?)`
+  - `call.lib.repo.find_agents(project?, agent?, target?)`
+  - `call.lib.repo.find_prompts(project?, agent?, prompt?, state?, target?)`
+
+- Wildcards and security:
+  - All filters support `*` and are merged with AND semantics.
+  - `target` also supports `*` and is applied after other filters.
+  - This allows scoping access to a single project (e.g., pass `project=MyProject` always).
+
+### Prompt format (MD/YAML)
+
+- Markdown prompts follow the Strato Prompt Framework with `METADATA` (YAML fenced) and `PROMPT` sections.
+- The index logs warnings for `.md` prompts missing valid `METADATA` and still indexes them with empty project/agent.
+
+---
+
+## Telegram Bot (Updated)
+
+- New command: `/reload` — rescans configured repositories and rebuilds the SQLite repo index.
+- `/prompts_ready` and `/prompts_draft` are powered by the repo index with `state` filtering.
+- The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
+
 ### CLI Quickstart
 
 Use the project virtual environment interpreter for consistency.
