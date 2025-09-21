@@ -704,6 +704,55 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
                 pass
     except Exception:
         pass
+    # Word-token references: try to resolve each token as project/agent/prompt and add as context refs
+    try:
+        import re as _re
+        text_for_tokens = (main_text or "").strip()
+        tokens = []
+        if text_for_tokens:
+            # Extract tokens allowing @prefix and path-like specs
+            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", text_for_tokens)
+            # Normalize: strip leading @ and trailing punctuation
+            for t in raw:
+                s = t.lstrip('@').strip().strip(',.;:')
+                if s and s not in tokens:
+                    tokens.append(s)
+        # Hard cap to avoid excessive DB hits
+        tokens = tokens[:12]
+        refs: list[dict] = []
+        for tok in tokens:
+            try:
+                cfg, err = call_api.build_runnable_instructions_config(project=None, agent=None, prompt=None, target=tok, input=None, merge=False)
+            except Exception:
+                cfg, err = None, None
+            if cfg and (getattr(cfg, 'type', None) or getattr(cfg, 'path', None) or getattr(cfg, 'url', None)):
+                try:
+                    ref = {}
+                    if getattr(cfg, 'type', None):
+                        ref["type"] = cfg.type
+                    if getattr(cfg, 'name', None):
+                        ref["name"] = cfg.name
+                    if getattr(cfg, 'path', None):
+                        ref["path"] = cfg.path
+                    if getattr(cfg, 'url', None):
+                        ref["url"] = cfg.url
+                    if getattr(cfg, 'goal', None):
+                        ref["goal"] = cfg.goal
+                    # Dedupe by (type,name,path,url)
+                    key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
+                    if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
+                        refs.append(ref)
+                except Exception:
+                    continue
+        if refs:
+            # Append to context items
+            try:
+                ctx_items.extend(refs)
+            except Exception:
+                ctx_items = refs
+    except Exception:
+        pass
+
     if ctx_items:
         payload["context"] = ctx_items
     # Replay: set only when there is reply text (caption). If there are only files, omit replay.

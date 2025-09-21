@@ -282,7 +282,16 @@ class RunnableConfig:
     project: Optional[str] = None
     prompt_override: Optional[str] = None
     merge: bool = False
+    # Deprecated: absolute path to agent.yaml/agent.md for backward compatibility
     agent_yaml_path: Optional[str] = None
+    # New path semantics: repo-relative path (e.g., 'agent/FanFab/Vasil3/agent.md', 'prompt/ready/...')
+    path: Optional[str] = None
+    # Public URL to view the card (constructed from .env GITHUB_REMOTE_ORGANIZATION_URL and GITHUB_BRANCH)
+    url: Optional[str] = None
+    # Kind of runnable: 'project' | 'agent' | 'prompt'
+    type: Optional[str] = None
+    # Optional goal/purpose from METADATA
+    goal: Optional[str] = None
     base_dir: Optional[str] = None
     instructions: str = ""
     model: str = "gpt-5"
@@ -615,13 +624,127 @@ def build_runnable_instructions_config(
     except Exception:
         pass
 
+    # Determine runnable kind and primary absolute path
+    selected_kind: str | None = None
+    selected_abs: _Path | None = None
+    if pr_path is not None:
+        selected_kind = "prompt"
+        selected_abs = _Path(pr_path)
+    elif path_p is not None:
+        selected_kind = "agent"
+        selected_abs = _Path(path_p)
+    elif proj_yaml is not None:
+        selected_kind = "project"
+        selected_abs = _Path(proj_yaml)
+
+    # Compute rel_path and url; prefer DB row values when present
+    rel_path_val: str | None = None
+    url_val: str | None = None
+    goal_val: str | None = None
+    try:
+        if selected_kind == "prompt":
+            # Use DB row if we have it
+            try:
+                if 'rec_pr' in locals() and isinstance(rec_pr, dict):
+                    rel_path_val = str(rec_pr.get("rel_path") or "") or None
+                    url_val = str(rec_pr.get("url") or "") or None
+                    goal_val = str(rec_pr.get("goal") or "") or None
+            except Exception:
+                pass
+            # Fallback compute from filesystem base
+            if (not rel_path_val) or (not url_val):
+                from call.lib.discovery import discover_prompt_repo as _dpr
+                prepo = _dpr()
+                repo_name = "prompt"
+                try:
+                    rel_inside = selected_abs.relative_to(_Path(prepo)).as_posix()
+                except Exception:
+                    rel_inside = selected_abs.name if selected_abs else ""
+                rel_path_val = rel_path_val or (f"{repo_name}/{rel_inside}" if rel_inside else None)
+                import os as _os
+                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
+                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
+                url_val = url_val or (f"{org}/{repo_name}/blob/{branch}/{rel_inside}" if (org and rel_inside) else None)
+        elif selected_kind == "agent":
+            # DB row
+            try:
+                recs_ag = call_repo.find_agents(project=proj, agent=name)
+                rec_ag = recs_ag[0] if recs_ag else None
+                if rec_ag:
+                    rel_path_val = str(rec_ag.get("rel_path") or "") or None
+                    url_val = str(rec_ag.get("url") or "") or None
+                    goal_val = str(rec_ag.get("goal") or "") or None
+            except Exception:
+                pass
+            if (not rel_path_val) or (not url_val):
+                from call.lib.discovery import discover_agent_repo as _dar
+                arepo = _dar()
+                repo_name = "agent"
+                try:
+                    rel_inside = selected_abs.relative_to(_Path(arepo)).as_posix()
+                except Exception:
+                    rel_inside = selected_abs.name if selected_abs else ""
+                rel_path_val = rel_path_val or (f"{repo_name}/{rel_inside}" if rel_inside else None)
+                import os as _os
+                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
+                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
+                url_val = url_val or (f"{org}/{repo_name}/blob/{branch}/{rel_inside}" if (org and rel_inside) else None)
+        elif selected_kind == "project":
+            try:
+                if isinstance(rec_proj, dict):
+                    rel_path_val = str(rec_proj.get("rel_path") or "") or None
+                    url_val = str(rec_proj.get("url") or "") or None
+                    goal_val = str(rec_proj.get("goal") or "") or None
+            except Exception:
+                pass
+            if (not rel_path_val) or (not url_val):
+                # Try both repos
+                import os as _os
+                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
+                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
+                rel_inside = ""
+                repo_name = ""
+                try:
+                    from call.lib.discovery import discover_agent_repo as _dar
+                    ar = _dar()
+                    rel_inside = selected_abs.relative_to(_Path(ar)).as_posix()
+                    repo_name = "agent"
+                except Exception:
+                    try:
+                        from call.lib.discovery import discover_prompt_repo as _dpr
+                        pr = _dpr()
+                        rel_inside = selected_abs.relative_to(_Path(pr)).as_posix()
+                        repo_name = "prompt"
+                    except Exception:
+                        rel_inside = selected_abs.name if selected_abs else ""
+                        repo_name = ""
+                rel_path_val = rel_path_val or ((f"{repo_name}/{rel_inside}") if (repo_name and rel_inside) else None)
+                url_val = url_val or ((f"{org}/{repo_name}/blob/{branch}/{rel_inside}") if (org and repo_name and rel_inside) else None)
+    except Exception:
+        rel_path_val, url_val = (rel_path_val or None), (url_val or None)
+
+    # Goal from metadata preference order: prompt > agent > project
+    try:
+        def _goal_from(meta: Dict[str, Any] | None) -> str:
+            if isinstance(meta, dict):
+                g = meta.get("goal") or meta.get("purpose") or meta.get("title")
+                return str(g) if g is not None else ""
+            return ""
+        goal_val = (goal_val or "") or _goal_from(pr_attrs if isinstance(pr_attrs, dict) else None) or _goal_from(ag_attrs if isinstance(ag_attrs, dict) else None) or _goal_from(proj_attrs if isinstance(proj_attrs, dict) else None) or None
+    except Exception:
+        pass
+
     cfg = RunnableConfig(
         name=name,
         project=proj,
         prompt_override=(prompt or None),
         merge=bool(merge),
-        agent_yaml_path=(str(path_p) if path_p else None),
-        base_dir=(str(path_p.parent) if path_p and getattr(path_p, 'parent', None) else None),
+        agent_yaml_path=(str(selected_abs) if selected_abs else None),
+        path=(str(rel_path_val) if rel_path_val else None),
+        url=(str(url_val) if url_val else None),
+        type=(selected_kind or None),
+        goal=(str(goal_val) if goal_val else None),
+        base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else None),
         instructions=str(instr or ""),
         model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
         attributes=attributes if isinstance(attributes, dict) else {},
@@ -842,7 +965,8 @@ async def call_async(
     # Proceed with cfg-driven run; build 'resolved' from cfg
     chosen_name = cfg.name if cfg else ""
     chosen_project = (cfg.project if cfg else None) or (project or "")
-    yaml_path = cfg.agent_yaml_path if cfg else None
+    # Prefer new repo-relative path and expose absolute path for backward-compat
+    yaml_path = (cfg.agent_yaml_path or None) if cfg else None
     resolved = {
         "project": chosen_project,
         "name": chosen_name,
@@ -915,7 +1039,7 @@ async def call_async(
             # Use the app layer context manager to build and run the agent once with a ready config.
             # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
             # when a monkeypatched test function expects (name, samples_dir, ...).
-            cm = getattr(app_call, "build_and_run_agent")
+            cm = app_call.build_and_run_agent
             _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions="", input=(input or None), target=(target or None)))
             try:
                 async with cm(cfg=_cfg_obj, user_input=((_cfg_obj.input or input) or "")) as (agent_obj, _cfg, _session):
