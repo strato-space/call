@@ -2008,8 +2008,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - attributes: dict | None (may contain 'vs')
       - agent_yaml_path: str | None
     """
-    # MCP servers configuration via YAML is no longer supported. We do not read mcp_config.yaml.
-    # Future configuration may be provided via environment variables or CLI.
+    # MCP servers configuration via YAML (optional; gated by CALL_ENABLE_MCP)
     cfg_yaml: dict | None = None
     should_start_mcp = False
 
@@ -2021,8 +2020,21 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 return None
             return (cfg_yaml.get("mcpServers") or {}).get(name)
 
-        # YAML-based MCP server boot is disabled
+        # Optionally load and start MCP servers from YAML when enabled
         mcp_servers_started: list[Any] = []
+        try:
+            cfg_path = os.environ.get("CALL_MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
+            p = Path(cfg_path)
+            if p.exists():
+                cfg_yaml = _load_yaml(p)
+                _enable = str(os.environ.get("CALL_ENABLE_MCP", "")).strip().lower() in ("1", "true", "yes", "on")
+                if _enable:
+                    try:
+                        mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
+                    except Exception:
+                        mcp_servers_started = []
+        except Exception:
+            cfg_yaml = None
 
         # Build tools based on cfg.attributes.vs (resolve via vector store index)
         tools = [WebSearchTool()]

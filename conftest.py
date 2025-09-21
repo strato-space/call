@@ -36,10 +36,10 @@ if not os.getenv("PROMPT_REPO") and pr.exists():
 if not os.getenv("AGENT_REPO") and ar.exists():
     os.environ["AGENT_REPO"] = str(ar)
 
-# Populate repo.db once per session
+# Populate repo.db once per session via filesystem sync facade
 try:
-    from call.lib import repo as _repo
-    _repo.scan()
+    from call.lib import repo_fs as _repo_fs
+    _repo_fs.scan()
 except Exception:
     # Non-fatal; individual tests may monkeypatch DB access
     pass

@@ -1,3 +1,5 @@
+# Call — Runtime and Sync
+
 ## Session ID — derivation and override (New)
 
 - Format: `chat` or `chat:thread` (agent name is not part of the session id).
@@ -15,7 +17,7 @@
   - `{ project?: string, agent?: string, prompt?: string, target?: string, context?: any, echo?: boolean, session_id?: string }`
   - Exactly one of `project|agent|prompt|target` must be provided.
   - The full payload JSON is used as the input string for the agent pipeline.
-# Call
+## Overview
 
 A minimal, extensible subsystem for invoking AI agents and prompt pipelines by name and routing inputs/outputs across your project ecosystem.
 
@@ -345,32 +347,20 @@ python -m call.cli.main exec --agent DialogPostAnalysis; echo $LASTEXITCODE
 cmd /c "python -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEVEL%"
 ```
 
-### Projects-aware discovery (Updated Sep 17, 2025)
+### Projects-aware discovery (Updated Sep 21, 2025)
 
 - **Project index**
-  - The canonical list of projects is defined in `agent/projects.yaml` (Agent repo).
-  - Each project corresponds to a subdirectory under the agent repo, for example: `agent/UxFab/`.
-  - Loader is centralized: `call.lib.discovery.load_projects_index()` reads `agent/projects.yaml` once and is used by the API and discovery paths.
+  - Projects are read from the SQLite index `call/repo.db` built by the scanner (MD-only cards).
+  - Loader is centralized: `call.lib.discovery.load_projects_index()` reads from the DB only (no filesystem access at runtime).
 
-- **Project manifest: project.yaml**
-  - Each project may define a `project.yaml` manifest in `agent/<Project>/project.yaml`.
-  - Preferred flattened structure:
-
-    ```yaml
-    name: UxFab
-    aliases: [UxFab]
-    agents:
-      AiNewsAggr:
-        desc: "..."
-        aliases: ["AI News", "ai-news-aggr"]
-        prompts: [DailyDigest, ...]
-      DialogSummary: "Сгенерировать summary ..."  # short form allowed
-    ```
-  - Backward compatibility: a nested `project:` block is also supported by the library.
+- **Project/Agent cards (MD-only)**
+  - Project card (optional): `agent/<Project>/project.md` — METADATA YAML fenced block for project-level attributes.
+  - Agent card: `agent/<Project>/<Agent>/agent.md` — METADATA YAML fenced block with optional `prompts` list (ids) and other attributes; optional PROMPT section for inline body.
+  - Cards must be Markdown; YAML files are not used at runtime. The scanner indexes MD-only cards.
 
 - **Agent location**
-  - Agents live under their project directory: `agent/<Project>/<Agent>/agent.yaml`.
-  - Example: `agent/UxFab/AiNewsAggr/agent.yaml`.
+  - Agents live under their project directory: `agent/<Project>/<Agent>/agent.md`.
+  - Example: `agent/UxFab/AiNewsAggr/agent.md`.
 
 -- **Per‑project indices**
   - The library can auto-generate `agent/<Project>/agents.yaml` when missing.

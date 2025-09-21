@@ -4,7 +4,7 @@ import types
 
 def test_call_no_data_found(monkeypatch):
     api = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     # No agents in project
     monkeypatch.setattr(repo_mod, "find_agents", lambda **kw: [], raising=True)
@@ -18,7 +18,7 @@ def test_call_no_data_found(monkeypatch):
 
 def test_call_too_many_rows(monkeypatch):
     api = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     rows = [
         {"project": "UxFab", "agent": "A1", "path": "/p/UxFab/A1/agent.yaml"},

@@ -15,7 +15,7 @@ def test_discover_repo_exists():
 def test_iter_prompts_and_metadata_reads(tmp_path, monkeypatch):
     # Provide DB rows via monkeypatch
     from importlib import import_module
-    repo_mod = import_module('call.lib.repo')
+    repo_mod = import_module('call.lib.repo_db')
     p1 = tmp_path / 'one.md'; p1.write_text('# one', encoding='utf-8')
     p2 = tmp_path / 'two.md'; p2.write_text('# two', encoding='utf-8')
     monkeypatch.setattr(
@@ -41,7 +41,7 @@ def test_iter_prompts_and_metadata_reads(tmp_path, monkeypatch):
 
 def test_prompts_filtering_by_state_and_agent(tmp_path, monkeypatch):
     from importlib import import_module
-    repo_mod = import_module('call.lib.repo')
+    repo_mod = import_module('call.lib.repo_db')
     p = tmp_path / 'file.md'; p.write_text('# x', encoding='utf-8')
     rows = [
         {"project": "FanFab", "agent": "Stratoslav", "prompt": "StratoSammary", "path": str(p), "state": "ready", "target": "StratoSammary", "engine": "", "orchestration": ""},
@@ -60,7 +60,7 @@ def test_prompts_filtering_by_state_and_agent(tmp_path, monkeypatch):
 def test_resolve_prompt_prefers_basename(tmp_path, monkeypatch):
     # With DB-only resolution we select by prompt id
     from importlib import import_module
-    repo_mod = import_module('call.lib.repo')
+    repo_mod = import_module('call.lib.repo_db')
     f = tmp_path / '33-Questioning.md'; f.write_text('# q', encoding='utf-8')
     monkeypatch.setattr(repo_mod, 'list_prompts', lambda **kw: [
         {"project": "UxFab", "agent": "DialogPostAnalysis", "prompt": "33-Questioning", "path": str(f), "state": "ready", "target": "33-Questioning", "engine": "", "orchestration": ""}

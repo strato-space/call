@@ -52,7 +52,8 @@ from call.app.utils.telegram_text import (
 )
 from call.app.call import get_project_token
 from call.app import call as app_call
-from call.lib import repo as call_repo
+from call.lib import repo_db as call_repo
+from call.lib import repo_fs as call_repo_fs
 from call.telegram_bot.filters import (
     parse_prompts_filters as _parse_filters_mod,
     parse_prompts_and_state as _parse_filters_state_mod,
@@ -574,7 +575,7 @@ async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Rescan repositories and rebuild the SQLite repo index."""
     m = Messenger(context=context, update=update)
     try:
-        res = call_repo.scan()
+        res = call_repo_fs.scan()
         scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
         await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
     except Exception as e:

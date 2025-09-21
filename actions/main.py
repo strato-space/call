@@ -13,7 +13,7 @@ from .deps import bearer_guard
 from call.lib.api import call as call_lib
 from call.lib.api import list as list_lib
 from call.lib.api import interpret_exec_payload
-from call.lib import repo as call_repo
+from call.lib import repo_db as call_repo
 
 # Expose thin wrappers for test monkeypatching
 def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
