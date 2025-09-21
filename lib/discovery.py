@@ -535,112 +535,32 @@ def _ensure_indices(rep: Path) -> None:
 
 
 def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | None:
-    """Discover agent YAML with index-first strategy and fallbacks in the AGENT repo.
+    """Resolve agent card path strictly via repo.db without filesystem fallbacks.
 
-    Priority:
-    0) Special-case AgentFab -> agent/AgentFab/agent.yaml (or project.yaml)
-    1) Index lookup in per-project agents.yaml and AgentFab/agents.yaml (by name or alias)
-    2) Directory scan in AgentFab/<AgentName>/agent.yaml
-    3) Directory scan in <Project>/<AgentName>/agent.yaml across known projects
+    Rules:
+    - Exact, case-sensitive match on agent name (after stripping leading '@').
+    - Optional project filter narrows the search.
+    - No alias resolution, no special-cases, no directory scans.
+    - Returns the path only when exactly one row matches; otherwise returns None.
     """
+    from pathlib import Path as _Path
     if not agent_name:
         return None
-    repo = discover_agent_repo()
-    query_raw = str(agent_name).strip().lstrip('@')
-    query_norm = query_raw  # exact, case-sensitive
-    debug_print("[discovery] discover_agent_yaml:", f"agent={query_norm}", f"project={(project or '')}")
-
-    # 0) Special-case: AgentFab root card; support agent.yaml or project.yaml (new schema)
-    for root_file in [repo / 'AgentFab' / 'agent.yaml', repo / 'AgentFab' / 'project.yaml']:
-        if root_file.exists():
-            if query_norm == 'AgentFab':
-                return root_file
-            # Consider aliases from root card under either top-level or 'project' block
-            try:
-                data = load_yaml(root_file) or {}
-                root_block = data.get('project') or {}
-                aliases = root_block.get('aliases') or data.get('aliases') or []
-                for al in (aliases or []):
-                    if str(al) == query_norm:
-                        return root_file
-            except Exception:
-                pass
-
-    # Ensure indices exist (best-effort) for all known projects
-    _ensure_indices(repo)
-
-    # 1) Index lookup across all project indices (projects.yaml + AgentFab)
-    index_candidates: list[tuple[Path, Path]] = []
+    name = str(agent_name).strip().lstrip("@")
+    debug_print("[discovery] discover_agent_yaml (db-only):", f"agent={name}", f"project={(project or '')}")
     try:
-        names = load_projects_index(repo)
+        from call.lib import repo as _repo
+        rows = _repo.find_agents(project=(project or None), agent=name, target=None)
     except Exception:
-        names = []
-    for pname in names:
-        base = repo / str(pname)
-        index_candidates.append((base / 'agents.yaml', base))
-    # AgentFab index (creator area)
-    for legacy in ('AgentFab',):
-        base = repo / legacy
-        index_candidates.append((base / 'agents.yaml', base))
-
-    for idx_path, base in index_candidates:
-        try:
-            if project and base.name != project:
-                continue
-            m = _load_agents_index(idx_path, base)
-            if query_norm in m:
-                debug_print("[discovery] index hit:", f"base={base.name}", f"path={m[query_norm]}")
-                return m[query_norm]
-        except Exception:
-            pass
-
-    # 2) Fallback directory scan with exact case-sensitive match across all projects
-    def find_in_dir(base: Path) -> Path | None:
-        if not base.exists():
-            return None
-        # Try exact
-        direct = base / query_norm / 'agent.yaml'
-        if direct.exists():
-            return direct
+        rows = []
+    if not rows:
         return None
-
-    # Search through all project directories
-    search_bases: list[Path] = []
-    try:
-        proj_idx = repo / 'projects.yaml'
-        if proj_idx.exists():
-            data = load_yaml(proj_idx) or {}
-            for pname in (data.get('projects') or {}).keys():
-                search_bases.append(repo / str(pname))
-    except Exception:
-        pass
-    # include AgentFab as a special creator base
-    search_bases += [repo / 'AgentFab']
-
-    # Broad fallback: include all top-level directories under repo as potential projects
-    # This allows discovery in folders like 'FanFab', 'MediaGenFab', 'UxFab', etc.
-    try:
-        for child in repo.iterdir():
-            if child.is_dir() and child not in search_bases:
-                search_bases.append(child)
-    except Exception:
-        pass
-
-    # If project is set, restrict the search to that single project directory only
-    if project:
-        proj_dir = repo / project
-        search_bases = [proj_dir]
-        debug_print("[discovery] project restricted search:", f"base={proj_dir}")
-
-        for base in search_bases:
-            try:
-                p = find_in_dir(base)
-                if p:
-                    debug_print("[discovery] fallback hit:", f"base={base.name}", f"path={p}")
-                    return p
-            except Exception:
-                pass
-    return None
+    # If more than one row matches (should only happen without project filter), do not guess.
+    if len(rows) != 1 and not project:
+        return None
+    row = rows[0] if rows else None
+    p = (row or {}).get("path") if isinstance(row, dict) else None
+    return _Path(p) if p else None
 
 
 def _read_prompt_metadata(path: Path) -> dict:
@@ -714,76 +634,25 @@ def _choose_best_prompt(paths: list[Path], *, project: str | None, agent: str | 
 
 
 def resolve_prompt(name: str, *, project: str | None = None, agent: str | None = None, prefer_ready: bool = True, repo: Path | None = None) -> Path | None:
-    """Resolve a prompt path by name using flat basename layout with disambiguation.
+    """Resolve a prompt path by querying the repo DB only. No fallbacks.
 
-    Search order (Markdown first, then YAML):
-      1) prompt/ready/<name>.md (if prefer_ready)
-      2) prompt/draft/<name>.md
-      3) prompt/ready/<name>--<Agent>.md and prompt/draft/<name>--<Agent>.md (when agent given)
-      4) Otherwise choose among <name>--*.md using metadata/policy
-      5) Repeat 1-4 for .yaml
-      6) Legacy fallback: search non-flat project folders
+    Behavior:
+    - Filter by exact prompt name (id) and optional project/agent.
+    - If prefer_ready is True, restrict to state='ready'.
+    - Return a Path only when exactly one row matches; else return None.
     """
     if not name:
         return None
-    if repo is None:
-        repo = discover_prompt_repo()
-    prompt_root = Path(repo)
-    ready = prompt_root / 'ready'
-    draft = prompt_root / 'draft'
-
-    nm = str(name).strip()
-    base_md = nm + '.md'
-    base_yaml = nm + '.yaml'
-    agent_sfx_md = f"{nm}--{(agent or '').replace(' ', '')}.md" if agent else None
-    agent_sfx_yaml = f"{nm}--{(agent or '').replace(' ', '')}.yaml" if agent else None
-
-    def try_exact(dirp: Path, fname: str | None) -> Path | None:
-        if not fname:
-            return None
-        p = dirp / fname
-        return p if p.exists() else None
-
-    # Markdown: prefer ready, then draft
-    if prefer_ready:
-        p = try_exact(ready, base_md)
-        if p:
-            return p
-    p = try_exact(draft, base_md)
-    if p:
-        return p
-
-    if agent:
-        if prefer_ready:
-            p = try_exact(ready, agent_sfx_md)
-            if p:
-                return p
-        p = try_exact(draft, agent_sfx_md)
-        if p:
-            return p
-
-    # Variants <name>--*.md
-    def variants(dirp: Path, ext: str) -> list[Path]:
-        try:
-            return sorted(list(dirp.glob(f"{nm}--*.{ext}")))
-        except Exception:
-            return []
-
-    cands: list[Path] = []
-    if prefer_ready:
-        cands += variants(ready, 'md')
-        if not cands:
-            cands += variants(draft, 'md')
-    else:
-        cands += variants(draft, 'md')
-        if not cands:
-            cands += variants(ready, 'md')
-    if cands:
-        best = _choose_best_prompt(cands, project=project, agent=agent)
-        if best:
-            return best
-
-    # YAML exact
+    try:
+        from call.lib import repo as _repo
+        rows = _repo.list_prompts(project=(project or None), agent=(agent or None), prompt=str(name).strip(), state=('ready' if prefer_ready else None))
+    except Exception:
+        rows = []
+    if len(rows) != 1:
+        return None
+    from pathlib import Path as _Path
+    p = rows[0].get('path')
+    return _Path(p) if p else None
     if prefer_ready:
         p = try_exact(ready, base_yaml)
         if p:
@@ -936,90 +805,48 @@ def _read_yaml_prompt_metadata(path: Path) -> dict:
 
 
 def iter_prompts(*, repo: Path | None = None, state: str | None = None):
-    """Yield dictionaries for prompts under draft/ and ready/.
+    """Yield prompt descriptors from the repo DB only (no filesystem reads).
 
     Each item: { prompt_id, name, agent, project, state, url, path }
-    name is the title from metadata, falls back to filename stem.
+    - name equals prompt_id (DB does not store title)
+    - url is derived from path using github_blob_url best-effort (may be None)
     """
-    if repo is None:
-        repo = discover_prompt_repo()
-    base = Path(repo)
-    states = [state] if state else ['draft', 'ready']
-    for st in states:
-        sub = base / st
-        if not sub.exists():
-            continue
-        for ext in ('md', 'yaml'):
-            for f in sorted(sub.glob(f"*.{ext}")):
-                meta = _read_prompt_metadata(f) if ext == 'md' else _read_yaml_prompt_metadata(f)
-                prompt_id = str(meta.get('id') or f.stem)
-                title = str(meta.get('title') or f.stem)
-                project = meta.get('project') or None
-                agent = meta.get('agent') or None
-                yield {
-                    'prompt_id': prompt_id,
-                    'name': title,
-                    'agent': agent,
-                    'project': project,
-                    'state': st,
-                    'url': github_blob_url(f),
-                    'path': str(f),
-                }
+    try:
+        from call.lib import repo as _repo
+        rows = _repo.list_prompts(state=(state or None))
+    except Exception:
+        rows = []
+    for r in rows or []:
+        p = r.get('path') or ''
+        url = github_blob_url(p) if p else None
+        yield {
+            'prompt_id': r.get('prompt') or '',
+            'name': r.get('prompt') or '',
+            'agent': r.get('agent') or None,
+            'project': r.get('project') or None,
+            'state': r.get('state') or '',
+            'url': url,
+            'path': p,
+        }
 
 
 def prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, repo: Path | None = None) -> list[dict]:
-    """Return a list of prompt descriptors from draft/ and ready/ with optional filters.
-
-    - Filters are case-insensitive for project and agent.
-    - Supports '*' wildcard in project, agent, and prompt (treated as '.*' with full-string match).
-    """
-    import re as _re
-
-    def _compile(pat: str | None, *, strip_spaces: bool = False):
-        if not pat:
-            return None
-        s = str(pat)
-        if strip_spaces:
-            s = s.replace(' ', '')
-        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
-
-    m_proj = _compile(project)
-    m_agent = _compile(agent, strip_spaces=True)
-    m_prompt = _compile(prompt)
-
-    out: list[dict] = []
-    for item in iter_prompts(repo=repo, state=state):
-        pj = str(item.get('project') or '')
-        ag = str(item.get('agent') or '').replace(' ', '')
-        if m_proj and not m_proj.match(pj):
-            continue
-        if m_agent and not m_agent.match(ag):
-            continue
-        if m_prompt:
-            pid = str(item.get('prompt_id') or '')
-            nm = str(item.get('name') or '')
-            if not (m_prompt.match(pid) or m_prompt.match(nm)):
-                continue
-        out.append(item)
-
-    def _nat_key(d: dict):
-        import re
-        # Prefer numeric prefix from prompt_id or name before first dash
-        src = str(d.get('prompt_id') or d.get('name') or '')
-        # Extract leading int (start or before first '-')
-        m = re.match(r"\s*(\d+)", src) or re.match(r"\s*(\d+)-", src)
-        if m:
-            try:
-                return (0, int(m.group(1)))
-            except Exception:
-                pass
-        # Fallback: put after numerics, sort by lowercase name
-        nm = str(d.get('name') or src).lower()
-        return (1, nm)
-
+    """Return prompt descriptors strictly from the repo DB (no filesystem reads)."""
     try:
-        out.sort(key=_nat_key)
+        from call.lib import repo as _repo
+        rows = _repo.list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=(state or None))
     except Exception:
-        # best-effort: keep original order on error
-        pass
+        rows = []
+    out: list[dict] = []
+    for r in rows or []:
+        p = r.get('path') or ''
+        out.append({
+            'prompt_id': r.get('prompt') or '',
+            'name': r.get('prompt') or '',
+            'agent': r.get('agent') or None,
+            'project': r.get('project') or None,
+            'state': r.get('state') or '',
+            'url': github_blob_url(p) if p else None,
+            'path': p,
+        })
     return out

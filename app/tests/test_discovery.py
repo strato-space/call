@@ -20,44 +20,42 @@ def _mod():
     return importlib.import_module('call.app.call')
 
 
-def test_special_case_agentfab_points_to_root_yaml():
+def test_db_only_discover_agent_yaml_direct_names(monkeypatch):
     m = _mod()
-    p = m.discover_agent_yaml("@AgentFab")
-    assert p is not None, "AgentFab root agent.yaml should be found"
+    repo_mod = importlib.import_module('call.lib.repo')
+    # Monkeypatch DB query
+    monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
+        {"project": "AgentFab", "agent": "AgentFab", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "project.yaml")}
+    ] if (kw.get('agent') == 'AgentFab') else [], raising=True)
+
+    p = m.discover_agent_yaml("AgentFab")
+    assert p is not None
     assert Path(p).name in {"agent.yaml", "project.yaml"}
-    # ensure it's the root card, not a sub-agent
     assert Path(p).parent.name == "AgentFab"
 
 
-# Alias @Default has been removed by policy (Sep 12, 2025). Test deleted.
-
-
-def test_agents_index_name_and_alias_for_ainewsaggr():
-    # Direct name
+def test_discover_agent_yaml_stratoslav_direct_only(monkeypatch):
     m = _mod()
-    p1 = m.discover_agent_yaml("AiNewsAggr")
-    assert p1 is not None, "AiNewsAggr should resolve via agents index"
-    assert Path(p1).parent.name == "AiNewsAggr"
-    # Alias from per-project index
-    p2 = m.discover_agent_yaml("ai-news")
-    assert p2 is not None, "Alias ai-news should resolve via agents index"
-    assert Path(p2).parent.name == "AiNewsAggr"
+    repo_mod = importlib.import_module('call.lib.repo')
+    # Only exact direct name works (no aliases)
+    monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
+        {"project": "AgentFab", "agent": "Stratoslav", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "Stratoslav" / "agent.yaml")}
+    ] if (kw.get('agent') == 'Stratoslav') else [], raising=True)
+
+    p = m.discover_agent_yaml("Stratoslav")
+    assert p is not None
+    assert Path(p).parent.name == "Stratoslav"
 
 
-def test_agents_index_alias_for_stratoslav():
-    m = _mod()
-    for alias in ("@Stratoslav", "StratoSlav", "Стратослав"):
-        p = m.discover_agent_yaml(alias)
-        assert p is not None, f"Alias {alias} should resolve via agents index"
-        assert Path(p).parent.name == "Stratoslav"
-
-
-def test_fallback_scan_still_works_for_known_project_agent_dirs():
-    # Pick an agent that exists under a project (e.g., UxFab) to validate fallback path shape
+def test_discover_agent_yaml_known_project_dir_if_db_row_present(monkeypatch):
     m = _mod()
     repo = m.discover_prompt_repo()
     candidate = repo / "UxFab" / "StratoSummarizer2" / "agent.yaml"
     if candidate.exists():
+        repo_mod = importlib.import_module('call.lib.repo')
+        monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
+            {"project": "UxFab", "agent": "StratoSummarizer2", "path": str(candidate)}
+        ] if (kw.get('agent') == 'StratoSummarizer2') else [], raising=True)
         p = m.discover_agent_yaml("StratoSummarizer2")
         assert p is not None
         assert Path(p) == candidate

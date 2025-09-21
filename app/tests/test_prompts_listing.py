@@ -12,43 +12,58 @@ def test_discover_repo_exists():
     assert (repo / 'draft').exists() or (repo / 'ready').exists()
 
 
-def test_iter_prompts_and_metadata_reads():
-    # Ensure we can iterate and basic keys exist
+def test_iter_prompts_and_metadata_reads(tmp_path, monkeypatch):
+    # Provide DB rows via monkeypatch
+    from importlib import import_module
+    repo_mod = import_module('call.lib.repo')
+    p1 = tmp_path / 'one.md'; p1.write_text('# one', encoding='utf-8')
+    p2 = tmp_path / 'two.md'; p2.write_text('# two', encoding='utf-8')
+    monkeypatch.setattr(
+        repo_mod,
+        'list_prompts',
+        lambda **kw: [
+            {"project": "FanFab", "agent": "Stratoslav", "prompt": "StratoSammary", "path": str(p1), "state": "ready", "target": "StratoSammary", "engine": "", "orchestration": ""},
+            {"project": "FanFab", "agent": "Stratoslav", "prompt": "130-QAcriteriaDefinition", "path": str(p2), "state": "ready", "target": "130-QAcriteriaDefinition", "engine": "", "orchestration": ""},
+        ],
+        raising=True,
+    )
     items = list(iter_prompts())
-    assert isinstance(items, list) or isinstance(items, list)  # generator-like turned list
-    # If there are no prompts at all, this repo is misconfigured for tests
+    assert isinstance(items, list)
     assert len(items) >= 1
     for it in items[:10]:
         assert 'prompt_id' in it
         assert 'name' in it
         assert 'state' in it
         assert it['state'] in ('draft', 'ready')
-        # URL may be None if env is missing; path should exist
         p = Path(it['path'])
         assert p.exists(), f"missing file for prompt: {it}"
 
 
-def test_prompts_filtering_by_state_and_agent():
-    # Pick any item as a reference and test filters match at least that item
+def test_prompts_filtering_by_state_and_agent(tmp_path, monkeypatch):
+    from importlib import import_module
+    repo_mod = import_module('call.lib.repo')
+    p = tmp_path / 'file.md'; p.write_text('# x', encoding='utf-8')
+    rows = [
+        {"project": "FanFab", "agent": "Stratoslav", "prompt": "StratoSammary", "path": str(p), "state": "ready", "target": "StratoSammary", "engine": "", "orchestration": ""},
+    ]
+    monkeypatch.setattr(repo_mod, 'list_prompts', lambda **kw: rows if ((kw.get('state') in (None, 'ready')) and (kw.get('agent') in (None, 'Stratoslav'))) else [], raising=True)
     items = prompts()
     assert items, "no prompts found"
     ref = items[0]
-    # Filter by state
     by_state = prompts(state=ref['state'])
     assert any(x['path'] == ref['path'] for x in by_state)
-    # Filter by agent (may be None in some prompts)
     if ref.get('agent'):
         by_agent = prompts(agent=ref['agent'])
         assert any(x['path'] == ref['path'] for x in by_agent)
 
 
-def test_resolve_prompt_prefers_basename():
-    # Try to resolve a known prompt by basename; choose the first item
-    items = prompts()
-    ref = items[0]
-    name = Path(ref['path']).stem
-    # If name contains '--Agent', strip suffix to get basename
-    base = name.split('--', 1)[0]
-    p = resolve_prompt(base)
-    assert isinstance(p, Path)
-    assert p.exists()
+def test_resolve_prompt_prefers_basename(tmp_path, monkeypatch):
+    # With DB-only resolution we select by prompt id
+    from importlib import import_module
+    repo_mod = import_module('call.lib.repo')
+    f = tmp_path / '33-Questioning.md'; f.write_text('# q', encoding='utf-8')
+    monkeypatch.setattr(repo_mod, 'list_prompts', lambda **kw: [
+        {"project": "UxFab", "agent": "DialogPostAnalysis", "prompt": "33-Questioning", "path": str(f), "state": "ready", "target": "33-Questioning", "engine": "", "orchestration": ""}
+    ] if ((kw.get('prompt') in ('33-Questioning', None))) else [], raising=True)
+    p = resolve_prompt('33-Questioning')
+    assert isinstance(p, Path) and p.exists()

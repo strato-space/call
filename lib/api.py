@@ -28,8 +28,9 @@ def interpret_target(
         if not tgt:
             return project, agent, prompt, None
 
-        # 0) Explicit path: syntax (path:project/agent/prompt) with wildcards
         low = tgt.lower()
+
+        # 0) Explicit path: syntax (path:project/agent/prompt) with wildcards
         if low.startswith("path:"):
             spec = tgt[5:]
             parts = [p for p in spec.split("/")]
@@ -164,27 +165,25 @@ def interpret_target(
             return project, agent, prompt, None
         elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
             return project, agent, prompt, ra
-        # 3) Project using repo tree
+        # 3) Project using repo DB
+        rows = []
         try:
-            tree = call_repo.list()  # list of {name, agents:[...]}
+            rows = call_repo.find_projects(project=tgt)
         except Exception:
-            tree = []
-        m = _compile_wildcard_regex(tgt)
-        proj_candidates = [n.get("name") for n in (tree or []) if n.get("name") and (m.match(n.get("name")) if m else n.get("name") == tgt)]
-        if proj_candidates and not (project or "").strip():
-            if len(proj_candidates) == 1:
-                project = proj_candidates[0]
+            rows = []
+        if rows:
+            if len(rows) == 1:
+                if not (project or "").strip():
+                    project = rows[0].get("project") or project
                 return project, agent, prompt, None
             return project, agent, prompt, {
                 "code": "TOO_MANY_ROWS",
                 "status": 400,
-                "options": [{"project": p} for p in proj_candidates],
+                "options": rows[:20],
                 "description": "Multiple projects matched your criteria",
             }
-        # Final conservative fallback: treat simple token as project
-        if (not project) and (not agent) and (not prompt) and ('*' not in tgt):
-            return tgt, agent, prompt, None
-        return project, agent, prompt, None
+        # Not resolved
+        return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "not found", "options": []}
     except Exception:
         return project, agent, prompt, None
 
@@ -392,8 +391,29 @@ def build_runnable_instructions_config(
     # Resolve selection to determine agent path and effective project/name
     path_p = None
     if (project and not (agent or prompt)):
-        name = str(project)
-        proj = project
+        # Treat provided 'project' as a project filter and resolve via public facade
+        # This ensures tests can monkeypatch api.list() and receive selection errors
+        try:
+            env = resolve_agent(project=project, agent=None, prompt=None, target=target)
+        except Exception as e:
+            return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+
+        if not isinstance(env, dict) or not env.get("ok"):
+            # Couldn’t resolve uniquely within the project
+            # Preserve original status/code/options from resolve_agent/list()
+            code = str(env.get("code")) if isinstance(env, dict) else "NO_DATA_FOUND"
+            status = int(env.get("error_code", 404)) if isinstance(env, dict) else 404
+            desc = env.get("description", "not found") if isinstance(env, dict) else "not found"
+            return None, _error_payload(
+                agent=(agent or ""), input=(input or ""), exc=desc, status=status, code=code, project=project, options=(env.get("options") if isinstance(env, dict) else None)
+            )
+
+        resolved = env.get("resolved") or {}
+        name = str(resolved.get("name") or "")
+        proj = resolved.get("project") or project
+        path = resolved.get("path")
+        from pathlib import Path as _Path
+        path_p = _Path(path) if path else None
     else:
         try:
             env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
@@ -413,10 +433,11 @@ def build_runnable_instructions_config(
                     env = None
             if not env or not env.get("ok"):
                 # Couldn’t resolve the agent or prompt into an agent
+                # Include the phrase 'not found' for CLI/tests compatibility
                 err = _error_payload(
                     agent=(agent or ""),
                     input="",
-                    exc=f"No agent found matching criteria (project={project}, agent={agent}, prompt={prompt})",
+                    exc=f"No agent found matching criteria (project={project}, agent={agent}, prompt={prompt}) — not found",
                     status=404,
                     code="NO_DATA_FOUND",
                     project=project
@@ -896,14 +917,10 @@ async def call_async(
             session_id=(session_id or None),
         )
 
-    # Prefer actual session id from app layer when available; otherwise, derive if we have chat/thread
-    try:
-        session_id_out = actual_sid if (locals().get("actual_sid") is not None) else None
-    except Exception:
-        session_id_out = None
-    if not session_id_out and (selected_chat_id is not None):
+    # Always emit agentless session id (chat[:thread]) when available, regardless of runtime actual_sid
+    session_id_out = None
+    if selected_chat_id is not None:
         try:
-            # New agentless session id: chat[:thread]
             session_id_out = (
                 f"{selected_chat_id}:{selected_thread_id}"
                 if (selected_thread_id is not None)
@@ -991,86 +1008,66 @@ def scan_project_agents(project_dir: str) -> List[Dict[str, Any]]:
 
 
 def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return hierarchical structure from the repo DB.
+
+    Delegates to call.lib.repo.list(), which applies wildcard filters and returns:
+      [ { name: <project>, agents: [ { name, aliases, prompts, path, ... } ] } ]
     """
-    Return hierarchical structure of projects and agents with prompts/aliases.
-
-    This implementation uses discovery wrappers so tests can monkeypatch
-    `load_projects_index` and `scan_project_agents`.
-    Filters support '*' wildcards (case-insensitive full-string match).
-    """
-    import re as _re
-    import builtins as _builtins
-
-    def _rx(pat: Optional[str]):
-        if not pat:
-            return None
-        s = str(pat)
-        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
-
-    rx_proj = _rx(project)
-    rx_agent = _rx(agent)
-    rx_prompt = _rx(prompt)
-
     try:
-        projects = load_projects_index()
+        return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
     except Exception:
-        projects = []
-
-    out: List[Dict[str, Any]] = []
-    for pname in (projects or []):
-        if rx_proj and (not rx_proj.match(pname)):
-            continue
-        try:
-            agents = scan_project_agents(pname)
-        except Exception:
-            agents = []
-        filt_agents: List[Dict[str, Any]] = []
-        for a in (agents or []):
-            nm = str(a.get("name") or "")
-            if rx_agent and (not rx_agent.match(nm)):
-                continue
-            if rx_prompt:
-                pr_list = a.get("prompts") or []
-                ok = any(rx_prompt.match(str(p)) for p in pr_list) if isinstance(pr_list, _builtins.list) else False
-                if not ok:
-                    continue
-            filt_agents.append({
-                "type": a.get("type", "agent"),
-                "id": a.get("id", ""),
-                "name": nm,
-                "aliases": a.get("aliases") or [],
-                "prompts": a.get("prompts") or [],
-                "path": a.get("path") or "",
-            })
-        out.append({"name": pname, "agents": filt_agents})
-    return out
+        return []
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, target: Optional[str] = None) -> Dict[str, Any]:
-    """Resolve a single agent using list() filters.
+    """Resolve a single agent strictly via repo DB queries.
 
-    Returns on success:
-      { ok: true, resolved: { project, name, path, aliases, prompts } }
-
-    On error/ambiguity, returns _error_payload with code and optional options.
+    Rules:
+    - If agent is provided: query find_agents(project, agent). Must match exactly one.
+    - Else if prompt is provided: query list_prompts(project, agent, prompt). Must match exactly one; then resolve its agent row.
+    - Else if only project is provided: ambiguity — return TOO_MANY_ROWS with options from find_agents(project).
+    - No filesystem reads, no alias expansion.
     """
     try:
-        projects = list(project=project, agent=agent, prompt=prompt, target=target)
+        # 1) Resolve by agent name
+        if isinstance(agent, str) and agent.strip():
+            rows = call_repo.find_agents(project=(project or None), agent=agent)
+            if not rows:
+                return _error_payload(agent=agent, input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+            if len(rows) > 1:
+                return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
+            r = rows[0]
+            return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+
+        # 2) Resolve by prompt
+        if isinstance(prompt, str) and prompt.strip():
+            recs = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=prompt)
+            if not recs:
+                return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+            if len(recs) > 1:
+                return _error_payload(agent=(agent or ""), input="", exc="Multiple prompts matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=recs[:20])
+            pr = recs[0]
+            pj = pr.get("project") or project
+            ag = pr.get("agent") or agent
+            # Agent row must exist
+            arows = call_repo.find_agents(project=pj, agent=ag)
+            if len(arows) != 1:
+                return _error_payload(agent=str(ag or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=pj, options=(arows or []))
+            ar = arows[0]
+            return {"ok": True, "resolved": {"project": ar.get("project"), "name": ar.get("agent"), "path": ar.get("path"), "aliases": [], "prompts": []}}
+
+        # 3) Only project provided -> ambiguous
+        if isinstance(project, str) and project.strip():
+            opts = call_repo.find_agents(project=project, agent=None)
+            if len(opts) == 1:
+                r = opts[0]
+                return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+            return _error_payload(agent=(agent or ""), input="", exc=("not found" if not opts else "Multiple agents matched your criteria"), status=(404 if not opts else 400), code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"), project=project, options=opts[:20] if opts else [])
+
+        # Nothing to resolve
+        return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
     except Exception as e:
         return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
-
-    matches: list[dict] = []
-    for pr in (projects or []):
-        for a in pr.get("agents", []) or []:
-            matches.append({"project": pr.get("name"), **a})
-
-    if not matches:
-        return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
-    if len(matches) > 1:
-        return _error_payload(agent=(agent or ""), input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=matches)
-
-    m = matches[0]
-    return {"ok": True, "resolved": {"project": m.get("project"), "name": m.get("name"), "path": m.get("path"), "aliases": m.get("aliases"), "prompts": m.get("prompts")}}
 
 
 async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]) -> Dict[str, Any]:

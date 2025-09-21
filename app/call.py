@@ -109,6 +109,7 @@ import yaml
 import inspect
 import httpx
 from openai import OpenAI
+from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
 # Import agent utilities (internal copy)
@@ -170,7 +171,61 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
- # Telegraph usage is handled via utils.telegraph_utils
+def _model_settings_from_attributes(attrs: Dict[str, Any] | None) -> ModelSettings:
+    """
+    Build ModelSettings from prompt/agent metadata attributes.
+    Expects 'model-params' mapping with optional keys:
+      - temperature, top_p, frequency_penalty, presence_penalty, max_tokens, verbosity
+      - reasoning: { effort: minimal|low|medium|high, summary?: auto|concise|detailed }
+    """
+    try:
+        params = {}
+        if isinstance(attrs, dict):
+            params = (
+                attrs.get("model-params")
+                or attrs.get("model_params")
+                or attrs.get("modelParams")
+                or {}
+            )
+        if not isinstance(params, dict):
+            params = {}
+        temp = params.get("temperature")
+        top_p = params.get("top_p") or params.get("top-p") or params.get("topp")
+        freq = params.get("frequency_penalty") or params.get("freq_penalty")
+        pres = params.get("presence_penalty") or params.get("presencePenalty")
+        max_toks = params.get("max_tokens") or params.get("max-tokens")
+        verbosity = params.get("verbosity")
+        if isinstance(verbosity, str):
+            verbosity = verbosity if verbosity in ("low", "medium", "high") else None
+        # Reasoning
+        reasoning_obj = None
+        r = params.get("reasoning")
+        if isinstance(r, dict):
+            effort = r.get("effort")
+            summary = r.get("summary") or r.get("generate_summary")
+            if isinstance(effort, str):
+                eff = effort.lower()
+                if eff in ("minimal", "low", "medium", "high"):
+                    try:
+                        if isinstance(summary, str) and summary in ("auto", "concise", "detailed"):
+                            reasoning_obj = OpenAIReasoning(effort=eff, summary=summary)
+                        else:
+                            reasoning_obj = OpenAIReasoning(effort=eff)
+                    except Exception:
+                        reasoning_obj = None
+        return ModelSettings(
+            temperature=float(temp) if temp is not None else None,
+            top_p=float(top_p) if top_p is not None else None,
+            frequency_penalty=float(freq) if freq is not None else None,
+            presence_penalty=float(pres) if pres is not None else None,
+            max_tokens=int(max_toks) if max_toks is not None else None,
+            reasoning=reasoning_obj,
+            verbosity=(verbosity if isinstance(verbosity, str) else None),
+        )
+    except Exception:
+        return ModelSettings()
+
+# Telegraph usage is handled via utils.telegraph_utils
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Bot, Message
@@ -608,11 +663,12 @@ async def send_digest_notification(
                 reply_markup=reply_markup,
             )
         else:
-            # Use the legacy function that tests monkeypatch; parse mode is handled downstream
+            # Use the legacy function that tests monkeypatch; include inline buttons when available
             message_obj = await telegram_send_message(
                 text=text,
                 chat_id=eff_chat_id,
                 message_thread_id=eff_thread_id,
+                reply_markup=reply_markup,
             )
         debug_print(f"send_digest_notification result=true publish_url={local_url}")
         return message_obj
@@ -2063,7 +2119,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                         sub_agent = Agent(
                             name=sub_cfg.name or sub_name,
                             instructions=sub_cfg.instructions or "",
-                            model_settings=ModelSettings(model=cfg.model),
+                            model=cfg.model,
+                            model_settings=_model_settings_from_attributes(getattr(sub_cfg, "attributes", None)),
                             tools=base_tools_snapshot,
                             mcp_servers=mcp_servers,
                         )
@@ -2168,9 +2225,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         agent = Agent(
             name=f"{cfg.name}",
             instructions=(cfg.instructions or ""),
-            model_settings=ModelSettings(
-                model=cfg.model,
-            ),
+            model=cfg.model,
+            model_settings=_model_settings_from_attributes(getattr(cfg, "attributes", None)),
             tools=tools,
             mcp_servers=mcp_servers,
         )

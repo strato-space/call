@@ -18,8 +18,8 @@ def test_list_includes_aliases_for_ainewsaggr():
     assert isinstance(tree, list) and len(tree) == 1
     agents = tree[0].get("agents") or []
     ai = next(a for a in agents if a.get("name") == "AiNewsAggr")
-    aliases = ai.get("aliases") or []
-    assert set(aliases) >= {"ai-news-aggr", "ai-news", "AI News", "AI News [aggr]", "AI News Aggregator"}
+    # DB-only listing does not enrich aliases — just ensure the agent exists
+    assert ai.get("name") == "AiNewsAggr"
 
 
 def test_scan_project_agents_prompts_from_agent_yaml():
@@ -31,29 +31,22 @@ def test_scan_project_agents_prompts_from_agent_yaml():
     assert set(dpa.get("prompts") or []) >= {"33-Questioning", "34-CollectUnresolvedEscalationItems"}
 
 
-def test_resolve_prompt_agent_folder_fallback(tmp_path, monkeypatch):
-    """If prompt repo lacks the file but agent folder has it, resolve_prompt should return agent folder file."""
+def test_resolve_prompt_db_only(monkeypatch, tmp_path):
+    """Resolve a prompt strictly via repo DB: single row must match and provide path."""
     from call.lib import discovery as disc
-
-    # Create fake prompt repo with no target prompt
-    prom = tmp_path / "prompt"
-    (prom / "draft").mkdir(parents=True)
-    (prom / "ready").mkdir(parents=True)
-
-    # Create fake agent repo with UxFab/TempAgent/TempPrompt.md
-    arepo = tmp_path / "agent"
-    adir = arepo / "UxFab" / "TempAgent"
-    adir.mkdir(parents=True)
-    pfile = adir / "TempPrompt.md"
+    repo_mod = __import__('importlib').import_module('call.lib.repo')
+    # Create a temporary prompt file; DB row will point here
+    pfile = tmp_path / "TempPrompt.md"
     pfile.write_text("# Temp Prompt\n", encoding="utf-8")
-
-    # Monkeypatch discovery roots
-    monkeypatch.setenv("PROMPT_REPO", str(prom))
-    monkeypatch.setenv("AGENT_REPO", str(arepo))
-
-    # Also ensure projects list contains UxFab
-    monkeypatch.setattr(disc, "load_projects_index", lambda repo=None: ["UxFab"])  # type: ignore[attr-defined]
-
+    # Monkeypatch DB to return a single matching row
+    monkeypatch.setattr(
+        repo_mod,
+        'list_prompts',
+        lambda **kw: [{
+            'project': 'UxFab', 'agent': 'TempAgent', 'prompt': 'TempPrompt', 'path': str(pfile), 'state': 'ready', 'target': 'TempPrompt', 'engine': '', 'orchestration': ''
+        }] if (kw.get('prompt') == 'TempPrompt') else [],
+        raising=True,
+    )
     resolved = disc.resolve_prompt("TempPrompt", project="UxFab", agent="TempAgent", prefer_ready=True)
     assert resolved is not None
     assert Path(resolved).resolve() == pfile.resolve()
