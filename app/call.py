@@ -171,20 +171,33 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
-def _model_settings_from_attributes(attrs: Dict[str, Any] | None) -> ModelSettings:
+def _model_settings_from_attributes(attrs: Dict[str, Any] | Any | None) -> ModelSettings:
     """
-    Build ModelSettings from prompt/agent metadata attributes.
-    Expects 'model-params' mapping with optional keys:
+    Build ModelSettings from either:
+      - a metadata attributes dict; or
+      - an object (cfg) that contains an 'attributes' dict.
+
+    Looks under the 'model-params' (and synonyms) key for:
       - temperature, top_p, frequency_penalty, presence_penalty, max_tokens, verbosity
       - reasoning: { effort: minimal|low|medium|high, summary?: auto|concise|detailed }
     """
     try:
-        params = {}
+        # Accept either a plain dict or a cfg object with .attributes
+        _attrs: Dict[str, Any] | None
         if isinstance(attrs, dict):
+            _attrs = attrs
+        else:
+            try:
+                _attrs = getattr(attrs, "attributes", None) if attrs is not None else None
+            except Exception:
+                _attrs = None
+
+        params = {}
+        if isinstance(_attrs, dict):
             params = (
-                attrs.get("model-params")
-                or attrs.get("model_params")
-                or attrs.get("modelParams")
+                _attrs.get("model-params")
+                or _attrs.get("model_params")
+                or _attrs.get("modelParams")
                 or {}
             )
         if not isinstance(params, dict):
@@ -2120,7 +2133,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             name=sub_cfg.name or sub_name,
                             instructions=sub_cfg.instructions or "",
                             model=cfg.model,
-                            model_settings=_model_settings_from_attributes(getattr(sub_cfg, "attributes", None)),
+                            model_settings=_model_settings_from_attributes(sub_cfg),
                             tools=base_tools_snapshot,
                             mcp_servers=mcp_servers,
                         )
@@ -2226,7 +2239,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             name=f"{cfg.name}",
             instructions=(cfg.instructions or ""),
             model=cfg.model,
-            model_settings=_model_settings_from_attributes(getattr(cfg, "attributes", None)),
+            model_settings=_model_settings_from_attributes(cfg),
             tools=tools,
             mcp_servers=mcp_servers,
         )
