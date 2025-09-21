@@ -14,6 +14,7 @@ from call.lib.api import call as api_call
 from call.lib.api import list as api_list
 from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
+from call.lib.api import reload as api_reload
 
 # Backward-compatible aliases for unit tests
 call_lib = api_call
@@ -181,3 +182,27 @@ def prompts(
         return JSONResponse(content=err, status_code=400)
     items = list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
     return items if isinstance(items, list) else ([items] if items else [])
+
+
+@app.get(
+    "/reload",
+    dependencies=[Depends(bearer_guard)],
+    operation_id="reload",
+    summary="Reload repository indices (agent/prompt) and rebuild repo.db",
+)
+def reload(
+    repos: str = Query("", description="Comma- or semicolon-separated list: agent,prompt"),
+    fmt: str = Query("json", description="Output format (json|yaml|text)"),
+):
+    # Parse repos parameter
+    repos_list = None
+    raw = (repos or "").strip()
+    if raw:
+        repos_list = [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
+    res = api_reload(repos=repos_list)
+    try:
+        if isinstance(res, dict) and not res.get("ok", False):
+            return JSONResponse(content=res, status_code=int(res.get("error_code", 500)))
+    except Exception:
+        pass
+    return res
