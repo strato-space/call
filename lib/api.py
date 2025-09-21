@@ -217,9 +217,34 @@ from typing import Any, Dict, List, Optional, Union
 
 # Repo-index (SQLite) interface for multi-repo scan/list (single source of truth, DB-only)
 from call.lib import repo_db as call_repo
+from call.lib import repo_fs as _repo_fs
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
 from dataclasses import dataclass, field
+
+
+def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
+
+    Delegates to repo_db.list_prompts().
+    """
+    try:
+        return call_repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
+    except Exception:
+        return []
+
+
+def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Filesystem scan and DB refresh (uniform name).
+
+    Delegates to repo_fs.reload() (or scan()) and returns its dict result.
+    """
+    try:
+        if hasattr(_repo_fs, "reload"):
+            return _repo_fs.reload(repos)
+        return _repo_fs.scan(repos)
+    except Exception as e:
+        return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
 
 
 @dataclass
@@ -1210,3 +1235,6 @@ def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Opt
             "description": str(e),
             "code": "BAD_REQUEST",
         }
+
+# Public alias for clarity in import sites (Actions/MCP)
+api_interpret_exec_payload = interpret_exec_payload

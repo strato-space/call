@@ -24,8 +24,6 @@ import os
 import faulthandler
 
 from call.lib import api as call_api
-from call.lib import repo_db as call_repo
-from call.lib import repo_fs as call_repo_fs
 from call.lib.logging import configure_logging as call_logging
 
 
@@ -234,7 +232,7 @@ def main() -> int:
     # prompts subcommand
     def cmd_prompts(args: argparse.Namespace) -> int:
         try:
-            rows = call_repo.list_prompts(
+            rows = call_api.list_prompts(
                 project=(args.project or None),
                 agent=(args.agent or None),
                 prompt=(args.prompt or None),
@@ -284,24 +282,29 @@ def main() -> int:
     p_prompts.add_argument("--format", default="table", choices=["table", "json", "yaml", "text"], help="Output format")
     p_prompts.set_defaults(func=cmd_prompts)
 
-    # scan subcommand
-    def cmd_scan(args: argparse.Namespace) -> int:
+    # reload subcommand (alias: scan)
+    def cmd_reload(args: argparse.Namespace) -> int:
         try:
             repos = None
             if args.repos:
                 raw = str(args.repos)
                 repos = [t.strip() for t in raw.replace(';', ',').split(',') if t.strip()]
-            res = call_repo_fs.scan(repos=repos)
+            res = call_api.reload(repos=repos)
             _emit_output(res, args.format or 'json')
             return 0 if (isinstance(res, dict) and res.get('ok')) else 1
         except Exception as e:
             print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
             return 1
 
-    p_scan = sub.add_parser("scan", help="Scan repositories and rebuild repo.db")
+    p_reload = sub.add_parser("reload", help="Scan repositories and rebuild repo.db")
+    p_reload.add_argument("--repos", default="", help="Comma- or semicolon-separated list (agent,prompt)")
+    p_reload.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
+    p_reload.set_defaults(func=cmd_reload)
+    # Backward-compatible alias
+    p_scan = sub.add_parser("scan", help="Alias of reload (will be removed)")
     p_scan.add_argument("--repos", default="", help="Comma- or semicolon-separated list (agent,prompt)")
     p_scan.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
-    p_scan.set_defaults(func=cmd_scan)
+    p_scan.set_defaults(func=cmd_reload)
 
     # exec subcommand
     def _parse_content_item(raw: str) -> dict:

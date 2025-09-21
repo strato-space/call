@@ -9,15 +9,20 @@ from fastapi.responses import JSONResponse
 
 from .deps import bearer_guard
 
-# Library imports
-from call.lib.api import call as call_lib
-from call.lib.api import list as list_lib
-from call.lib.api import interpret_exec_payload
-from call.lib import repo_db as call_repo
+# Library imports (API-only)
+from call.lib.api import call as api_call
+from call.lib.api import list as api_list
+from call.lib.api import api_interpret_exec_payload
+from call.lib.api import list_prompts as api_list_prompts
 
-# Expose thin wrappers for test monkeypatching
+# Backward-compatible aliases for unit tests
+call_lib = api_call
+list_lib = api_list
+interpret_exec_payload = api_interpret_exec_payload
+
+# Expose thin wrappers for test monkeypatching (delegate to API)
 def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
-    return call_repo.list_prompts(project=project, agent=agent, prompt=prompt, state=state, target=target)
+    return api_list_prompts(project=project, agent=agent, prompt=prompt, state=state, target=target)
 
 
 app = FastAPI(title="Call Actions API", version="1.0.0")
@@ -95,7 +100,9 @@ def agents(
     agent: str = Query("", description="Filter by agent (supports * wildcard)"),
     prompt: str = Query("", description="Filter by prompt (supports * wildcard)"),
 ):
-    return list_lib(project=(project or None), agent=(agent or None), prompt=(prompt or None))
+    # Resolve at call-time to honor monkeypatching
+    _list = globals().get("list_lib", api_list)
+    return _list(project=(project or None), agent=(agent or None), prompt=(prompt or None))
 
 
 @app.get(
@@ -110,7 +117,9 @@ def call(
     echo: bool = Query(False, description="If true, return structured JSON from library"),
     session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
 ):
-    res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
+    # Resolve at call-time to honor monkeypatching
+    _call = globals().get("call_lib", api_call)
+    res = _call(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -138,7 +147,9 @@ class ExecPayload(BaseModel):
 )
 def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
-    kwargs, err = interpret_exec_payload({
+    # Resolve at call-time to honor monkeypatching
+    _interpret = globals().get("interpret_exec_payload", api_interpret_exec_payload)
+    kwargs, err = _interpret({
         "project": payload.project,
         "agent": payload.agent,
         "prompt": payload.prompt,
@@ -149,7 +160,8 @@ def exec_action_post(payload: ExecPayload = Body(...)):
     })
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
-    res = call_lib(**kwargs)
+    _call = globals().get("call_lib", api_call)
+    res = _call(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))

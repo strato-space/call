@@ -14,8 +14,8 @@ except Exception as e:  # pragma: no cover
 # Library imports (no cross-reference with 'voice')
 from call.lib.api import call as call_lib
 from call.lib.api import list as list_agents
-from call.lib.api import interpret_exec_payload
-from call.lib.discovery import prompts as list_prompts
+from call.lib.api import api_interpret_exec_payload
+from call.lib.api import list_prompts
 
 
 @asynccontextmanager
@@ -63,7 +63,7 @@ def mcp_exec(
 
     Payload shape: { agent?: str, prompt?: str, target?: str, context?: any, project?: str, echo?: bool, session_id?: str }
     """
-    kwargs, err = interpret_exec_payload(payload or {})
+    kwargs, err = api_interpret_exec_payload(payload or {})
     if err:
         return err
     return call_lib(**kwargs)

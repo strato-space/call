@@ -52,8 +52,7 @@ from call.app.utils.telegram_text import (
 )
 from call.app.call import get_project_token
 from call.app import call as app_call
-from call.lib import repo_db as call_repo
-from call.lib import repo_fs as call_repo_fs
+# Use API-only facade; no direct repo_db/repo_fs imports
 from call.telegram_bot.filters import (
     parse_prompts_filters as _parse_filters_mod,
     parse_prompts_and_state as _parse_filters_state_mod,
@@ -545,7 +544,7 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_ready", default_project=proj_default)
-        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
+        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
@@ -563,7 +562,7 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_draft", default_project=proj_default)
-        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
+        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
@@ -575,7 +574,7 @@ async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Rescan repositories and rebuild the SQLite repo index."""
     m = Messenger(context=context, update=update)
     try:
-        res = call_repo_fs.scan()
+        res = call_api.reload()
         scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
         await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -593,7 +592,7 @@ async def handle_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target, state = _parse_prompts_and_state(text, command="/prompts", default_project=proj_default)
-        items = call_repo.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
+        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         header = None
         if state:
