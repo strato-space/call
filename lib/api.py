@@ -182,6 +182,34 @@ def interpret_target(
                 "options": rows[:20],
                 "description": "Multiple projects matched your criteria",
             }
+        # 3.1) Filesystem fallback: if a directory with this name exists in agent or prompt repos, treat as project
+        try:
+            from pathlib import Path as _Path
+            from call.lib.discovery import discover_agent_repo as _dar, discover_prompt_repo as _dpr
+            bases = []
+            try:
+                ar = _dar()
+                if ar:
+                    bases.append(ar)
+            except Exception:
+                pass
+            try:
+                pr = _dpr()
+                if pr:
+                    bases.append(pr)
+            except Exception:
+                pass
+            for base in bases:
+                cand = _Path(base) / tgt
+                try:
+                    if cand.exists() and cand.is_dir():
+                        if not (project or "").strip():
+                            project = tgt
+                        return project, agent, prompt, None
+                except Exception:
+                    continue
+        except Exception:
+            pass
         # Not resolved
         return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "not found", "options": []}
     except Exception:
@@ -479,6 +507,29 @@ def build_runnable_instructions_config(
                 proj_yaml = _p if _p.exists() else None
     except Exception:
         proj_yaml = None
+    # Filesystem fallback: locate project.md under agent or prompt repo when DB row is absent
+    if proj and proj_yaml is None:
+        try:
+            from call.lib.discovery import discover_agent_repo as _dar, discover_prompt_repo as _dpr
+            ar = None; pr = None
+            try:
+                ar = _dar()
+            except Exception:
+                ar = None
+            try:
+                pr = _dpr()
+            except Exception:
+                pr = None
+            if ar:
+                p = _Path(ar) / proj / "project.md"
+                if p.exists():
+                    proj_yaml = p
+            if (proj_yaml is None) and pr:
+                p = _Path(pr) / proj / "project.md"
+                if p.exists():
+                    proj_yaml = p
+        except Exception:
+            proj_yaml = None
 
     pr_path: _Path | None = None
     pr_meta: Dict[str, Any] | None = None
