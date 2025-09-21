@@ -25,12 +25,12 @@ def test_db_only_discover_agent_yaml_direct_names(monkeypatch):
     repo_mod = importlib.import_module('call.lib.repo')
     # Monkeypatch DB query
     monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
-        {"project": "AgentFab", "agent": "AgentFab", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "project.yaml")}
+        {"project": "AgentFab", "agent": "AgentFab", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "project.md")}
     ] if (kw.get('agent') == 'AgentFab') else [], raising=True)
 
     p = m.discover_agent_yaml("AgentFab")
     assert p is not None
-    assert Path(p).name in {"agent.yaml", "project.yaml"}
+    assert Path(p).name in {"agent.md", "project.md"}
     assert Path(p).parent.name == "AgentFab"
 
 
@@ -50,7 +50,7 @@ def test_discover_agent_yaml_stratoslav_direct_only(monkeypatch):
 def test_discover_agent_yaml_known_project_dir_if_db_row_present(monkeypatch):
     m = _mod()
     repo = m.discover_prompt_repo()
-    candidate = repo / "UxFab" / "StratoSummarizer2" / "agent.yaml"
+    candidate = repo / "UxFab" / "StratoSummarizer2" / "agent.md"
     if candidate.exists():
         repo_mod = importlib.import_module('call.lib.repo')
         monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [

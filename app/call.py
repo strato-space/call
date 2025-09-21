@@ -2008,20 +2008,10 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - attributes: dict | None (may contain 'vs')
       - agent_yaml_path: str | None
     """
-    # Optional YAML config to control MCP servers
+    # MCP servers configuration via YAML is no longer supported. We do not read mcp_config.yaml.
+    # Future configuration may be provided via environment variables or CLI.
     cfg_yaml: dict | None = None
-    yaml_path = _call_dir / "mcp_config.yaml"
-    # Start MCP servers only if we have a meaningful selection (KISS)
-    name_hint = str(cfg.name or "").strip()
-    proj_hint = str(cfg.project or "").strip()
-    prompt_hint = str(getattr(cfg, "prompt_override", "") or "").strip()
-    should_start_mcp = bool(name_hint or proj_hint or prompt_hint)
-    if should_start_mcp and yaml_path.exists():
-        try:
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                cfg_yaml = yaml.safe_load(f) or {}
-        except Exception:
-            cfg_yaml = None
+    should_start_mcp = False
 
     async with AsyncExitStack() as astack:
         servers = []
@@ -2031,16 +2021,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 return None
             return (cfg_yaml.get("mcpServers") or {}).get(name)
 
-        # Start ALL enabled servers from YAML via helper (lifecycle bound to astack)
+        # YAML-based MCP server boot is disabled
         mcp_servers_started: list[Any] = []
-        if should_start_mcp and cfg_yaml:
-            try:
-                mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
-            except FileNotFoundError:
-                # Graceful: skip missing commands on Windows
-                mcp_servers_started = []
-            except Exception:
-                mcp_servers_started = []
 
         # Build tools based on cfg.attributes.vs (resolve via vector store index)
         tools = [WebSearchTool()]

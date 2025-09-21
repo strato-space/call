@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Ensure repo root on sys.path so `import call.app...` works when running from call/
 _here = Path(__file__).resolve()
@@ -17,23 +18,15 @@ _repo_root = _call_dir.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-# Best-effort environment loader from call/.env
-_dotenv = _call_dir / ".env"
-if _dotenv.exists():
-    try:
-        for line in _dotenv.read_text(encoding="utf-8").splitlines():
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            if "=" not in s:
-                continue
-            k, v = s.split("=", 1)
-            key = k.strip()
-            val = v.strip().strip('"')
-            if key and key not in os.environ:
-                os.environ[key] = val
-    except Exception:
-        pass
+# Environment loader via python-dotenv
+# Load call/.env first (preferred for call subsystem), then repo-root .env for fallbacks.
+# Do not override existing OS/CI environment variables.
+try:
+    load_dotenv(dotenv_path=str(_call_dir / ".env"), override=False)
+    load_dotenv(dotenv_path=str(_repo_root / ".env"), override=False)
+except Exception:
+    # best-effort only
+    pass
 
 # Defaults for repos if not set
 pr = _repo_root / "prompt"

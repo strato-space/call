@@ -106,20 +106,26 @@ def load_projects_index(repo: Path | None = None) -> list[str]:
                     f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
                 )
             return list(pr.keys())
-    # Fallback: scan agent repo root
+    # Fallback: scan agent repo root (MD- and YAML-aware; prefer MD-only in future)
     names: list[str] = []
     try:
         for child in repo.iterdir():
             if not child.is_dir() or child.name.startswith('.'):
                 continue
-            if (child / 'project.yaml').exists():
+            # Project card present (prefer MD)
+            if (child / 'project.md').exists() or (child / 'project.yaml').exists():
                 names.append(child.name)
                 continue
+            # Any agent card under subdirs (prefer MD)
             try:
-                has_agent = any((p.is_dir() and (p / 'agent.yaml').exists()) for p in child.iterdir())
+                has_agent_md = any((p.is_dir() and (p / 'agent.md').exists()) for p in child.iterdir())
             except Exception:
-                has_agent = False
-            if has_agent:
+                has_agent_md = False
+            try:
+                has_agent_yaml = any((p.is_dir() and (p / 'agent.yaml').exists()) for p in child.iterdir())
+            except Exception:
+                has_agent_yaml = False
+            if has_agent_md or has_agent_yaml:
                 names.append(child.name)
     except Exception:
         pass
@@ -217,246 +223,85 @@ def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
 
 def scan_project_agents(project_dir) -> list[dict]:
-    """Scan a project directory for agents and extract aliases and prompts from agent.yaml.
+    """MD-first scan of a project directory for agent cards and their prompts.
 
-    Behavior mirrors the previous api._scan_project_agents to avoid regressions:
-    - Prefer unified project.yaml when present (include root project agent entry + per-agent entries from 'agents' section).
-    - Fall back to legacy layout: include root agent.yaml if present, plus all subdirs containing agent.yaml.
+    Rules:
+    - Prefer `agent.md` (with METADATA) in project root and per-agent subdirs.
+    - If `project.md` exists, include a synthetic root agent from its METADATA.
+    - Minimal backward-compat: if only `agent.yaml` exists, parse it with PyYAML when available.
     Returns a list of dicts with keys: type, id, name, aliases, prompts, path.
     """
     from pathlib import Path as _Path
     import builtins as _builtins
     out: list[dict] = []
-    if not _Path(project_dir).exists():
+    base = _Path(project_dir)
+    if not base.exists():
         return out
-    def _fallback_parse_aliases_prompts(text: str) -> tuple[list[str], list[str]]:
-        """Best-effort parser to extract aliases and prompts lists without PyYAML.
 
-        Supports two forms per key:
-          aliases: [a, b, "c"]
-          aliases:\n            - a\n            - b\n        And same for prompts.
-        """
-        import re as _re
-        aliases: list[str] = []
-        prompts: list[str] = []
-        def _strip_q(s: str) -> str:
-            s = s.strip()
-            if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
-                return s[1:-1]
-            return s
-        # inline form
-        for key, acc in (("aliases", aliases), ("prompts", prompts)):
-            m = _re.search(rf"^\s*{key}\s*:\s*\[(.*?)\]\s*$", text, _re.MULTILINE)
-            if m:
-                inside = m.group(1)
-                parts = [p.strip() for p in inside.split(',') if p.strip()]
-                acc.extend([_strip_q(p) for p in parts])
-        # block form
-        lines = text.splitlines()
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if line.strip().startswith('aliases:') or line.strip().startswith('prompts:'):
-                key = 'aliases' if line.strip().startswith('aliases:') else 'prompts'
-                acc = aliases if key == 'aliases' else prompts
-                indent = len(line) - len(line.lstrip(' '))
-                i += 1
-                while i < len(lines):
-                    l2 = lines[i]
-                    if not l2.strip():
-                        i += 1; continue
-                    ind2 = len(l2) - len(l2.lstrip(' '))
-                    if ind2 <= indent:
-                        break
-                    l2s = l2.strip()
-                    if l2s.startswith('-'):
-                        val = _strip_q(l2s[1:].strip())
-                        if val:
-                            acc.append(val)
-                    i += 1
+    def _from_md(p: _Path, *, default_name: str) -> tuple[str, list[str], list[str]]:
+        meta = _read_prompt_metadata(p) or {}
+        name = str(meta.get('id') or meta.get('name') or meta.get('title') or default_name)
+        aliases = [str(a).strip() for a in (meta.get('aliases') or [])] if isinstance(meta.get('aliases'), list) else []
+        prompts_val = meta.get('prompts') or []
+        if isinstance(prompts_val, dict):
+            prompts = [str(k) for k in prompts_val.keys()]
+        elif isinstance(prompts_val, list):
+            prompts = [str(k) for k in prompts_val]
+        else:
+            prompts = []
+        return name, aliases, prompts
+
+    # Root project.md → synthetic agent entry
+    try:
+        pmd = base / 'project.md'
+        if pmd.exists():
+            name, aliases, prompts = _from_md(pmd, default_name=base.name)
+            out.append({"type": "agent", "id": "", "name": name, "aliases": aliases, "prompts": prompts, "path": str(pmd)})
+    except Exception:
+        pass
+
+    # Root agent.md
+    try:
+        amd = base / 'agent.md'
+        if amd.exists():
+            name, aliases, prompts = _from_md(amd, default_name=base.name)
+            out.append({"type": "agent", "id": "", "name": name, "aliases": aliases, "prompts": prompts, "path": str(amd)})
+    except Exception:
+        pass
+
+    # Per-agent subdirs
+    try:
+        for child in base.iterdir():
+            if not child.is_dir() or child.name.startswith('.'):
                 continue
-            i += 1
-        return aliases, prompts
-
-    # 0) Prefer new unified project.yaml schema when present
-    try:
-        proj_yaml = _Path(project_dir) / 'project.yaml'
-        if proj_yaml.exists():
-            try:
-                y = load_yaml(proj_yaml) or {}
-            except Exception:
-                # If YAML lib missing or parse fails, best-effort from text
+            amd = child / 'agent.md'
+            if amd.exists():
                 try:
-                    y = {}
-                    text = proj_yaml.read_text(encoding='utf-8')
-                    # Attempt to collect agents keys in a naive way
-                    # agents: \n  Name: ...
-                    import re as _re
-                    agents_keys = []
-                    for m in _re.finditer(r"^\s*agents\s*:\s*$", text, _re.MULTILINE):
-                        # collect following lines of '  Key:' until dedent or blank
-                        pass
-                    # Fallback: leave y empty; legacy scan covers agents below
+                    name, aliases, prompts = _from_md(amd, default_name=child.name)
+                    out.append({"type": "agent", "id": "", "name": name, "aliases": aliases, "prompts": prompts, "path": str(amd)})
                 except Exception:
-                    y = {}
-            # Root project agent
-            root_block = {}
-            if isinstance(y.get('project'), dict):
-                root_block = y.get('project') or {}
-            name = str(root_block.get('name') or y.get('name') or _Path(project_dir).name)
-            # aliases may be at top-level, under project, or under root
-            aliases_val = root_block.get('aliases', y.get('aliases', []))
-            aliases = [str(a).strip() for a in (aliases_val or [])] if isinstance(aliases_val, _builtins.list) else []
-            # prompts may be mapping or list; accept both
-            prompts_val = root_block.get('prompts', y.get('prompts', {}))
-            if isinstance(prompts_val, dict):
-                prompts_list = [str(k) for k in prompts_val.keys()]
-            elif isinstance(prompts_val, _builtins.list):
-                prompts_list = [str(k) for k in prompts_val]
+                    continue
             else:
-                prompts_list = []
-            out.append({
-                "type": "agent",
-                "id": "",
-                "name": name,
-                "aliases": aliases,
-                "prompts": prompts_list,
-                "path": str(proj_yaml),
-            })
-            # Agents section: dict of name -> (desc | {aliases, prompts, desc})
-            agents_section = root_block.get('agents', y.get('agents', {}))
-            if isinstance(agents_section, dict):
-                for nm, spec in agents_section.items():
-                    ag_name = str(nm)
-                    ag_aliases: list[str] = []
-                    ag_prompts: list[str] = []
-                    if isinstance(spec, dict):
-                        av = spec.get('aliases', [])
-                        if isinstance(av, _builtins.list):
-                            ag_aliases = [str(a).strip() for a in av if str(a).strip()]
-                        pv = spec.get('prompts', {})
-                        if isinstance(pv, dict):
-                            ag_prompts = [str(k) for k in pv.keys()]
-                        elif isinstance(pv, _builtins.list):
-                            ag_prompts = [str(k) for k in pv]
-                    # Enrich from per-agent agent.yaml if present
-                    ay = _Path(project_dir) / ag_name / 'agent.yaml'
+                # minimal YAML compat
+                ay = child / 'agent.yaml'
+                if ay.exists():
                     try:
-                        if ay.exists():
-                            try:
-                                y2 = load_yaml(ay) or {}
-                                if not ag_aliases:
-                                    raw = y2.get('aliases') or []
-                                    if isinstance(raw, _builtins.list):
-                                        ag_aliases = [str(a).strip() for a in raw if str(a).strip()]
-                                if not ag_prompts:
-                                    pv2 = y2.get('prompts') or []
-                                    if isinstance(pv2, dict):
-                                        ag_prompts = [str(k) for k in pv2.keys()]
-                                    elif isinstance(pv2, _builtins.list):
-                                        ag_prompts = [str(k) for k in pv2]
-                            except Exception:
-                                text2 = ay.read_text(encoding='utf-8')
-                                als, prs = _fallback_parse_aliases_prompts(text2)
-                                if not ag_aliases:
-                                    ag_aliases = als
-                                if not ag_prompts:
-                                    ag_prompts = prs
+                        y = load_yaml(ay) or {}
+                        name = str(y.get('id') or y.get('name') or child.name)
+                        aliases = [str(a).strip() for a in (y.get('aliases') or [])] if isinstance(y.get('aliases'), list) else []
+                        pv = y.get('prompts') or []
+                        if isinstance(pv, dict):
+                            prompts = [str(k) for k in pv.keys()]
+                        elif isinstance(pv, list):
+                            prompts = [str(k) for k in pv]
+                        else:
+                            prompts = []
+                        out.append({"type": "agent", "id": "", "name": name, "aliases": aliases, "prompts": prompts, "path": str(ay)})
                     except Exception:
-                        pass
-                    # Resolve path: prefer subdir/agent.yaml when present; else project.yaml as definition source
-                    ay = _Path(project_dir) / ag_name / 'agent.yaml'
-                    path_str = str(ay) if ay.exists() else str(proj_yaml)
-                    out.append({
-                        "type": "agent",
-                        "id": "",
-                        "name": ag_name,
-                        "aliases": ag_aliases,
-                        "prompts": ag_prompts,
-                        "path": path_str,
-                    })
-            return out
+                        continue
     except Exception:
-        # best-effort; fall back to legacy layout
         pass
-    # 1) Legacy: include root project agent if present (e.g., AgentFab/agent.yaml)
-    try:
-        root_ay = _Path(project_dir) / 'agent.yaml'
-        if root_ay.exists():
-            try:
-                y = load_yaml(root_ay) or {}
-            except Exception:
-                try:
-                    y = {}
-                    text = root_ay.read_text(encoding='utf-8')
-                    als, prs = _fallback_parse_aliases_prompts(text)
-                except Exception:
-                    als, prs = ([], [])
-                # We'll use als/prs below when filling aliases/prompts
-            name = _Path(project_dir).name
-            try:
-                id_or_name = y.get('id') or y.get('name')
-                if isinstance(id_or_name, str) and id_or_name.strip():
-                    name = id_or_name.strip()
-            except Exception:
-                pass
-            aliases: list[str] = []
-            raw_aliases = (y.get('aliases') if isinstance(y, dict) else None) or []
-            if isinstance(raw_aliases, _builtins.list):
-                aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
-            prompts_list: list[str] = []
-            raw_prompts = (y.get('prompts') if isinstance(y, dict) else None) or {}
-            if isinstance(raw_prompts, dict):
-                prompts_list = [str(k) for k in raw_prompts.keys()]
-            out.append({
-                "type": "agent",
-                "id": "",
-                "name": name,
-                "aliases": aliases if aliases else (als if 'als' in locals() else []),
-                "prompts": prompts_list if prompts_list else (prs if 'prs' in locals() else []),
-                "path": str(root_ay),
-            })
-    except Exception:
-        # best-effort only
-        pass
-    for child in _Path(project_dir).iterdir():
-        if not child.is_dir():
-            continue
-        ay = child / 'agent.yaml'
-        if not ay.exists():
-            continue
-        try:
-            y = load_yaml(ay) or {}
-        except Exception:
-            try:
-                y = {}
-                text = ay.read_text(encoding='utf-8')
-                als, prs = _fallback_parse_aliases_prompts(text)
-            except Exception:
-                als, prs = ([], [])
-        name = child.name
-        try:
-            id_or_name = y.get('id') or y.get('name')
-            if isinstance(id_or_name, str) and id_or_name.strip():
-                name = id_or_name.strip()
-        except Exception:
-            pass
-        aliases: list[str] = []
-        raw_aliases = (y.get('aliases') if isinstance(y, dict) else None) or []
-        if isinstance(raw_aliases, _builtins.list):
-            aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
-        prompts_list: list[str] = []
-        raw_prompts = (y.get('prompts') if isinstance(y, dict) else None) or {}
-        if isinstance(raw_prompts, dict):
-            prompts_list = [str(k) for k in raw_prompts.keys()]
-        out.append({
-            "type": "agent",
-            "id": "",
-            "name": name,
-            "aliases": aliases if aliases else (als if 'als' in locals() else []),
-            "prompts": prompts_list if prompts_list else (prs if 'prs' in locals() else []),
-            "path": str(ay),
-        })
+
     return out
 
 

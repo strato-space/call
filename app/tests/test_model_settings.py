@@ -41,3 +41,27 @@ def test_model_settings_from_dict_with_synonyms():
     assert ms.top_p == 0.7
     assert ms.presence_penalty == 0.5
     assert ms.frequency_penalty == 0.2
+
+
+def test_model_settings_reasoning_summary_detailed():
+    call_mod = importlib.import_module("call.app.call")
+
+    class _Cfg:
+        def __init__(self):
+            self.attributes = {
+                "model-params": {
+                    "reasoning": {
+                        "effort": "high",
+                        "summary": "detailed",
+                    }
+                }
+            }
+
+    cfg = _Cfg()
+    ms = call_mod._model_settings_from_attributes(cfg)
+    r = getattr(ms, "reasoning", None)
+    assert r is not None
+    eff = getattr(r, "effort", None)
+    summ = getattr(r, "summary", None)
+    assert eff == "high"
+    assert summ == "detailed"

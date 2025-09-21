@@ -12,7 +12,7 @@ def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
             "resolved": {
                 "project": kwargs.get("project") or project,
                 "name": kwargs.get("agent") or name,
-                "path": "/p/%s/%s/agent.yaml" % (project, name),
+                "path": "/p/%s/%s/agent.md" % (project, name),
                 "aliases": [],
                 "prompts": ["Default"],
             },

@@ -53,10 +53,10 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
   - `target` also supports `*` and is applied after other filters.
   - This allows scoping access to a single project (e.g., pass `project=MyProject` always).
 
-### Prompt format (MD/YAML)
+### Prompt format (MD-only)
 
-- Markdown prompts follow the Strato Prompt Framework with `METADATA` (YAML fenced) and `PROMPT` sections.
-- The index logs warnings for `.md` prompts missing valid `METADATA` and still indexes them with empty project/agent.
+- Prompts and cards are Markdown-only. Each file follows the Strato Prompt Framework with a `METADATA` fenced YAML block and an optional `PROMPT` block.
+- The index logs warnings for `.md` prompts missing valid `METADATA`. In strict paths (e.g., CLI `--print-instructions`), malformed or missing `METADATA` surfaces a 400 error.
 
 ---
 
@@ -183,7 +183,7 @@ $env:CALL_DEBUG=1; python -m call.cli.main call --project UxFab --agent DialogPo
 {
   "ok": true,
   "agent": "AgentName",
-  "agent_path": ".../agent.yaml",
+  "agent_path": ".../agent.md",
   "final_output": "...",
   "echo": false,
   "session_id": "AgentName:-100123:10"

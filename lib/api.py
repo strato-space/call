@@ -300,6 +300,10 @@ def build_runnable_instructions_config(
         return meta, body
 
     def _load_card(path: _Path | None) -> tuple[Dict[str, Any], str, str]:
+        """MD-only loader: returns (metadata_dict, body_text, raw_text) for Markdown cards.
+
+        For non-existent paths or non-MD files, returns empty values; caller enforces strictness.
+        """
         if not path or not _Path(path).exists():
             return {}, "", ""
         text = _read(path)
@@ -308,14 +312,8 @@ def build_runnable_instructions_config(
         if str(path).lower().endswith(('.md', '.markdown')):
             meta, body = _parse_md(text)
             return meta if isinstance(meta, dict) else {}, body, text
-        try:
-            y = _yaml.safe_load(text) or {}
-            if not isinstance(y, dict):
-                y = {}
-            instr = str(y.get("instructions") or y.get("goal") or "")
-            return y, instr, text
-        except Exception:
-            return {}, "", text
+        # Non-MD: caller will error out if strict
+        return {}, "", ""
 
     # 0) Target interpretation (prompt > agent > project) and wildcard prompt resolution
     try:
@@ -472,6 +470,15 @@ def build_runnable_instructions_config(
             if rec_pr and rec_pr.get("path"):
                 _pp = _Path(rec_pr["path"])  # type: ignore[index]
                 pr_path = _pp if _pp.exists() else None
+            # Shadow overlay: prefer prompt/ready/<prompt>.md if present on disk
+            try:
+                from call.lib.discovery import discover_prompt_repo as _disc_prepo
+                prepo = _disc_prepo()
+                shadow = _Path(prepo) / "ready" / f"{prompt.strip()}.md"
+                if shadow.exists():
+                    pr_path = shadow
+            except Exception:
+                pass
     except Exception as e:
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 
@@ -479,6 +486,22 @@ def build_runnable_instructions_config(
     proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
     ag_attrs, ag_instr, ag_raw = _load_card(path_p)
     pr_attrs, pr_instr, pr_raw = _load_card(_Path(pr_path) if pr_path else None)
+
+    # Strict validation: cards must be Markdown; prompt MD must contain METADATA
+    def _is_md(p: _Path | None) -> bool:
+        try:
+            return bool(p and str(p).lower().endswith((".md", ".markdown")))
+        except Exception:
+            return False
+    # Agent card must be MD when present
+    if path_p and not _is_md(path_p):
+        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Agent card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
+    # Prompt card must be MD when present
+    if pr_path and not _is_md(_Path(pr_path)):
+        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
+    # Prompt MD must contain METADATA YAML
+    if pr_path and _is_md(_Path(pr_path)) and not (isinstance(pr_attrs, dict) and pr_attrs):
+        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt MD missing or invalid METADATA YAML", status=400, code="BAD_CARD_FORMAT", project=proj)
 
     # Build instructions and attributes based on merge
     attributes: Dict[str, Any] = {}
