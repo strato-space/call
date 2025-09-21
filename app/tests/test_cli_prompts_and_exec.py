@@ -230,13 +230,12 @@ bad: [missing: bracket
             "--prompt", "33-Questioning",
             "--print-instructions",
         ])
-        # In DB-only mode, printing may succeed even with a shadow malformed file; accept success
-        if code != 0 and out.strip().startswith("{"):
-            data = json.loads(out)
-            assert data.get("ok") is False
-            assert data.get("error_code") in (400, 404, 500)
-        else:
-            assert code == 0
+        # Strict MD-only: malformed METADATA should produce a 400 envelope
+        assert code != 0
+        data = json.loads(out)
+        assert data.get("ok") is False
+        assert data.get("error_code") == 400
+        assert "bad_card_format" in (data.get("code", "").lower()) or ("metadata" in (data.get("description", "").lower()))
     finally:
         try:
             bad.unlink(missing_ok=True)

@@ -45,7 +45,7 @@ def test_call_success_with_prompt_override(monkeypatch):
             "resolved": {
                 "project": kwargs.get("project") or "UxFab",
                 "name": kwargs.get("agent") or "NewsAggr",
-                "path": "/p/UxFab/NewsAggr/agent.yaml",
+                "path": "/p/UxFab/NewsAggr/agent.md",
                 "aliases": ["NA"],
                 "prompts": ["Default", "Draft"],
             },

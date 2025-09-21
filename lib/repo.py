@@ -160,16 +160,34 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
         pdir = Path(arepo) / pname
         if not pdir.exists():
             continue
-        # Project-level definition
-        proj_yaml = pdir / "project.yaml"
+        # Project-level definition: MD-only
         proj_md   = pdir / "project.md"
-        proj_path = str(proj_yaml if proj_yaml.exists() else (proj_md if proj_md.exists() else pdir))
         eng = ""; orch = ""
-        try:
-            # Prefer MD METADATA if available, else YAML top-level keys
-            if proj_md.exists():
+        if proj_md.exists():
+            try:
+                text = proj_md.read_text(encoding="utf-8")
+                y0 = text.index("<!-- METADATA:START -->")
+                y1 = text.index("```yaml", y0) + len("```yaml")
+                y2 = text.index("```", y1)
+                import yaml as _yaml
+                meta = _yaml.safe_load(text[y1:y2]) or {}
+                eng = str(meta.get("engine") or "")
+                orch = str(meta.get("orchestration") or "")
+            except Exception:
+                pass
+            # Target for project rows: project name only
+            _upsert_row(cur, target=pname, project=pname, agent="", prompt="", path=str(proj_md), state="", engine=eng, orchestration=orch)
+            scanned += 1
+
+        # Root project agent (optional, MD-only)
+        for fname in ("agent.md",):
+            f = pdir / fname
+            if f.exists():
+                ag_name = _read_agent_name(f, default=pname)
+                eng = ""; orch = ""
+                prompts_list: list[str] = []
                 try:
-                    text = proj_md.read_text(encoding="utf-8")
+                    text = f.read_text(encoding="utf-8")
                     y0 = text.index("<!-- METADATA:START -->")
                     y1 = text.index("```yaml", y0) + len("```yaml")
                     y2 = text.index("```", y1)
@@ -177,56 +195,11 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                     meta = _yaml.safe_load(text[y1:y2]) or {}
                     eng = str(meta.get("engine") or "")
                     orch = str(meta.get("orchestration") or "")
-                except Exception:
-                    pass
-            if (not eng or not orch) and proj_yaml.exists():
-                try:
-                    import yaml as _yaml
-                    y = _yaml.safe_load(proj_yaml.read_text(encoding="utf-8")) or {}
-                    eng = eng or str(y.get("engine") or "")
-                    orch = orch or str(y.get("orchestration") or "")
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # Target for project rows: project name only
-        _upsert_row(cur, target=pname, project=pname, agent="", prompt="", path=proj_path, state="", engine=eng, orchestration=orch)
-        scanned += 1
-
-        # Root project agent (optional)
-        for fname in ("agent.yaml", "agent.md"):
-            f = pdir / fname
-            if f.exists():
-                ag_name = _read_agent_name(f, default=pname)
-                eng = ""; orch = ""
-                prompts_list: list[str] = []
-                try:
-                    if str(f).lower().endswith(('.md', '.markdown')):
-                        try:
-                            text = f.read_text(encoding="utf-8")
-                            y0 = text.index("<!-- METADATA:START -->")
-                            y1 = text.index("```yaml", y0) + len("```yaml")
-                            y2 = text.index("```", y1)
-                            import yaml as _yaml
-                            meta = _yaml.safe_load(text[y1:y2]) or {}
-                            eng = str(meta.get("engine") or "")
-                            orch = str(meta.get("orchestration") or "")
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            import yaml as _yaml
-                            y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-                            eng = str(y.get("engine") or "")
-                            orch = str(y.get("orchestration") or "")
-                            # Collect prompts from agent.yaml (dict keys or list)
-                            pv = y.get("prompts") or []
-                            if isinstance(pv, dict):
-                                prompts_list = [str(k) for k in pv.keys()]
-                            elif isinstance(pv, builtins.list):
-                                prompts_list = [str(k) for k in pv]
-                        except Exception:
-                            pass
+                    pv = meta.get("prompts") or []
+                    if isinstance(pv, dict):
+                        prompts_list = [str(k) for k in pv.keys()]
+                    elif isinstance(pv, builtins.list):
+                        prompts_list = [str(k) for k in pv]
                 except Exception:
                     pass
                 # Target for agent rows: agent name only
@@ -241,44 +214,31 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                         pass
                 break
 
-        # Per-agent subdirectories
+        # Per-agent subdirectories (MD-only)
         try:
             for child in pdir.iterdir():
                 if not child.is_dir() or child.name.startswith('.'):
                     continue
-                for fname in ("agent.yaml", "agent.md"):
+                for fname in ("agent.md",):
                     f = child / fname
                     if f.exists():
                         ag_name = _read_agent_name(f, default=child.name)
                         eng = ""; orch = ""
                         prompts_list: list[str] = []
                         try:
-                            if str(f).lower().endswith(('.md', '.markdown')):
-                                try:
-                                    text = f.read_text(encoding="utf-8")
-                                    y0 = text.index("<!-- METADATA:START -->")
-                                    y1 = text.index("```yaml", y0) + len("```yaml")
-                                    y2 = text.index("```", y1)
-                                    import yaml as _yaml
-                                    meta = _yaml.safe_load(text[y1:y2]) or {}
-                                    eng = str(meta.get("engine") or "")
-                                    orch = str(meta.get("orchestration") or "")
-                                except Exception:
-                                    pass
-                            else:
-                                try:
-                                    import yaml as _yaml
-                                    y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-                                    eng = str(y.get("engine") or "")
-                                    orch = str(y.get("orchestration") or "")
-                                    # Collect prompts from agent.yaml (dict keys or list)
-                                    pv = y.get("prompts") or []
-                                    if isinstance(pv, dict):
-                                        prompts_list = [str(k) for k in pv.keys()]
-                                    elif isinstance(pv, builtins.list):
-                                        prompts_list = [str(k) for k in pv]
-                                except Exception:
-                                    pass
+                            text = f.read_text(encoding="utf-8")
+                            y0 = text.index("<!-- METADATA:START -->")
+                            y1 = text.index("```yaml", y0) + len("```yaml")
+                            y2 = text.index("```", y1)
+                            import yaml as _yaml
+                            meta = _yaml.safe_load(text[y1:y2]) or {}
+                            eng = str(meta.get("engine") or "")
+                            orch = str(meta.get("orchestration") or "")
+                            pv = meta.get("prompts") or []
+                            if isinstance(pv, dict):
+                                prompts_list = [str(k) for k in pv.keys()]
+                            elif isinstance(pv, builtins.list):
+                                prompts_list = [str(k) for k in pv]
                         except Exception:
                             pass
                         # Target for agent rows: agent name only
@@ -341,12 +301,10 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
             try:
                 # Recurse: some repos may nest files or keep helper folders
                 md_list = builtins.list(root.rglob("*.md"))
-                yml_list = builtins.list(root.rglob("*.yml"))
-                yaml_list = builtins.list(root.rglob("*.yaml"))
             except Exception as ge:
                 debug_print("[repo.scan] prompt glob error", f"root={root}", str(ge))
-                md_list, yml_list, yaml_list = ([], [], [])
-            files = md_list + yaml_list + yml_list
+                md_list = []
+            files = md_list
             debug_print("[repo.scan] prompt root", f"path={root}", f"files={len(files)}")
             for p in files:
                 proj = ""
@@ -354,27 +312,19 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                 pr_id = ""
                 eng = ""; orch = ""
                 try:
-                    if p.suffix.lower() == ".md":
-                        meta = _read_prompt_metadata(p) or {}
-                        # Warn when METADATA is missing or empty
-                        if not meta:
-                            debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}")
-                        pr_id = str(meta.get("id") or p.stem)
-                        proj = str(meta.get("project") or "")
-                        agent = str(meta.get("agent") or "")
-                        eng = str(meta.get("engine") or "")
-                        orch = str(meta.get("orchestration") or "")
-                        # Warn when project/agent are not provided in metadata
-                        if (not proj) or (not agent):
-                            debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
-                    else:
-                        import yaml
-                        y = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-                        pr_id = str(y.get("id") or p.stem)
-                        proj = str(y.get("project") or "")
-                        agent = str(y.get("agent") or "")
-                        eng = str(y.get("engine") or "")
-                        orch = str(y.get("orchestration") or "")
+                    # MD-only
+                    meta = _read_prompt_metadata(p) or {}
+                    # Warn when METADATA is missing or empty
+                    if not meta:
+                        debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}")
+                    pr_id = str(meta.get("id") or p.stem)
+                    proj = str(meta.get("project") or "")
+                    agent = str(meta.get("agent") or "")
+                    eng = str(meta.get("engine") or "")
+                    orch = str(meta.get("orchestration") or "")
+                    # Warn when project/agent are not provided in metadata
+                    if (not proj) or (not agent):
+                        debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
                 except Exception:
                     pr_id = p.stem
                 # Target for prompt rows: prompt id/name only
