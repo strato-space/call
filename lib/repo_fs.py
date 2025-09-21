@@ -275,3 +275,7 @@ def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
             conn.close()
         except Exception:
             pass
+
+def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
+    """Uniform alias for scan(); prefer this name in upper layers."""
+    return scan(repos=repos)
