@@ -4,9 +4,10 @@ import types
 
 def test_call_no_data_found(monkeypatch):
     api = importlib.import_module("call.lib.api")
+    repo_mod = importlib.import_module("call.lib.repo")
 
-    # list() returns empty
-    monkeypatch.setattr(api, "list", lambda **kwargs: [])
+    # No agents in project
+    monkeypatch.setattr(repo_mod, "find_agents", lambda **kw: [], raising=True)
 
     res = api.call(project="UxFab", agent=None, prompt=None, input="hi")
     assert isinstance(res, dict)
@@ -17,20 +18,13 @@ def test_call_no_data_found(monkeypatch):
 
 def test_call_too_many_rows(monkeypatch):
     api = importlib.import_module("call.lib.api")
+    repo_mod = importlib.import_module("call.lib.repo")
 
-    def fake_list(**kwargs):
-        return [
-            {
-                "name": "UxFab",
-                "type": "project",
-                "agents": [
-                    {"type": "agent", "name": "A1", "aliases": [], "prompts": ["P1"], "path": "/p/UxFab/A1/agent.yaml"},
-                    {"type": "agent", "name": "A2", "aliases": [], "prompts": ["P1"], "path": "/p/UxFab/A2/agent.yaml"},
-                ],
-            }
-        ]
-
-    monkeypatch.setattr(api, "list", fake_list)
+    rows = [
+        {"project": "UxFab", "agent": "A1", "path": "/p/UxFab/A1/agent.yaml"},
+        {"project": "UxFab", "agent": "A2", "path": "/p/UxFab/A2/agent.yaml"},
+    ]
+    monkeypatch.setattr(repo_mod, "find_agents", lambda **kw: rows, raising=True)
 
     res = api.call(project="UxFab", agent=None, prompt=None, input="hi")
     assert isinstance(res, dict)
