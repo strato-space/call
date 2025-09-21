@@ -30,12 +30,27 @@ def _load_repos_from_env() -> List[str]:
     return [t for t in toks if t in {"agent", "prompt"}]
 
 
-def _upsert_row(cur, *, target: str, project: str, agent: str, prompt: str, path: str, state: str | None = None, engine: str | None = None, orchestration: str | None = None) -> None:
+def _upsert_row(
+    cur,
+    *,
+    target: str,
+    project: str,
+    agent: str,
+    prompt: str,
+    path: str,
+    state: str | None = None,
+    engine: str | None = None,
+    orchestration: str | None = None,
+    type: str | None = None,
+    rel_path: str | None = None,
+    url: str | None = None,
+    goal: str | None = None,
+) -> None:
     try:
-        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration FROM repo WHERE target = ?", (target,))
+        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal FROM repo WHERE target = ?", (target,))
         old = cur.fetchone()
         if old is not None:
-            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch = [x or "" for x in old]
+            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch, old_type, old_rel, old_url, old_goal = [x or "" for x in old]
             eff_project = project or old_project
             eff_agent = agent or old_agent
             eff_prompt = prompt or old_prompt
@@ -52,16 +67,20 @@ def _upsert_row(cur, *, target: str, project: str, agent: str, prompt: str, path
             eff_state = (state or "") or old_state
             eff_engine = (engine or "") or old_engine
             eff_orch = (orchestration or "") or old_orch
+            eff_type = (type or "") or old_type
+            eff_rel = (rel_path or "") or old_rel
+            eff_url = (url or "") or old_url
+            eff_goal = (goal or "") or old_goal
             if old_path and eff_path and (old_path != eff_path):
                 debug_print("[repo.scan] overwrite", f"target={target}", f"old={old_path}", f"new={eff_path}")
             cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch),
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch, eff_type, eff_rel, eff_url, eff_goal),
             )
         else:
             cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, project, agent, prompt, path, state or "", engine or "", orchestration or ""),
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, project, agent, prompt, path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or "")),
             )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
@@ -102,6 +121,32 @@ def _scan_agent_repo(cur) -> int:
     except Exception:
         projects = []
 
+    # Helpers for path/url composition
+    import os as _os
+    GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
+    GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
+
+    def _rel_url(abs_path: Path) -> tuple[str, str]:
+        try:
+            rel_inside = abs_path.relative_to(Path(arepo)).as_posix()
+        except Exception:
+            rel_inside = abs_path.name
+        rel_with_repo = f"agent/{rel_inside}"
+        url = f"{GITHUB_ORG}/agent/blob/{GITHUB_BRANCH}/{rel_inside}" if (GITHUB_ORG and rel_inside) else ""
+        return rel_with_repo, url
+
+    def _read_meta(md_path: Path) -> dict:
+        try:
+            text = md_path.read_text(encoding="utf-8")
+            y0 = text.index("<!-- METADATA:START -->")
+            y1 = text.index("```yaml", y0) + len("```yaml")
+            y2 = text.index("```", y1)
+            import yaml as _yaml
+            meta = _yaml.safe_load(text[y1:y2]) or {}
+            return meta if isinstance(meta, dict) else {}
+        except Exception:
+            return {}
+
     for pname in projects:
         pdir = Path(arepo) / pname
         if not pdir.exists():
@@ -110,18 +155,26 @@ def _scan_agent_repo(cur) -> int:
         proj_md = pdir / "project.md"
         eng = ""; orch = ""
         if proj_md.exists():
-            try:
-                text = proj_md.read_text(encoding="utf-8")
-                y0 = text.index("<!-- METADATA:START -->")
-                y1 = text.index("```yaml", y0) + len("```yaml")
-                y2 = text.index("```", y1)
-                import yaml as _yaml
-                meta = _yaml.safe_load(text[y1:y2]) or {}
-                eng = str(meta.get("engine") or "")
-                orch = str(meta.get("orchestration") or "")
-            except Exception:
-                pass
-            _upsert_row(cur, target=pname, project=pname, agent="", prompt="", path=str(proj_md), state="", engine=eng, orchestration=orch)
+            meta = _read_meta(proj_md)
+            eng = str(meta.get("engine") or "")
+            orch = str(meta.get("orchestration") or "")
+            goal = str(meta.get("goal") or meta.get("purpose") or "")
+            relp, url = _rel_url(proj_md)
+            _upsert_row(
+                cur,
+                target=pname,
+                project=pname,
+                agent="",
+                prompt="",
+                path=str(proj_md),
+                state="",
+                engine=eng,
+                orchestration=orch,
+                type="project",
+                rel_path=relp,
+                url=url,
+                goal=goal,
+            )
             scanned += 1
 
         # Root agent.md
@@ -129,27 +182,50 @@ def _scan_agent_repo(cur) -> int:
         if f.exists():
             ag_name = _read_agent_name(f, default=pname)
             eng = ""; orch = ""; prompts_list: list[str] = []
-            try:
-                text = f.read_text(encoding="utf-8")
-                y0 = text.index("<!-- METADATA:START -->")
-                y1 = text.index("```yaml", y0) + len("```yaml")
-                y2 = text.index("```", y1)
-                import yaml as _yaml
-                meta = _yaml.safe_load(text[y1:y2]) or {}
-                eng = str(meta.get("engine") or "")
-                orch = str(meta.get("orchestration") or "")
-                pv = meta.get("prompts") or []
-                if isinstance(pv, dict):
-                    prompts_list = [str(k) for k in pv.keys()]
-                elif isinstance(pv, builtins.list):
-                    prompts_list = [str(k) for k in pv]
-            except Exception:
-                pass
-            _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
+            meta = _read_meta(f)
+            eng = str(meta.get("engine") or "")
+            orch = str(meta.get("orchestration") or "")
+            goal = str(meta.get("goal") or meta.get("purpose") or "")
+            pv = meta.get("prompts") or []
+            if isinstance(pv, dict):
+                prompts_list = [str(k) for k in pv.keys()]
+            elif isinstance(pv, builtins.list):
+                prompts_list = [str(k) for k in pv]
+            relp, url = _rel_url(f)
+            _upsert_row(
+                cur,
+                target=ag_name,
+                project=pname,
+                agent=ag_name,
+                prompt="",
+                path=str(f),
+                state="",
+                engine=eng,
+                orchestration=orch,
+                type="agent",
+                rel_path=relp,
+                url=url,
+                goal=goal,
+            )
             scanned += 1
             for pr_id in (prompts_list or []):
                 try:
-                    _upsert_row(cur, target=pr_id, project=pname, agent=ag_name, prompt=pr_id, path=str(f), state="", engine=eng, orchestration=orch)
+                    # Prompt declared in agent metadata; use agent path as placeholder
+                    _upsert_row(
+                        cur,
+                        target=pr_id,
+                        project=pname,
+                        agent=ag_name,
+                        prompt=pr_id,
+                        path=str(f),
+                        state="",
+                        engine=eng,
+                        orchestration=orch,
+                        type="prompt",
+                        rel_path=relp,
+                        url=url,
+                        goal="",
+                    )
                     scanned += 1
                 except Exception:
                     pass
@@ -180,11 +256,40 @@ def _scan_agent_repo(cur) -> int:
                         prompts_list = [str(k) for k in pv]
                 except Exception:
                     pass
-                _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
+                relp, url = _rel_url(f)
+                _upsert_row(
+                    cur,
+                    target=ag_name,
+                    project=pname,
+                    agent=ag_name,
+                    prompt="",
+                    path=str(f),
+                    state="",
+                    engine=eng,
+                    orchestration=orch,
+                    type="agent",
+                    rel_path=relp,
+                    url=url,
+                    goal=str(meta.get("goal") or meta.get("purpose") or ""),
+                )
                 scanned += 1
                 for pr_id in (prompts_list or []):
                     try:
-                        _upsert_row(cur, target=pr_id, project=pname, agent=ag_name, prompt=pr_id, path=str(f), state="", engine=eng, orchestration=orch)
+                        _upsert_row(
+                            cur,
+                            target=pr_id,
+                            project=pname,
+                            agent=ag_name,
+                            prompt=pr_id,
+                            path=str(f),
+                            state="",
+                            engine=eng,
+                            orchestration=orch,
+                            type="prompt",
+                            rel_path=relp,
+                            url=url,
+                            goal="",
+                        )
                         scanned += 1
                     except Exception:
                         pass
@@ -202,6 +307,54 @@ def _scan_prompt_repo(cur) -> int:
         return scanned
 
     roots = [Path(prepo) / "ready", Path(prepo) / "draft"]
+    import os as _os
+    GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
+    GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
+
+    def _rel_url(abs_path: Path) -> tuple[str, str]:
+        try:
+            # rel path inside prompt repo (ready/... or draft/...)
+            rel_inside = abs_path.relative_to(Path(prepo)).as_posix()
+        except Exception:
+            rel_inside = abs_path.name
+        rel_with_repo = f"prompt/{rel_inside}"
+        url = f"{GITHUB_ORG}/prompt/blob/{GITHUB_BRANCH}/{rel_inside}" if (GITHUB_ORG and rel_inside) else ""
+        return rel_with_repo, url
+    # Also scan top-level project directories in prompt repo for project.md
+    try:
+        for child in Path(prepo).iterdir():
+            if not child.is_dir() or child.name.startswith('.') or child.name in ("ready", "draft"):
+                continue
+            proj_name = child.name
+            proj_md = child / "project.md"
+            if proj_md.exists():
+                try:
+                    meta = _read_prompt_metadata(proj_md) or {}
+                except Exception:
+                    meta = {}
+                eng = str(meta.get("engine") or "")
+                orch = str(meta.get("orchestration") or "")
+                goal = str(meta.get("goal") or meta.get("purpose") or "")
+                relp, url = _rel_url(proj_md)
+                _upsert_row(
+                    cur,
+                    target=proj_name,
+                    project=proj_name,
+                    agent="",
+                    prompt="",
+                    path=str(proj_md),
+                    state="",
+                    engine=eng,
+                    orchestration=orch,
+                    type="project",
+                    rel_path=relp,
+                    url=url,
+                    goal=goal,
+                )
+                scanned += 1
+    except Exception:
+        pass
+
     for root in roots:
         if not root.exists():
             continue
@@ -223,13 +376,29 @@ def _scan_prompt_repo(cur) -> int:
                     agent = str(meta.get("agent") or "")
                     eng = str(meta.get("engine") or "")
                     orch = str(meta.get("orchestration") or "")
+                    goal = str(meta.get("goal") or meta.get("purpose") or "")
                     if (not proj) or (not agent):
                         debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
                 except Exception:
                     pr_id = p.stem
                 target = pr_id
                 state = "draft" if ("draft" in str(p).lower()) else "ready"
-                _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p), state=state, engine=eng, orchestration=orch)
+                relp, url = _rel_url(p)
+                _upsert_row(
+                    cur,
+                    target=target,
+                    project=proj,
+                    agent=agent,
+                    prompt=pr_id,
+                    path=str(p),
+                    state=state,
+                    engine=eng,
+                    orchestration=orch,
+                    type="prompt",
+                    rel_path=relp,
+                    url=url,
+                    goal=(goal if 'goal' in locals() else ""),
+                )
                 scanned += 1
         except Exception:
             continue
