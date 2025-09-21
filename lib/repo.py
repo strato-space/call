@@ -163,7 +163,8 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                     pass
         except Exception:
             pass
-        _upsert_row(cur, target=f"p:{pname}", project=pname, agent="", prompt="", path=proj_path, state="", engine=eng, orchestration=orch)
+        # Target for project rows: project name only
+        _upsert_row(cur, target=pname, project=pname, agent="", prompt="", path=proj_path, state="", engine=eng, orchestration=orch)
         scanned += 1
 
         # Root project agent (optional)
@@ -195,7 +196,8 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                             pass
                 except Exception:
                     pass
-                _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
+                # Target for agent rows: agent name only
+                _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                 scanned += 1
                 break
 
@@ -232,7 +234,8 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                                     pass
                         except Exception:
                             pass
-                        _upsert_row(cur, target=f"a:{pname}/{ag_name}", project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
+                        # Target for agent rows: agent name only
+                        _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                         scanned += 1
                         break
         except Exception:
@@ -310,7 +313,8 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
                         orch = str(y.get("orchestration") or "")
                 except Exception:
                     pr_id = p.stem
-                target = f"r:{proj}/{agent}/{pr_id}" if (proj or agent) else f"r::{pr_id}"
+                # Target for prompt rows: prompt id/name only
+                target = pr_id
                 state = "draft" if ("draft" in str(p).lower()) else "ready"
                 _upsert_row(cur, target=target, project=proj, agent=agent, prompt=pr_id, path=str(p), state=state, engine=eng, orchestration=orch)
                 scanned += 1
@@ -334,6 +338,11 @@ def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
 
     scanned = 0
     try:
+        # Backward-compat cleanup: remove legacy prefixed targets
+        try:
+            cur.execute("DELETE FROM repo WHERE target LIKE 'p:%' OR target LIKE 'a:%' OR target LIKE 'r:%'")
+        except Exception:
+            pass
         for r in repos:
             if r == "agent":
                 scanned += _scan_agent_repo(cur)
@@ -474,7 +483,8 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
                 "prompt": pr or "",
                 "path": path or "",
                 "state": st or "",
-                "target": tgt or (f"r:{prj}/{ag}/{pr}" if (prj or ag) else f"r::{pr}"),
+                # Target: prompt name/id only
+                "target": (tgt or pr or ""),
                 "engine": eng or "",
                 "orchestration": orch or "",
             })
