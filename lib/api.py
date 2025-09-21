@@ -217,7 +217,9 @@ from typing import Any, Dict, List, Optional, Union
 
 # Repo-index (SQLite) interface for multi-repo scan/list (single source of truth, DB-only)
 from call.lib import repo_db as call_repo
+from call.lib import repo_db as repo  # alias for clarity in new code paths
 from call.lib import repo_fs as _repo_fs
+from call.lib import repo_fs as repo_fs  # alias for clarity in new code paths
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
 from dataclasses import dataclass, field
@@ -226,12 +228,9 @@ from dataclasses import dataclass, field
 def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
     """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
 
-    Delegates to repo_db.list_prompts().
+    Delegates to repo_db.list_prompts(). Do not swallow exceptions; let callers see failures.
     """
-    try:
-        return call_repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
-    except Exception:
-        return []
+    return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
 
 
 def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -240,9 +239,7 @@ def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
     Delegates to repo_fs.reload() (or scan()) and returns its dict result.
     """
     try:
-        if hasattr(_repo_fs, "reload"):
-            return _repo_fs.reload(repos)
-        return _repo_fs.scan(repos)
+        return repo_fs.reload(repos)
     except Exception as e:
         return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
 
