@@ -190,16 +190,9 @@ def prompts(
     operation_id="reload",
     summary="Reload repository indices (agent/prompt) and rebuild repo.db",
 )
-def reload(
-    repos: str = Query("", description="Comma- or semicolon-separated list: agent,prompt"),
-    fmt: str = Query("json", description="Output format (json|yaml|text)"),
-):
-    # Parse repos parameter
-    repos_list = None
-    raw = (repos or "").strip()
-    if raw:
-        repos_list = [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
-    res = api_reload(repos=repos_list)
+def reload():
+    # Read repos list from .env via repo_fs implementation (no client-provided parameters)
+    res = api_reload()
     try:
         if isinstance(res, dict) and not res.get("ok", False):
             return JSONResponse(content=res, status_code=int(res.get("error_code", 500)))

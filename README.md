@@ -280,6 +280,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
 - **Command Reference**:
 
+  
   ```bash
   # List projects, agents, prompts (hierarchical)
   python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft] --format json|yaml|text
