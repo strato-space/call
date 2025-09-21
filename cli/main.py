@@ -244,24 +244,35 @@ def main() -> int:
                 state=(args.state or None),
                 target=(args.target or None),
             )
+            # Normalize schema for CLI output
+            items = []
+            for r in (rows or []):
+                items.append({
+                    "prompt_id": r.get("prompt", ""),
+                    "name": r.get("prompt", ""),
+                    "agent": r.get("agent", ""),
+                    "project": r.get("project", ""),
+                    "state": r.get("state", ""),
+                    "url": r.get("path", ""),
+                })
+
             fmt = (args.format or 'table').lower()
             if fmt == 'json':
-                _emit_output(rows, 'json')
+                _emit_output(items, 'json')
                 return 0
             if fmt == 'yaml':
-                _emit_output(rows, 'yaml')
+                _emit_output(items, 'yaml')
                 return 0
-            # text/table view based on repo index fields
+            # text/table view with expected headers
             cols = [
-                ("prompt", "prompt"),
+                ("prompt_id", "id"),
+                ("name", "name"),
                 ("agent", "agent"),
                 ("project", "project"),
                 ("state", "state"),
-                ("engine", "engine"),
-                ("orchestration", "orchestr"),
-                ("target", "target"),
+                ("url", "url"),
             ]
-            _print_table(rows, cols)
+            _print_table(items, cols)
             return 0
         except Exception as e:
             print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
