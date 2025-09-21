@@ -43,7 +43,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 - Listing:
   - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
-  - Flat prompts: `call.lib.repo.list_prompts(project?, agent?, prompt?, state?, target?)`
+  - Flat prompts: `call.lib.api.list_prompts(project?, agent?, prompt?, state?, target?)`
   - CLI supports output formats: `json | yaml | text`.
 
 - Find helpers (arrays):
@@ -256,8 +256,11 @@ You can enumerate available agents discovered in the Agent repository via the li
 
 - MCP (mcp-voicebot):
 
-  - Tool name: `agents`
-  - Args: `query?: string`, `include_aliases?: boolean`, `project_name?: string`
+  - Tools:
+    - `agents(query?: string, include_aliases?: boolean, project_name?: string)`
+    - `prompts(project?: string, agent?: string, prompt?: string, state?: string)`
+    - `exec(payload: object)` — single JSON payload (see below)
+    - `reload()` — no params; rebuilds indices using `.env` repos
 
 ### Running with local virtual environment
 
@@ -280,7 +283,6 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
 - **Command Reference**:
 
-  
   ```bash
   # List projects, agents, prompts (hierarchical)
   python -m call.cli.main list --project UxFab [--agent Agent*] [--prompt Draft] --format json|yaml|text
