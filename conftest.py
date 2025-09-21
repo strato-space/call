@@ -32,9 +32,6 @@ if _dotenv.exists():
             val = v.strip().strip('"')
             if key and key not in os.environ:
                 os.environ[key] = val
-        # Normalize TELEGRAM_TOKEN -> TELEGRAM_BOT_TOKEN for tests/tools that expect the latter
-        if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
-            os.environ["TELEGRAM_BOT_TOKEN"] = os.environ["TELEGRAM_TOKEN"]
     except Exception:
         pass
 

@@ -917,17 +917,19 @@ async def call_async(
             session_id=(session_id or None),
         )
 
-    # Always emit agentless session id (chat[:thread]) when available, regardless of runtime actual_sid
+    # Emit session id: prefer explicit override; else actual runtime; else agentless chat[:thread]
     session_id_out = None
-    if selected_chat_id is not None:
-        try:
+    try:
+        if isinstance(session_id, str) and session_id.strip():
+            session_id_out = session_id
+        elif 'actual_sid' in locals() and actual_sid:
+            session_id_out = actual_sid
+        elif selected_chat_id is not None:
             session_id_out = (
-                f"{selected_chat_id}:{selected_thread_id}"
-                if (selected_thread_id is not None)
-                else f"{selected_chat_id}"
+                f"{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f"{selected_chat_id}"
             )
-        except Exception:
-            session_id_out = None
+    except Exception:
+        session_id_out = None
 
     return {
         "ok": True,

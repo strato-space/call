@@ -42,9 +42,9 @@ wheels/
 .venv/
 app/__pycache__/
 
-# SQL Lite databases for call
-call/call.db
-call/repo.db
+
+call.db
+repo.db
 
 # If repo's are extracted in call folder for chatgpt.com/codex
 agent
