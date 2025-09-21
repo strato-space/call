@@ -1,6 +1,6 @@
 ## Session ID — derivation and override (New)
 
-- Format: `"{AgentName}:{chat_id}"` or `"{AgentName}:{chat_id}:{thread_id}"`.
+- Format: `chat` or `chat:thread` (agent name is not part of the session id).
 - When `session_id` is provided to `call()/call_async()` (or to Actions/MCP/CLI), it takes precedence and is used to derive Telegram routing:
   - The library parses `chat_id`/`thread_id` from the provided `session_id`.
   - Environment defaults are NOT used in this case.
@@ -27,10 +27,10 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 - Call now maintains a single-source-of-truth SQLite index `call/repo.db` for projects, agents, and prompts.
 - Table: `repo(target PRIMARY KEY, project, agent, prompt, path, state, engine, orchestration)`
-  - `target` values:
-    - projects: `p:<project>`
-    - agents: `a:<project>/<agent>`
-    - prompts: `r:<project>/<agent>/<prompt>` or `r::<prompt>` when project/agent are unknown
+  - `target` values store only the final name/id (no prefixes):
+    - projects: `<project>`
+    - agents: `<agent>`
+    - prompts: `<prompt>`
   - `state`: `draft` if file path contains the substring `draft`, otherwise `ready`.
   - `engine`: runtime engine hint (e.g., `openai`, `openai-agents`) — pulled from METADATA YAML where present.
   - `orchestration`: control flow (`llm`, `handoff`, `langgraph`, ...) — pulled from METADATA YAML where present.
@@ -88,7 +88,7 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 
 - Agents/list filters:
   - `--state` — filter prompts nested under agents by state (`ready|draft`, supports `*`)
-  - `--target` — unified filter applied last (supports `*`). Matches `p:`, `a:`, or `r:` targets.
+  - `--target` — unified filter applied last (supports `*`). Matches plain names in the `target` column.
   - Alias `projects` is available for the `agents` command: `python -m call.cli.main projects`.
 
 - Prompts filters:
@@ -157,10 +157,6 @@ $env:CALL_DEBUG=1; python -m call.cli.main call --project UxFab --agent DialogPo
   - The first category that yields a unique match sets the corresponding fields if not explicitly provided.
 - Supported forms:
   - Unprefixed name with wildcards: `Ux*` (interprets as prompt name first, then agent, then project)
-  - Prefixes (optional):
-    - `p:UxFab` — project name
-    - `a:UxFab/DialogPostAnalysis` or `a:DialogPostAnalysis` — agent
-    - `r:UxFab/DialogPostAnalysis/33-*` or `r:33-*` — prompt
   - Path-like notation: `path:project/agent/prompt`
     - Examples:
       - `path:UxFab/DialogPostAnalysis/33-*` — prompts under agent/project

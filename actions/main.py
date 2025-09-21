@@ -108,7 +108,7 @@ def call(
     name: str = Query(..., description="The name used as 'target' for selection"),
     input: str = Query(..., description="Input text"),
     echo: bool = Query(False, description="If true, return structured JSON from library"),
-    session_id: str | None = Query(None, description="Override session id: AgentName:chat or AgentName:chat:thread"),
+    session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
 ):
     res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
     try:
