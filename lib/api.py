@@ -419,21 +419,18 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # Couldn’t resolve uniquely within the project
-            # Preserve original status/code/options from resolve_agent/list()
-            code = str(env.get("code")) if isinstance(env, dict) else "NO_DATA_FOUND"
-            status = int(env.get("error_code", 404)) if isinstance(env, dict) else 404
-            desc = env.get("description", "not found") if isinstance(env, dict) else "not found"
-            return None, _error_payload(
-                agent=(agent or ""), input=(input or ""), exc=desc, status=status, code=code, project=project, options=(env.get("options") if isinstance(env, dict) else None)
-            )
-
-        resolved = env.get("resolved") or {}
-        name = str(resolved.get("name") or "")
-        proj = resolved.get("project") or project
-        path = resolved.get("path")
-        from pathlib import Path as _Path
-        path_p = _Path(path) if path else None
+            # Fallback: treat project card as runnable when agent/prompt resolution fails
+            # Do NOT return an error; proceed without an agent path and let project.md drive instructions
+            name = str(project or "")
+            proj = project
+            path_p = None
+        else:
+            resolved = env.get("resolved") or {}
+            name = str(resolved.get("name") or "")
+            proj = resolved.get("project") or project
+            path = resolved.get("path")
+            from pathlib import Path as _Path
+            path_p = _Path(path) if path else None
     else:
         try:
             env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
