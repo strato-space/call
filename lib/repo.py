@@ -223,7 +223,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                             pv = y.get("prompts") or []
                             if isinstance(pv, dict):
                                 prompts_list = [str(k) for k in pv.keys()]
-                            elif isinstance(pv, list):
+                            elif isinstance(pv, builtins.list):
                                 prompts_list = [str(k) for k in pv]
                         except Exception:
                             pass
@@ -275,7 +275,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                                     pv = y.get("prompts") or []
                                     if isinstance(pv, dict):
                                         prompts_list = [str(k) for k in pv.keys()]
-                                    elif isinstance(pv, list):
+                                    elif isinstance(pv, builtins.list):
                                         prompts_list = [str(k) for k in pv]
                                 except Exception:
                                     pass
@@ -412,6 +412,17 @@ def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
                 scanned += _scan_agent_repo(cur)
             elif r == "prompt":
                 scanned += _scan_prompt_repo(cur)
+        # Prune stale prompt rows (file deleted or moved)
+        try:
+            cur.execute("SELECT target, path, prompt FROM repo")
+            stale: list[str] = []
+            for tgt, pth, pr in cur.fetchall():
+                if pr and pth and not Path(str(pth)).exists():
+                    stale.append(str(tgt))
+            for tgt in stale:
+                cur.execute("DELETE FROM repo WHERE target = ?", (tgt,))
+        except Exception:
+            pass
         conn.commit()
         debug_print("[repo.scan] done", f"repos={repos}", f"scanned={scanned}")
         return {"ok": True, "scanned": scanned}
@@ -508,7 +519,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
         # Add prompt if present
         if pr:
             prompts: List[str] = agent_entry["prompts"]  # type: ignore
-            if not isinstance(prompts, list):
+            if not isinstance(prompts, builtins.list):
                 prompts = []
                 agent_entry["prompts"] = prompts  # type: ignore
             if pr not in prompts:

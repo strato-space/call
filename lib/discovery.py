@@ -644,17 +644,45 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
 
 
 def _read_prompt_metadata(path: Path) -> dict:
-    """Parse METADATA YAML fenced block from a StratoFormater Markdown file."""
+    """Parse METADATA (or legacy META) YAML block from a Markdown file.
+
+    Tolerances:
+    - Accept both <!-- METADATA:START --> and <!-- META:START -->; also tolerate malformed '<!-- META:START --'.
+    - If a fenced YAML block (```yaml ... ```) exists inside the METADATA block, parse it.
+    - Otherwise, parse the raw block text as YAML.
+    """
     try:
         text = path.read_text(encoding='utf-8')
     except Exception:
         return {}
     try:
-        start = text.index('<!-- METADATA:START -->')
-        y0 = text.index('```yaml', start) + len('```yaml')
-        y1 = text.index('```', y0)
-        import yaml  # local import
-        data = yaml.safe_load(text[y0:y1]) or {}
+        import re as _re
+        import yaml as _yaml
+        # Normalize obvious malformed start tags by inserting closing '>'
+        t = _re.sub(r"<!--\s*(META|METADATA):START\s*--\s*", "<!-- METADATA:START -->", text)
+        # Build a robust regex to capture the block
+        rx = _re.compile(r"<!--\s*(?:METADATA|META):START\s*-->\s*(.*?)\s*<!--\s*(?:METADATA|META):END\s*-->", _re.S | _re.I)
+        m = rx.search(t)
+        block = ""
+        if m:
+            block = m.group(1) or ""
+        else:
+            # Fallback: '## <!--ANCHOR:METADATA--> METADATA' style — parse the next fenced YAML
+            hdr = _re.search(r"^\s*##\s*<!--\s*ANCHOR:METADATA\s*-->.*$", text, _re.M)
+            if hdr:
+                after = text[hdr.end():]
+                m3 = _re.search(r"```yaml\s*(.*?)\s*```", after, _re.S | _re.I)
+                if m3:
+                    ytxt = m3.group(1)
+                    data = _yaml.safe_load(ytxt) or {}
+                    return data if isinstance(data, dict) else {}
+            return {}
+        # Prefer fenced yaml inside the block
+        m2 = _re.search(r"```yaml\s*(.*?)\s*```", block, _re.S | _re.I)
+        ytxt = m2.group(1) if m2 else block
+        # Remove possible trailing '---' line artifacts
+        ytxt = _re.sub(r"\n\s*---\s*$", "\n", ytxt.strip(), flags=_re.S)
+        data = _yaml.safe_load(ytxt) or {}
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}

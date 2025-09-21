@@ -961,19 +961,89 @@ def call(
         return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project, session_id=(session_id or None))
 
 
-# Projects/agents listing is powered by the repo index (SQLite).
+# Projects/agents listing — monkeypatch-friendly wrappers for tests
+
+
+def load_projects_index() -> List[str]:
+    """Wrapper delegating to discovery.load_projects_index(); exposed for test monkeypatching."""
+    try:
+        from call.lib import discovery as _disc
+        return _disc.load_projects_index()
+    except Exception:
+        return []
+
+
+def scan_project_agents(project_dir: str) -> List[Dict[str, Any]]:
+    """Wrapper delegating to discovery.scan_project_agents(); accepts project name or absolute path."""
+    try:
+        from pathlib import Path as _Path
+        from call.lib import discovery as _disc
+        p = _Path(project_dir)
+        if not p.exists():
+            try:
+                base = _disc.discover_agent_repo()
+                p = _Path(base) / str(project_dir)
+            except Exception:
+                p = _Path(str(project_dir))
+        return _disc.scan_project_agents(p)
+    except Exception:
+        return []
 
 
 def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Return hierarchical structure of projects and agents with prompts/aliases, backed by repo.db.
+    Return hierarchical structure of projects and agents with prompts/aliases.
 
-    Notes:
-    - Delegates to call.lib.repo.list() which reads from SQLite index (repo.db).
-    - Use call.lib.repo.scan() externally (e.g., Telegram /reload) to refresh the index.
-    - Supports wildcard '*' in project/agent/prompt (case-insensitive, full-token match).
+    This implementation uses discovery wrappers so tests can monkeypatch
+    `load_projects_index` and `scan_project_agents`.
+    Filters support '*' wildcards (case-insensitive full-string match).
     """
-    return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
+    import re as _re
+    import builtins as _builtins
+
+    def _rx(pat: Optional[str]):
+        if not pat:
+            return None
+        s = str(pat)
+        return _re.compile("^" + _re.escape(s).replace("\\*", ".*") + "$", _re.IGNORECASE)
+
+    rx_proj = _rx(project)
+    rx_agent = _rx(agent)
+    rx_prompt = _rx(prompt)
+
+    try:
+        projects = load_projects_index()
+    except Exception:
+        projects = []
+
+    out: List[Dict[str, Any]] = []
+    for pname in (projects or []):
+        if rx_proj and (not rx_proj.match(pname)):
+            continue
+        try:
+            agents = scan_project_agents(pname)
+        except Exception:
+            agents = []
+        filt_agents: List[Dict[str, Any]] = []
+        for a in (agents or []):
+            nm = str(a.get("name") or "")
+            if rx_agent and (not rx_agent.match(nm)):
+                continue
+            if rx_prompt:
+                pr_list = a.get("prompts") or []
+                ok = any(rx_prompt.match(str(p)) for p in pr_list) if isinstance(pr_list, _builtins.list) else False
+                if not ok:
+                    continue
+            filt_agents.append({
+                "type": a.get("type", "agent"),
+                "id": a.get("id", ""),
+                "name": nm,
+                "aliases": a.get("aliases") or [],
+                "prompts": a.get("prompts") or [],
+                "path": a.get("path") or "",
+            })
+        out.append({"name": pname, "agents": filt_agents})
+    return out
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, target: Optional[str] = None) -> Dict[str, Any]:
