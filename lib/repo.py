@@ -104,14 +104,40 @@ def _load_repos_from_env() -> List[str]:
 
 def _upsert_row(cur: sqlite3.Cursor, *, target: str, project: str, agent: str, prompt: str, path: str, state: str | None = None, engine: str | None = None, orchestration: str | None = None) -> None:
     try:
-        cur.execute("SELECT path FROM repo WHERE target = ?", (target,))
-        row = cur.fetchone()
-        if row is not None and row[0] != path:
-            debug_print("[repo.scan] overwrite", f"target={target}", f"old={row[0]}", f"new={path}")
-        cur.execute(
-            "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (target, project, agent, prompt, path, state or "", engine or "", orchestration or ""),
-        )
+        # Merge strategy: preserve existing non-empty project/agent when new values are empty.
+        # Prefer new path/state/engine/orchestration when provided (non-empty), otherwise keep old.
+        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration FROM repo WHERE target = ?", (target,))
+        old = cur.fetchone()
+        if old is not None:
+            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch = [x or "" for x in old]
+            eff_project = project or old_project
+            eff_agent = agent or old_agent
+            eff_prompt = prompt or old_prompt
+            # Path preference: for prompt rows, prefer existing prompt file path over agent.yaml/md
+            new_path = path or ""
+            eff_path = new_path or old_path
+            try:
+                if (eff_prompt or old_prompt):  # prompt row
+                    old_is_prompt_file = isinstance(old_path, str) and (old_path.lower().endswith(('.md', '.yaml', '.yml'))) and (('\\prompt\\' in old_path.lower()) or ('/prompt/' in old_path.lower()))
+                    new_is_agent_card = isinstance(new_path, str) and (new_path.lower().endswith(('agent.yaml', 'agent.md')))
+                    if old_is_prompt_file and new_is_agent_card:
+                        eff_path = old_path
+            except Exception:
+                pass
+            eff_state = (state or "") or old_state
+            eff_engine = (engine or "") or old_engine
+            eff_orch = (orchestration or "") or old_orch
+            if old_path and eff_path and (old_path != eff_path):
+                debug_print("[repo.scan] overwrite", f"target={target}", f"old={old_path}", f"new={eff_path}")
+            cur.execute(
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch),
+            )
+        else:
+            cur.execute(
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, project, agent, prompt, path, state or "", engine or "", orchestration or ""),
+            )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
 
@@ -173,6 +199,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
             if f.exists():
                 ag_name = _read_agent_name(f, default=pname)
                 eng = ""; orch = ""
+                prompts_list: list[str] = []
                 try:
                     if str(f).lower().endswith(('.md', '.markdown')):
                         try:
@@ -192,6 +219,12 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                             y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
                             eng = str(y.get("engine") or "")
                             orch = str(y.get("orchestration") or "")
+                            # Collect prompts from agent.yaml (dict keys or list)
+                            pv = y.get("prompts") or []
+                            if isinstance(pv, dict):
+                                prompts_list = [str(k) for k in pv.keys()]
+                            elif isinstance(pv, list):
+                                prompts_list = [str(k) for k in pv]
                         except Exception:
                             pass
                 except Exception:
@@ -199,6 +232,13 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                 # Target for agent rows: agent name only
                 _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                 scanned += 1
+                # Also index declared prompts for this agent (merge with existing rows)
+                for pr_id in (prompts_list or []):
+                    try:
+                        _upsert_row(cur, target=pr_id, project=pname, agent=ag_name, prompt=pr_id, path=str(f), state="", engine=eng, orchestration=orch)
+                        scanned += 1
+                    except Exception:
+                        pass
                 break
 
         # Per-agent subdirectories
@@ -211,6 +251,7 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                     if f.exists():
                         ag_name = _read_agent_name(f, default=child.name)
                         eng = ""; orch = ""
+                        prompts_list: list[str] = []
                         try:
                             if str(f).lower().endswith(('.md', '.markdown')):
                                 try:
@@ -230,6 +271,12 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                                     y = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
                                     eng = str(y.get("engine") or "")
                                     orch = str(y.get("orchestration") or "")
+                                    # Collect prompts from agent.yaml (dict keys or list)
+                                    pv = y.get("prompts") or []
+                                    if isinstance(pv, dict):
+                                        prompts_list = [str(k) for k in pv.keys()]
+                                    elif isinstance(pv, list):
+                                        prompts_list = [str(k) for k in pv]
                                 except Exception:
                                     pass
                         except Exception:
@@ -237,6 +284,13 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
                         # Target for agent rows: agent name only
                         _upsert_row(cur, target=ag_name, project=pname, agent=ag_name, prompt="", path=str(f), state="", engine=eng, orchestration=orch)
                         scanned += 1
+                        # Also index declared prompts for this agent (merge with existing rows)
+                        for pr_id in (prompts_list or []):
+                            try:
+                                _upsert_row(cur, target=pr_id, project=pname, agent=ag_name, prompt=pr_id, path=str(f), state="", engine=eng, orchestration=orch)
+                                scanned += 1
+                            except Exception:
+                                pass
                         break
         except Exception:
             pass
@@ -284,7 +338,17 @@ def _scan_prompt_repo(cur: sqlite3.Cursor) -> int:
         if not root.exists():
             continue
         try:
-            for p in list(root.glob("*.md")) + list(root.glob("*.yaml")) + list(root.glob("*.yml")):
+            try:
+                # Recurse: some repos may nest files or keep helper folders
+                md_list = builtins.list(root.rglob("*.md"))
+                yml_list = builtins.list(root.rglob("*.yml"))
+                yaml_list = builtins.list(root.rglob("*.yaml"))
+            except Exception as ge:
+                debug_print("[repo.scan] prompt glob error", f"root={root}", str(ge))
+                md_list, yml_list, yaml_list = ([], [], [])
+            files = md_list + yaml_list + yml_list
+            debug_print("[repo.scan] prompt root", f"path={root}", f"files={len(files)}")
+            for p in files:
                 proj = ""
                 agent = ""
                 pr_id = ""
