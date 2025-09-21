@@ -37,8 +37,9 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
   - `engine`: runtime engine hint (e.g., `openai`, `openai-agents`) — pulled from METADATA YAML where present.
   - `orchestration`: control flow (`llm`, `handoff`, `langgraph`, ...) — pulled from METADATA YAML where present.
 
-- Scanning: `from call.lib import repo as call_repo; call_repo.scan()`
-  - Repos to scan are defined by `repos` in `.env` (e.g., `repos=agent, prompt`).
+- Reloading index: `from call.lib.api import reload as call_reload; call_reload()`
+  - The repos to include are defined by `repos` in `.env` (comma- or semicolon-separated), for example: `repos=agent,prompt`.
+  - CLI provides `reload` to perform the same operation. A legacy alias `scan` is still available.
 
 - Listing:
   - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
@@ -78,8 +79,8 @@ python -m call.cli.main list --project UxFab
 python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 .
-# Scan repositories and print result as YAML
-python -m call.cli.main scan --repos agent,prompt --format yaml
+# Reload repositories and print result as YAML
+python -m call.cli.main reload --repos agent,prompt --format yaml
 
 # List agents/projects as text
 python -m call.cli.main agents --project * --format text
@@ -290,7 +291,9 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
   python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format yaml
 
-  # Scan repos and rebuild index
+  # Reload repos and rebuild index 
+  python -m call.cli.main reload --repos agent,prompt --format json
+  # Legacy alias (will be removed):
   python -m call.cli.main scan --repos agent,prompt --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.

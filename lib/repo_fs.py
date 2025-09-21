@@ -236,7 +236,7 @@ def _scan_prompt_repo(cur) -> int:
     return scanned
 
 
-def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
+def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
     """Scan configured repos and update the repo.db index. (Filesystem only)"""
     conn = repo_db._ensure_db()
     cur = conn.cursor()
@@ -275,7 +275,3 @@ def scan(repos: Optional[List[str]] = None) -> Dict[str, object]:
             conn.close()
         except Exception:
             pass
-
-def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
-    """Uniform alias for scan(); prefer this name in upper layers."""
-    return scan(repos=repos)

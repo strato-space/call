@@ -100,9 +100,7 @@ def agents(
     agent: str = Query("", description="Filter by agent (supports * wildcard)"),
     prompt: str = Query("", description="Filter by prompt (supports * wildcard)"),
 ):
-    # Resolve at call-time to honor monkeypatching
-    _list = globals().get("list_lib", api_list)
-    return _list(project=(project or None), agent=(agent or None), prompt=(prompt or None))
+    return list_lib(project=(project or None), agent=(agent or None), prompt=(prompt or None))
 
 
 @app.get(
@@ -117,9 +115,7 @@ def call(
     echo: bool = Query(False, description="If true, return structured JSON from library"),
     session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
 ):
-    # Resolve at call-time to honor monkeypatching
-    _call = globals().get("call_lib", api_call)
-    res = _call(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
+    res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -147,9 +143,7 @@ class ExecPayload(BaseModel):
 )
 def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
-    # Resolve at call-time to honor monkeypatching
-    _interpret = globals().get("interpret_exec_payload", api_interpret_exec_payload)
-    kwargs, err = _interpret({
+    kwargs, err = interpret_exec_payload({
         "project": payload.project,
         "agent": payload.agent,
         "prompt": payload.prompt,
@@ -160,8 +154,7 @@ def exec_action_post(payload: ExecPayload = Body(...)):
     })
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
-    _call = globals().get("call_lib", api_call)
-    res = _call(**kwargs)
+    res = call_lib(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))

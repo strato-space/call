@@ -39,7 +39,7 @@ if not os.getenv("AGENT_REPO") and ar.exists():
 # Populate repo.db once per session via filesystem sync facade
 try:
     from call.lib import repo_fs as _repo_fs
-    _repo_fs.scan()
+    _repo_fs.reload()
 except Exception:
     # Non-fatal; individual tests may monkeypatch DB access
     pass
