@@ -34,17 +34,29 @@ def test_list_filters_and_wildcards(monkeypatch):
     mod = importlib.import_module("call.lib.api")
     repo_mod = importlib.import_module("call.lib.repo")
 
-    monkeypatch.setattr(
-        repo_mod,
-        "list",
-        lambda **kwargs: [
-            {"name": "UxFab", "agents": [
-                {"type": "agent", "id": "", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
-                {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
-            ]}
-        ],
-        raising=True,
-    )
+    def _list(**kwargs):
+        agents = [
+            {"type": "agent", "id": "", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+            {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+        ]
+        agent_pat = (kwargs.get("agent") or "").strip()
+        prompt_pat = (kwargs.get("prompt") or "").strip()
+        def _match(name: str, pat: str) -> bool:
+            if not pat:
+                return True
+            if "*" in pat:
+                import fnmatch
+                return fnmatch.fnmatch(name, pat)
+            return name == pat
+        # apply agent filter
+        if agent_pat:
+            agents = [a for a in agents if _match(a["name"], agent_pat)]
+        # apply prompt filter
+        if prompt_pat:
+            agents = [a for a in agents if any(_match(p, prompt_pat) for p in (a.get("prompts") or []))]
+        return [{"name": "UxFab", "agents": agents}]
+
+    monkeypatch.setattr(repo_mod, "list", _list, raising=True)
 
     # Filter by agent wildcard
     tree = mod.list(project="UxFab", agent="News*")
