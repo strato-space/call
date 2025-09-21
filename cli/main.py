@@ -24,7 +24,8 @@ import os
 import faulthandler
 
 from call.lib import api as call_api
-from call.lib import repo as call_repo
+from call.lib import repo_db as call_repo
+from call.lib import repo_fs as call_repo_fs
 from call.lib.logging import configure_logging as call_logging
 
 
@@ -132,11 +133,7 @@ def cmd_call(args: argparse.Namespace) -> int:
     try:
         # Optional: print instructions and exit
         if getattr(args, "print_instructions", False):
-            # Normalize selection first and surface consistent error envelopes
-            sel = call_api.resolve_agent(project=(args.project or None), agent=(agent or None), prompt=(args.prompt or None))
-            if not sel.get("ok"):
-                _safe_print(json.dumps(sel, ensure_ascii=False))
-                return 1
+            # Build directly; this handles wildcard interpretation and strict validation (MD-only)
             cfg, err = call_api.build_runnable_instructions_config(
                 project=(args.project or None),
                 agent=(agent or None),
@@ -294,7 +291,7 @@ def main() -> int:
             if args.repos:
                 raw = str(args.repos)
                 repos = [t.strip() for t in raw.replace(';', ',').split(',') if t.strip()]
-            res = call_repo.scan(repos=repos)
+            res = call_repo_fs.scan(repos=repos)
             _emit_output(res, args.format or 'json')
             return 0 if (isinstance(res, dict) and res.get('ok')) else 1
         except Exception as e:

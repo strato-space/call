@@ -34,7 +34,7 @@ def test_scan_project_agents_prompts_from_agent_yaml():
 def test_resolve_prompt_db_only(monkeypatch, tmp_path):
     """Resolve a prompt strictly via repo DB: single row must match and provide path."""
     from call.lib import discovery as disc
-    repo_mod = __import__('importlib').import_module('call.lib.repo')
+    repo_mod = __import__('importlib').import_module('call.lib.repo_db')
     # Create a temporary prompt file; DB row will point here
     pfile = tmp_path / "TempPrompt.md"
     pfile.write_text("# Temp Prompt\n", encoding="utf-8")

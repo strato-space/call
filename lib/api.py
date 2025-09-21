@@ -215,8 +215,8 @@ import traceback
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
 
-# Repo-index (SQLite) interface for multi-repo scan/list (single source of truth)
-from call.lib import repo as call_repo
+# Repo-index (SQLite) interface for multi-repo scan/list (single source of truth, DB-only)
+from call.lib import repo_db as call_repo
 
 # DTO for runnable configuration (initial step; will be expanded gradually)
 from dataclasses import dataclass, field
@@ -470,15 +470,6 @@ def build_runnable_instructions_config(
             if rec_pr and rec_pr.get("path"):
                 _pp = _Path(rec_pr["path"])  # type: ignore[index]
                 pr_path = _pp if _pp.exists() else None
-            # Shadow overlay: prefer prompt/ready/<prompt>.md if present on disk
-            try:
-                from call.lib.discovery import discover_prompt_repo as _disc_prepo
-                prepo = _disc_prepo()
-                shadow = _Path(prepo) / "ready" / f"{prompt.strip()}.md"
-                if shadow.exists():
-                    pr_path = shadow
-            except Exception:
-                pass
     except Exception as e:
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 

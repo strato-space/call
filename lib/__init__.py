@@ -10,15 +10,19 @@ Submodules:
 """
 
 __all__ = [
-    # Submodules are available via `from call.lib import api, repo, discovery`
+    # Submodules are available via `from call.lib import api, repo_db, repo_fs, discovery`
     "api",
-    "repo",
+    "repo_db",
+    "repo_fs",
     "discovery",
 ]
 
 # Lazy attribute loader for submodules (PEP 562 style)
 def __getattr__(name):  # type: ignore[override]
-    if name in ("api", "repo", "discovery"):
-        import importlib as _importlib
+    import importlib as _importlib
+    # Backwards-compat alias: 'repo' maps to 'repo_db'
+    if name == "repo":
+        return _importlib.import_module("call.lib.repo_db")
+    if name in ("api", "repo_db", "repo_fs", "discovery"):
         return _importlib.import_module(f"call.lib.{name}")
     raise AttributeError(name)

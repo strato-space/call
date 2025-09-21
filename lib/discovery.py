@@ -78,58 +78,17 @@ def load_yaml(path: Path) -> dict:
 
 
 def load_projects_index(repo: Path | None = None) -> list[str]:
-    """Return list of project names from agent/projects.yaml (exact, case-sensitive).
+    """DB-only projects index using call/repo.db.
 
-    Strict policy:
-    - If projects.yaml exists: require a non-empty top-level 'projects' mapping; otherwise raise ValueError with guidance.
-    - If projects.yaml is missing: fall back to scanning repo root for plausible project directories.
+    Returns exact project names discovered by the last sync (scan).
+    No filesystem reads. If the DB is empty, returns an empty list.
     """
-    if repo is None:
-        repo = discover_agent_repo()
-    index = repo / 'projects.yaml'
-    if index.exists():
-        try:
-            data = load_yaml(index) or {}
-        except ModuleNotFoundError:
-            # PyYAML not installed in this environment: fall back to scanning
-            debug_print(f"[discovery] PyYAML is not available to parse {index}; falling back to scanning directories")
-            data = None
-        except Exception as e:
-            raise ValueError(f"Failed to parse {index}: {e}")
-        if data is not None:
-            pr = data.get('projects')
-            if not isinstance(pr, dict) or not pr:
-                keys = ", ".join(sorted(list(data.keys()))) if isinstance(data, dict) else "<non-dict>"
-                example = "projects:\n  UxFab: { description: ... }\n  FanFab: { description: ... }\n"
-                raise ValueError(
-                    f"Malformed {index}: expected a non-empty top-level 'projects' mapping. Found keys: [{keys}].\n"
-                    f"Please correct the schema to include a 'projects' mapping, e.g.:\n{example}"
-                )
-            return list(pr.keys())
-    # Fallback: scan agent repo root (MD- and YAML-aware; prefer MD-only in future)
-    names: list[str] = []
     try:
-        for child in repo.iterdir():
-            if not child.is_dir() or child.name.startswith('.'):
-                continue
-            # Project card present (prefer MD)
-            if (child / 'project.md').exists() or (child / 'project.yaml').exists():
-                names.append(child.name)
-                continue
-            # Any agent card under subdirs (prefer MD)
-            try:
-                has_agent_md = any((p.is_dir() and (p / 'agent.md').exists()) for p in child.iterdir())
-            except Exception:
-                has_agent_md = False
-            try:
-                has_agent_yaml = any((p.is_dir() and (p / 'agent.yaml').exists()) for p in child.iterdir())
-            except Exception:
-                has_agent_yaml = False
-            if has_agent_md or has_agent_yaml:
-                names.append(child.name)
+        from call.lib import repo_db as _repo_db
+        rows = _repo_db.find_projects()
+        return [r.get('project') for r in rows if isinstance(r, dict) and r.get('project')]
     except Exception:
-        pass
-    return names
+        return []
 
 
 def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
@@ -394,7 +353,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None) -> Path | N
     name = str(agent_name).strip().lstrip("@")
     debug_print("[discovery] discover_agent_yaml (db-only):", f"agent={name}", f"project={(project or '')}")
     try:
-        from call.lib import repo as _repo
+        from call.lib import repo_db as _repo
         rows = _repo.find_agents(project=(project or None), agent=name, target=None)
     except Exception:
         rows = []
@@ -489,8 +448,8 @@ def resolve_prompt(name: str, *, project: str | None = None, agent: str | None =
     if not name:
         return None
     try:
-        from call.lib import repo as _repo
-        rows = _repo.list_prompts(project=(project or None), agent=(agent or None), prompt=str(name).strip(), state=('ready' if prefer_ready else None))
+        from call.lib import repo_db as _repo_db
+        rows = _repo_db.list_prompts(project=(project or None), agent=(agent or None), prompt=str(name).strip(), state=('ready' if prefer_ready else None))
     except Exception:
         rows = []
     if len(rows) != 1:
@@ -498,98 +457,6 @@ def resolve_prompt(name: str, *, project: str | None = None, agent: str | None =
     from pathlib import Path as _Path
     p = rows[0].get('path')
     return _Path(p) if p else None
-    if prefer_ready:
-        p = try_exact(ready, base_yaml)
-        if p:
-            return p
-    p = try_exact(draft, base_yaml)
-    if p:
-        return p
-    if agent:
-        if prefer_ready:
-            p = try_exact(ready, agent_sfx_yaml)
-            if p:
-                return p
-        p = try_exact(draft, agent_sfx_yaml)
-        if p:
-            return p
-
-    # YAML variants
-    ycands: list[Path] = []
-    if prefer_ready:
-        ycands += variants(ready, 'yaml')
-        if not ycands:
-            ycands += variants(draft, 'yaml')
-    else:
-        ycands += variants(draft, 'yaml')
-        if not ycands:
-            ycands += variants(ready, 'yaml')
-    if ycands:
-        best = _choose_best_prompt(ycands, project=project, agent=agent)
-        if best:
-            return best
-
-    # Agent folder fallback in Agent repo (when agent provided)
-    # Search order: <Project>/<Agent>/<name>.md then .yaml across known projects when project is None
-    try:
-        if agent:
-            arepo = discover_agent_repo()
-            ag_norm = str(agent)
-            proj_candidates: list[Path] = []
-            if project:
-                proj_candidates = [arepo / str(project)]
-            else:
-                try:
-                    for pname in load_projects_index(arepo):
-                        proj_candidates.append(arepo / str(pname))
-                except Exception:
-                    # Broad fallback: any top-level directory
-                    proj_candidates = [p for p in arepo.iterdir() if p.is_dir() and not p.name.startswith('.')]
-            for base in proj_candidates:
-                adir = base / ag_norm
-                if not adir.exists():
-                    # case-insensitive match
-                    try:
-                        for ch in base.iterdir():
-                            if ch.is_dir() and ch.name.lower() == ag_norm.lower():
-                                adir = ch; break
-                    except Exception:
-                        pass
-                if adir.exists():
-                    p_md = adir / f"{nm}.md"
-                    if p_md.exists():
-                        return p_md
-                    p_yaml = adir / f"{nm}.yaml"
-                    if p_yaml.exists():
-                        return p_yaml
-    except Exception:
-        pass
-
-    # Legacy fallback under project trees (exclude draft/ready)
-    def legacy(ext: str) -> Path | None:
-        try:
-            roots: list[Path] = []
-            if project:
-                roots = [prompt_root / str(project)]
-            else:
-                for child in prompt_root.iterdir():
-                    if child.is_dir() and child.name not in {'draft', 'ready'} and not child.name.startswith('.'):
-                        roots.append(child)
-            hits: list[Path] = []
-            for r in roots:
-                hits += list(r.rglob(f"{nm}.{ext}"))
-            if not hits:
-                return None
-            hits = [h for h in hits if '/draft/' not in str(h).replace('\\','/') and '/ready/' not in str(h).replace('\\','/')]
-            return _choose_best_prompt(hits, project=project, agent=agent)
-        except Exception:
-            return None
-
-    for ext in ('md', 'yaml'):
-        p = legacy(ext)
-        if p:
-            return p
-    return None
 
 
 def github_blob_url(local_path: str | Path) -> str | None:
@@ -657,7 +524,7 @@ def iter_prompts(*, repo: Path | None = None, state: str | None = None):
     - url is derived from path using github_blob_url best-effort (may be None)
     """
     try:
-        from call.lib import repo as _repo
+        from call.lib import repo_db as _repo
         rows = _repo.list_prompts(state=(state or None))
     except Exception:
         rows = []
@@ -678,7 +545,7 @@ def iter_prompts(*, repo: Path | None = None, state: str | None = None):
 def prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, repo: Path | None = None) -> list[dict]:
     """Return prompt descriptors strictly from the repo DB (no filesystem reads)."""
     try:
-        from call.lib import repo as _repo
+        from call.lib import repo_db as _repo
         rows = _repo.list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=(state or None))
     except Exception:
         rows = []

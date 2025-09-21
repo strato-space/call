@@ -3,7 +3,7 @@ import importlib
 
 def test_list_hierarchical(monkeypatch):
     mod = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     # Mock DB-backed listing directly
     monkeypatch.setattr(
@@ -32,7 +32,7 @@ def test_list_hierarchical(monkeypatch):
 
 def test_list_filters_and_wildcards(monkeypatch):
     mod = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     def _list(**kwargs):
         agents = [
@@ -71,7 +71,7 @@ def test_list_filters_and_wildcards(monkeypatch):
 
 def test_resolve_agent(monkeypatch):
     mod = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
     monkeypatch.setattr(repo_mod, "find_agents", lambda **kw: [
         {"project": "UxFab", "agent": "NewsAggr", "path": "/p/UxFab/NewsAggr/agent.yaml"}
     ])
@@ -85,7 +85,7 @@ def test_resolve_agent(monkeypatch):
 
 def test_resolve_agent_across_projects_when_project_none(monkeypatch):
     mod = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     def _find_agents(**kw):
         p = kw.get("project")
@@ -108,7 +108,7 @@ def test_resolve_agent_across_projects_when_project_none(monkeypatch):
 def test_list_agentfab_contains_core_agents(monkeypatch):
     import importlib
     mod = importlib.import_module("call.lib.api")
-    repo_mod = importlib.import_module("call.lib.repo")
+    repo_mod = importlib.import_module("call.lib.repo_db")
 
     # Force only AgentFab project and return a deterministic agent list
     monkeypatch.setattr(

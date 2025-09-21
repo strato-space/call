@@ -22,7 +22,7 @@ def _mod():
 
 def test_db_only_discover_agent_yaml_direct_names(monkeypatch):
     m = _mod()
-    repo_mod = importlib.import_module('call.lib.repo')
+    repo_mod = importlib.import_module('call.lib.repo_db')
     # Monkeypatch DB query
     monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
         {"project": "AgentFab", "agent": "AgentFab", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "project.md")}
@@ -52,7 +52,7 @@ def test_discover_agent_yaml_known_project_dir_if_db_row_present(monkeypatch):
     repo = m.discover_prompt_repo()
     candidate = repo / "UxFab" / "StratoSummarizer2" / "agent.md"
     if candidate.exists():
-        repo_mod = importlib.import_module('call.lib.repo')
+        repo_mod = importlib.import_module('call.lib.repo_db')
         monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
             {"project": "UxFab", "agent": "StratoSummarizer2", "path": str(candidate)}
         ] if (kw.get('agent') == 'StratoSummarizer2') else [], raising=True)

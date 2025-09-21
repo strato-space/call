@@ -150,9 +150,9 @@ def _scan_agent_repo(cur: sqlite3.Cursor) -> int:
         debug_print("[repo.scan] agent repo not found", str(e))
         return scanned
 
-    # Enumerate projects
+    # Enumerate projects (filesystem only in sync)
     try:
-        projects = load_projects_index(arepo)
+        projects = [d.name for d in Path(arepo).iterdir() if d.is_dir() and not d.name.startswith('.')]
     except Exception:
         projects = []
 
