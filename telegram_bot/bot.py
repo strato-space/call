@@ -903,15 +903,24 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             text = text[len(own_at):].lstrip()
     except Exception:
         pass
-    # After stripping bot mention: only treat target when first token starts with '@'
-    tokens = text.split(maxsplit=1)
-    first = tokens[0] if tokens else ""
-    if first.startswith("@"):
-        name = first[1:]
-        main_text = tokens[1] if len(tokens) > 1 else ""
-    else:
-        name = ""
-        main_text = text
+    # Resolve agent and input according to chat type using shared helper
+    try:
+        base = _get_bot_project(update)
+    except Exception:
+        base = ""
+    is_private = False
+    try:
+        is_private = bool(getattr(getattr(update, "effective_chat", None), "type", "") == "private")
+    except Exception:
+        is_private = False
+    try:
+        name, main_text, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
+    except Exception:
+        # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+        name, main_text, should_handle = "", "", False
+    if not should_handle:
+        debug_print("[bot]", "[PLAIN]", "ignored (should_handle=false)")
+        return
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
     input_arg, _ = await build_input_payload_from_reply(name or None, main_text or "", update, context)
