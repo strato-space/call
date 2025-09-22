@@ -221,12 +221,39 @@ def cmd_call(args: argparse.Namespace) -> int:
                         reply_text=None,
                     )
                     payload_json = pj
-                # Print payload JSON (already a JSON string). Ensure pretty format for readability.
+                # Prepare resolved selection snapshot without executing the pipeline
+                resolved: dict | None = None
                 try:
-                    obj = json.loads(payload_json) if payload_json else {}
-                    _safe_print(json.dumps(obj, ensure_ascii=False, indent=2))
+                    cfg, err = call_api.build_runnable_instructions_config(
+                        project=(args.project or None),
+                        agent=(agent or None),
+                        prompt=(args.prompt or None),
+                        target=(args.target or None),
+                        input=None,
+                        merge=bool(getattr(args, "merge", False)),
+                    )
+                    if not err and cfg:
+                        resolved = {
+                            "project": getattr(cfg, 'project', None),
+                            "agent": getattr(cfg, 'name', None) if getattr(cfg, 'type', None) in ("agent", None) else None,
+                            "prompt": getattr(cfg, 'prompt_override', None),
+                            "type": getattr(cfg, 'type', None),
+                            "path": getattr(cfg, 'path', None),
+                            "url": getattr(cfg, 'url', None),
+                        }
                 except Exception:
-                    _safe_print(payload_json or "{}")
+                    resolved = None
+
+                # Print a compact echo object containing payload and resolved selection
+                out_obj = {}
+                try:
+                    payload_obj = json.loads(payload_json) if payload_json else {}
+                except Exception:
+                    payload_obj = payload_json or {}
+                out_obj["payload"] = payload_obj
+                if resolved:
+                    out_obj["resolved"] = resolved
+                _safe_print(json.dumps(out_obj, ensure_ascii=False, indent=2))
                 return 0
             except Exception as e:
                 print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
