@@ -585,12 +585,27 @@ def main() -> int:
             _emit_output(payload, getattr(args, "format", "json"))
             return 0
 
-        # Execute via payload-only interpretation (single source of truth)
-        kwargs, err = call_api.api_interpret_exec_payload(payload)
-        if err:
-            _emit_output(err, getattr(args, "format", "json"))
-            return 1
-        result = call_api.call(**kwargs)
+        # Execute: prefer payload-only interpretation when exactly one selector is present.
+        selectors = [str(getattr(args, k) or "").strip() for k in ("project", "agent", "prompt", "target")]
+        sel_count = sum(1 for s in selectors if s)
+        if sel_count == 1:
+            kwargs, err = call_api.api_interpret_exec_payload(payload)
+            if err:
+                _emit_output(err, getattr(args, "format", "json"))
+                return 1
+            result = call_api.call(**kwargs)
+        else:
+            # Back-compat path: allow multiple selectors and pass full payload as input
+            import json as _json
+            result = call_api.call(
+                project=(args.project or None),
+                agent=(args.agent or None),
+                prompt=(args.prompt or None),
+                target=(args.target or None),
+                input=_json.dumps(payload, ensure_ascii=False),
+                session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
+                echo=False,
+            )
         _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
 

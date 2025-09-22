@@ -972,24 +972,25 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
-    # Strip leading own @Bot mention, if present
+    # Determine chat type early (affects whether we strip own @Bot mention)
     try:
-        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
-        own_at = ("@" + own) if own else ""
-        if own_at and text.startswith(own_at):
-            text = text[len(own_at):].lstrip()
+        is_private = bool(getattr(getattr(update, "effective_chat", None), "type", "") == "private")
     except Exception:
-        pass
+        is_private = False
+    # In private DMs only: strip leading own @Bot mention to allow natural text parsing
+    if is_private:
+        try:
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own_at = ("@" + own) if own else ""
+            if own_at and text.startswith(own_at):
+                text = text[len(own_at):].lstrip()
+        except Exception:
+            pass
     # Resolve agent and input according to chat type using shared helper
     try:
         base = _get_bot_project(update)
     except Exception:
         base = ""
-    is_private = False
-    try:
-        is_private = bool(getattr(getattr(update, "effective_chat", None), "type", "") == "private")
-    except Exception:
-        is_private = False
     try:
         name, main_text, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
     except Exception:
