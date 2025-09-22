@@ -279,7 +279,7 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
     return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
 
 
-def build_input_payload(*, target: Optional[str], main_text: str, extra_context: Optional[list] = None, reply_text: Optional[str] = None) -> tuple[str, dict | None]:
+def build_input_payload(*, target: Optional[str], main_text: str, extra_context: Optional[list] = None, reply_text: Optional[str] = None, download: bool = False) -> tuple[str, dict | None]:
     """Build a structured input payload JSON used by both Telegram bot and CLI.
 
     Behavior:
@@ -310,6 +310,12 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
             raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", text_for_tokens)
             for t in raw:
                 s = t.lstrip('@').strip().strip(',.;:')
+                # Drop common prompt file suffixes to support tokens like 'Name.md'
+                sl = s.lower()
+                if sl.endswith('.md'):
+                    s = s[:-3]
+                elif sl.endswith('.markdown'):
+                    s = s[:-9]
                 if s and s not in tokens:
                     tokens.append(s)
         tokens = tokens[:12]
@@ -332,15 +338,10 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
                     try:
                         p = _Path(cpath)
                         if p.exists():
-                            try:
-                                txt = p.read_text(encoding='utf-8')
-                            except Exception:
-                                txt = ''
                             ref = {
                                 "type": "file",
-                                "name": p.name,
+                                "name": p.stem,
                                 "path": str(p),
-                                "content": txt,
                                 "mutable": True,
                             }
                             key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
@@ -375,6 +376,74 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
             ctx_items.extend(refs)
         except Exception:
             ctx_items = refs
+
+    # Optionally download/load context for items with url or path
+    if download and ctx_items:
+        try:
+            import mimetypes as _mimes
+            import base64 as _b64
+            from pathlib import Path as _Path
+            # Prefer httpx if available for robust HTTP fetches
+            try:
+                import httpx as _httpx
+            except Exception:
+                _httpx = None
+
+            def _is_text_type(mime: str | None, p: str) -> bool:
+                if not mime:
+                    # Heuristic by extension
+                    pl = p.lower()
+                    return pl.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
+                return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
+
+            for it in ctx_items:
+                try:
+                    if not isinstance(it, dict):
+                        continue
+                    # Skip if already has content or base64
+                    if isinstance(it.get('content'), str) and it['content']:
+                        continue
+                    if isinstance(it.get('base64'), str) and it['base64']:
+                        continue
+                    url = str(it.get('url') or '').strip()
+                    pth = str(it.get('path') or '').strip()
+                    if url:
+                        # Guess mime from URL path
+                        guess, _ = _mimes.guess_type(url)
+                        if _httpx:
+                            try:
+                                with _httpx.Client(timeout=15.0, follow_redirects=True) as c:
+                                    resp = c.get(url)
+                                    if resp.status_code == 200:
+                                        data = resp.content
+                                        if _is_text_type(guess, url):
+                                            try:
+                                                it['content'] = data.decode('utf-8')
+                                            except Exception:
+                                                it['base64'] = _b64.b64encode(data).decode('ascii')
+                                        else:
+                                            it['base64'] = _b64.b64encode(data).decode('ascii')
+                            except Exception:
+                                pass
+                    elif pth:
+                        try:
+                            p = _Path(pth)
+                            if p.exists():
+                                guess, _ = _mimes.guess_type(p.name)
+                                if _is_text_type(guess, p.name):
+                                    try:
+                                        it['content'] = p.read_text(encoding='utf-8')
+                                    except Exception:
+                                        # Fallback to base64
+                                        it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
+                                else:
+                                    it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     # Build ordered payload
     ordered: dict = {}
@@ -579,35 +648,11 @@ def build_runnable_instructions_config(
     # Resolve selection to determine agent path and effective project/name
     path_p = None
     if (project and not (agent or prompt)):
-        # Treat provided 'project' as a project filter and resolve via public facade
-        # This ensures tests can monkeypatch api.list() and receive selection errors
-        try:
-            env = resolve_agent(project=project, agent=None, prompt=None, target=target)
-        except Exception as e:
-            return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
-
-        if not isinstance(env, dict) or not env.get("ok"):
-            # Only apply "project-as-runnable" fallback when caller provided an explicit target token
-            # (e.g., @AgentFab or path:AgentFab). Pure project filters must preserve legacy errors.
-            if isinstance(target, str) and target.strip():
-                name = str(project or "")
-                proj = project
-                path_p = None
-            else:
-                # Preserve original status/code/options from resolve_agent/list()
-                code = (env.get("code") if isinstance(env, dict) else "NO_DATA_FOUND")
-                status = int(env.get("error_code", 404)) if isinstance(env, dict) else 404
-                desc = env.get("description", "not found") if isinstance(env, dict) else "not found"
-                return None, _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc=desc, status=status, code=str(code), project=project, options=(env.get("options") if isinstance(env, dict) else None)
-                )
-        else:
-            resolved = env.get("resolved") or {}
-            name = str(resolved.get("name") or "")
-            proj = resolved.get("project") or project
-            path = resolved.get("path")
-            from pathlib import Path as _Path
-            path_p = _Path(path) if path else None
+        # Prefer project-as-runnable when only a project is specified.
+        # Do not resolve to an agent automatically; use the project's card instead.
+        name = str(project or "")
+        proj = project
+        path_p = None
     else:
         try:
             env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)

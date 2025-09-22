@@ -110,6 +110,39 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
     python -m call.cli.main call --parse-input '{"target":"AgentFab","input":"@3-OnlineChunkSummarization","context":[]}' --echo
     ```
 
+  - Typical `--echo` output (PowerShell + `jq` formatting):
+
+    ```json
+    {
+      "payload": {
+        "target": "AgentFab",
+        "input": "@3-OnlineChunkSummarization @11-ExtractUserPain",
+        "context": [
+          {
+            "type": "file",
+            "name": "3-OnlineChunkSummarization.md",
+            "path": "prompt/draft/3-OnlineChunkSummarization.md"
+          },
+          {
+            "type": "file",
+            "name": "11-ExtractUserPain.md",
+            "path": "prompt/draft/11-ExtractUserPain.md"
+          }
+        ]
+      },
+      "resolved": {
+        "project": "AgentFab",
+        "agent": null,
+        "prompt": null,
+        "type": "project",
+        "path": "agent/AgentFab/project.md",
+        "url": "https://github.com/strato-space/agent/blob/master/AgentFab/project.md"
+      }
+    }
+    ```
+
+  - Add `--download-context` to inline file data in payload (see below).
+
 - Agents/list filters:
   - `--state` — filter prompts nested under agents by state (`ready|draft`, supports `*`)
   - `--target` — unified filter applied last (supports `*`). Matches plain names in the `target` column.
@@ -118,6 +151,13 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 - Prompts filters:
   - `--target` — unified filter applied last (supports `*`), in addition to `--project`, `--agent`, `--prompt`, and `--state`.
   - Output formats: `--format json|yaml|table|text`.
+
+- Context download (New):
+  - `--download-context` — when building the payload (via `--parse-input` or echo-building for `--input`), the CLI will attempt to inline context items by:
+    - Reading `content` for text files (from `path` or `url`)
+    - Adding `base64` for non-text (binary) files
+  - Text detection uses MIME type when available, with a fallback by extension (`.md`, `.txt`, `.json`, `.yaml`, `.yml`, `.csv`, `.tsv`).
+  - HTTP fetching uses `httpx` if available; otherwise, it’s skipped.
 
 - Import conventions in examples:
   - `from call.lib import api as call_api`
