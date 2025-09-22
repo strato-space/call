@@ -25,7 +25,7 @@ import faulthandler
 
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
-from call.lib.logging import debug_print as _dbg
+from call.lib.logging import debug_print
 
 
 def _emit_output(obj, fmt: str) -> None:
@@ -227,7 +227,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                     txt = _json.dumps(payload_dict or {}, ensure_ascii=False, indent=2)
                     if len(txt) > 2000:
                         txt = txt[:1997] + "..."
-                    _dbg("[cli]", "[PAYLOAD]", txt)
+                    debug_print("[cli]", "[PAYLOAD]", txt)
                 except Exception:
                     pass
             except Exception:

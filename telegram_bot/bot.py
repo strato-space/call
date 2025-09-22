@@ -59,6 +59,21 @@ from call.telegram_bot.filters import (
 )
 
 
+# Simple DI container for services (thin wrapper around call_api by default)
+@dataclass
+class _Services:
+    call_api: object
+
+
+_services = _Services(call_api=call_api)
+
+
+def set_services(*, call_api_module: object) -> None:
+    """Replace default services (for tests/mocking)."""
+    global _services
+    _services = _Services(call_api=call_api_module)
+
+
 # Load environment from call/.env first (module-relative), then allow process env to override
 _CALL_DIR = Path(__file__).resolve().parent.parent  # .../call/
 _CALL_ENV = _CALL_DIR / ".env"
@@ -445,7 +460,7 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot":
         proj = None
     try:
-        tree = call_api.list(project=proj)
+        tree = _services.call_api.list(project=proj)
         debug_print("[bot]", "[AGENTS]", f"projects={len(tree or [])}")
         if not tree:
             await m.reply("No agents found", parse_mode=None)
@@ -544,7 +559,7 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_ready", default_project=proj_default)
-        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
+        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
         await _send_markdown_rows_chunked(m, rows)
@@ -562,7 +577,7 @@ async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYP
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_draft", default_project=proj_default)
-        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
+        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
@@ -574,7 +589,7 @@ async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Rescan repositories and rebuild the SQLite repo index."""
     m = Messenger(context=context, update=update)
     try:
-        res = call_api.reload()
+        res = _services.call_api.reload()
         scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
         await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -592,7 +607,7 @@ async def handle_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
         project, agent, prompt, target, state = _parse_prompts_and_state(text, command="/prompts", default_project=proj_default)
-        items = call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
+        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
         rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
         header = None
         if state:
@@ -624,7 +639,7 @@ async def _call_task(
         proj_baseline = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
         # If no explicit target name, do not pass project — let library run a blank agent
         proj = (proj_baseline if (name or "").strip() else None)
-        res = await call_api.call_async(
+        res = await _services.call_api.call_async(
             project=proj,
             agent=None,
             prompt=None,
@@ -635,6 +650,7 @@ async def _call_task(
             thread_id=thread_id,
             merge=False,
         )
+        # ... (rest of the code remains the same)
         try:
             ok = bool(res.get("ok")) if isinstance(res, dict) else None
             debug_print("[bot]", "[CALL_TASK]", f"result ok={ok}")
@@ -703,7 +719,7 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     except Exception:
         pass
     # Delegate to library for predictable, shared behavior (no FS fallback; ordered keys)
-    input_arg, payload = call_api.build_input_payload(target=(name or None), main_text=(main_text or ""), extra_context=ctx_items or None, reply_text=(reply_text or None))
+    input_arg, payload = _services.call_api.build_input_payload(target=(name or None), main_text=(main_text or ""), extra_context=ctx_items or None, reply_text=(reply_text or None))
     try:
         import json as _json
         # Pretty-print payload with indentation; cap length to ~2000 chars to avoid noisy logs
@@ -867,7 +883,7 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         cid = update.effective_chat.id if update and update.effective_chat else None
         tid = update.message.message_thread_id if update and update.message else None
 
-        res = await call_api.clear_session(agent_name or None, chat_id=cid, thread_id=tid)
+        res = await _services.call_api.clear_session(agent_name or None, chat_id=cid, thread_id=tid)
         if not isinstance(res, dict) or not res.get("ok"):
             await m.reply(f"Clear failed: {res.get('description', 'unknown error')}", parse_mode=None)
             return
@@ -964,6 +980,13 @@ def main() -> None:
         write_timeout=60.0,
         pool_timeout=30.0,
     )
+
+    # Ensure repo index is loaded before polling to avoid NO_DATA_FOUND on first calls
+    try:
+        r = _services.call_api.reload()
+        debug_print("[bot]", "[MAIN]", f"reload scanned={getattr(r, 'get', lambda k, d=None: d)('scanned', None) if isinstance(r, dict) else r}")
+    except Exception:
+        pass
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
