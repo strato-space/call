@@ -721,29 +721,99 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
         tokens = tokens[:12]
         refs: list[dict] = []
         for tok in tokens:
+            added = False
+            # 1) Primary: try to resolve via library (DB-backed)
             try:
                 cfg, err = call_api.build_runnable_instructions_config(project=None, agent=None, prompt=None, target=tok, input=None, merge=False)
             except Exception:
                 cfg, err = None, None
             if cfg and (getattr(cfg, 'type', None) or getattr(cfg, 'path', None) or getattr(cfg, 'url', None)):
                 try:
-                    ref = {}
-                    if getattr(cfg, 'type', None):
-                        ref["type"] = cfg.type
-                    if getattr(cfg, 'name', None):
-                        ref["name"] = cfg.name
-                    if getattr(cfg, 'path', None):
-                        ref["path"] = cfg.path
-                    if getattr(cfg, 'url', None):
-                        ref["url"] = cfg.url
-                    if getattr(cfg, 'goal', None):
-                        ref["goal"] = cfg.goal
-                    # Dedupe by (type,name,path,url)
-                    key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
-                    if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
-                        refs.append(ref)
+                    # If a prompt with a known file path is resolved, prefer a 'file' context item with content —
+                    # this is friendlier for downstream pipelines expecting concrete content items.
+                    from pathlib import Path as _Path
+                    ctype = getattr(cfg, 'type', None)
+                    cpath = getattr(cfg, 'path', None)
+                    if ctype == 'prompt' and cpath:
+                        try:
+                            p = _Path(cpath)
+                            if p.exists():
+                                try:
+                                    txt = p.read_text(encoding='utf-8')
+                                except Exception:
+                                    txt = ''
+                                ref = {
+                                    "type": "file",
+                                    "name": p.name,
+                                    "path": str(p),
+                                    "content": txt,
+                                    "mutable": True,
+                                }
+                                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
+                                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
+                                    refs.append(ref)
+                                    added = True
+                        except Exception:
+                            pass
+                    if not added:
+                        ref = {}
+                        if getattr(cfg, 'type', None):
+                            ref["type"] = cfg.type
+                        # Prefer a meaningful name; if cfg.name is empty (agent name), fall back to token
+                        nm = getattr(cfg, 'name', None)
+                        if isinstance(nm, str) and nm.strip():
+                            ref["name"] = nm
+                        else:
+                            ref["name"] = tok
+                        if getattr(cfg, 'path', None):
+                            ref["path"] = cfg.path
+                        if getattr(cfg, 'url', None):
+                            ref["url"] = cfg.url
+                        if getattr(cfg, 'goal', None):
+                            ref["goal"] = cfg.goal
+                        key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
+                        if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
+                            refs.append(ref)
+                            added = True
                 except Exception:
-                    continue
+                    # Continue to filesystem fallback
+                    added = False
+            # 2) Filesystem fallback: treat token as prompt id under prompt/{draft|ready}/<id>.md
+            try:
+                from call.lib.discovery import discover_prompt_repo as _discover_prompt_repo
+                base = _discover_prompt_repo()
+            except Exception:
+                base = None
+            try:
+                if base:
+                    from pathlib import Path as _Path
+                    candidates = [
+                        _Path(base) / "draft" / f"{tok}.md",
+                        _Path(base) / "ready" / f"{tok}.md",
+                    ]
+                    for p in candidates:
+                        try:
+                            if p.exists():
+                                try:
+                                    txt = p.read_text(encoding='utf-8')
+                                except Exception:
+                                    txt = ''
+                                ref = {
+                                    "type": "file",
+                                    "name": p.name,
+                                    "path": str(p),
+                                    "content": txt,
+                                    "mutable": True,
+                                }
+                                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
+                                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
+                                    refs.append(ref)
+                                    added = True
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                pass
         if refs:
             # Append to context items
             try:
