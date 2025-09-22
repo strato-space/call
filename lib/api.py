@@ -1,3 +1,14 @@
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, field
+import os
+import sqlite3
+import asyncio
+from call.lib import repo as repo
+from call.lib import repo as call_repo
+from call.lib import repo_fs as repo_fs
+import builtins as _bi
+
+
 def _compile_wildcard_regex(pattern: str | None):
     """Compile a case-insensitive full-string regex from a wildcard pattern ('*' -> '.*')."""
     if not pattern:
@@ -8,6 +19,38 @@ def _compile_wildcard_regex(pattern: str | None):
     except Exception:
         return None
 
+
+def normalize_selector(val: Optional[str]) -> Optional[str]:
+    """Normalize selectors by stripping leading '@' and trailing '.md' / '.markdown'.
+
+    Returns empty string for empty inputs, and None passes through unchanged.
+    """
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        try:
+            val = str(val)
+        except Exception:
+            return None
+    s = val.strip()
+    if not s:
+        return ""
+    if s.startswith('@'):
+        s = s[1:]
+    sl = s.lower()
+    if sl.endswith('.markdown'):
+        s = s[:-9]
+    elif sl.endswith('.md'):
+        s = s[:-3]
+    return s
+
+def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
+
+    Delegates to repo_db.list_prompts() via compatibility alias 'repo'.
+    Do not swallow exceptions; let callers see failures.
+    """
+    return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
 
 def interpret_target(
     *,
@@ -23,6 +66,11 @@ def interpret_target(
     Returns (project, agent, prompt, err) where err is a dict with keys
     { code, status, options, description } or None if no error.
     """
+    # Apply normalization for non-CLI callers as well
+    project = normalize_selector(project)
+    agent = normalize_selector(agent)
+    prompt = normalize_selector(prompt)
+    target = normalize_selector(target)
     try:
         tgt = (target or "").strip()
         if not tgt:
@@ -200,176 +248,77 @@ def interpret_target(
                 "options": rows[:20],
                 "description": "Multiple projects matched your criteria",
             }
-        # 3.1) Filesystem fallback: if a directory with this name exists in agent or prompt repos, treat as project
-        try:
-            from pathlib import Path as _Path
-            from call.lib.discovery import discover_agent_repo as _dar, discover_prompt_repo as _dpr
-            bases = []
-            try:
-                ar = _dar()
-                if ar:
-                    bases.append(ar)
-            except Exception:
-                pass
-            try:
-                pr = _dpr()
-                if pr:
-                    bases.append(pr)
-            except Exception:
-                pass
-            for base in bases:
-                cand = _Path(base) / tgt
-                try:
-                    if cand.exists() and cand.is_dir():
-                        if not (project or "").strip():
-                            project = tgt
-                        return project, agent, prompt, None
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        # Not resolved
-        return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "not found", "options": []}
-    except Exception:
-        return project, agent, prompt, None
+    finally:
+        # No-op finally; early returns above handle most cases.
+        pass
 
-
-"""
-Library API for the call subsystem.
-
-Public surface (keyword-only):
-- call(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = False) -> dict
-- call_async(*, project: str | None, agent: str | None, prompt: str | None = None, target: str | None = None, input: str | None = None, chat_id: int | None = None, thread_id: int | None = None, session_id: str | None = None, echo: bool = False, debug: bool = False, merge: bool = False) -> dict
-- list(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> list[dict]  # hierarchical
-- resolve_agent(*, project: str | None = None, agent: str | None = None, prompt: str | None = None) -> dict
-
-Behavior:
-- Success: { ok: true, agent, agent_path, final_output, echo, resolved, session_id? }
-- Failure: { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [...], agent, project, final_output: null, echo, session_id? }
-  Codes: INTERNAL_ERROR, NOT_FOUND, NO_DATA_FOUND, TOO_MANY_ROWS, PIPELINE_ERROR
-
-This module uses the repo index (SQLite, built by call.lib.repo) and the app pipeline utilities
-from `call/app/call.py`. It focuses on a stable facade for the CLI and Telegram bot, including
-selection, wildcard filtering, and structured errors suitable for LLM consumption.
-"""
-
-import asyncio
-import builtins as _builtins
-import os
-import sys
-import traceback
-import sqlite3
-from typing import Any, Dict, List, Optional, Union
-
-# Repo-index (SQLite) interface for multi-repo scan/list (single source of truth, DB-only)
-from call.lib import repo_db as call_repo
-from call.lib import repo_db as repo  # alias for clarity in new code paths
-from call.lib import repo_fs as _repo_fs
-from call.lib import repo_fs as repo_fs  # alias for clarity in new code paths
-
-# DTO for runnable configuration (initial step; will be expanded gradually)
-from dataclasses import dataclass, field
-
-
-def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
-
-    Delegates to repo_db.list_prompts(). Do not swallow exceptions; let callers see failures.
-    """
-    return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
-
+    # Default: return inputs unchanged with no error
+    return project, agent, prompt, None
 
 def build_input_payload(*, target: Optional[str], main_text: str, extra_context: Optional[list] = None, reply_text: Optional[str] = None, download: bool = False) -> tuple[str, dict | None]:
-    """Build a structured input payload JSON used by both Telegram bot and CLI.
+    """Build a structured JSON payload used by Telegram bot and CLI echo.
 
-    Behavior:
-    - Adds target when provided
-    - Parses tokens from main_text and attempts to resolve them via DB-backed
-      build_runnable_instructions_config(). If a token resolves to a prompt with
-      a known file path, include a file context item with content. No filesystem
-      fallback is performed.
-    - Appends any extra_context items provided by the caller (e.g., Telegram reply files)
-    - Includes reply_text when provided
-    - Orders keys predictably: target, replay, input, context
-    Returns (json_string, payload_dict) or (raw_text, None) if payload would be empty.
+    - Ordered keys: target, replay, input, context
+    - Token parsing: extracts @Tokens and plain tokens; strips .md/.markdown suffixes
+    - Resolution: attempts build_runnable_instructions_config per token; falls back to repo prompt row
+    - When download=True, inlines content for text files and base64 for binaries (by url/path)
     """
+    import re as _re
     payload: dict = {}
     if isinstance(target, str) and target.strip():
         payload["target"] = target.strip()
-
     ctx_items: list = []
-    if isinstance(extra_context, _builtins.list) and extra_context:
-        ctx_items.extend(extra_context)
+    if isinstance(extra_context, _bi.list) and extra_context:
+        try:
+            ctx_items.extend([x for x in extra_context if isinstance(x, dict)])
+        except Exception:
+            ctx_items = [x for x in extra_context if isinstance(x, dict)]
 
-    # Token parsing from main text
+    # Tokenize
     tokens: list[str] = []
     try:
-        import re as _re
-        text_for_tokens = (main_text or "").strip()
-        if text_for_tokens:
-            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", text_for_tokens)
+        s = (main_text or "").strip()
+        if s:
+            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", s)
             for t in raw:
-                s = t.lstrip('@').strip().strip(',.;:')
-                # Drop common prompt file suffixes to support tokens like 'Name.md'
-                sl = s.lower()
-                if sl.endswith('.md'):
-                    s = s[:-3]
-                elif sl.endswith('.markdown'):
-                    s = s[:-9]
-                if s and s not in tokens:
-                    tokens.append(s)
-        tokens = tokens[:12]
+                u = t.lstrip('@').strip().strip(',.;:')
+                ul = u.lower()
+                if ul.endswith('.md'):
+                    u = u[:-3]
+                elif ul.endswith('.markdown'):
+                    u = u[:-9]
+                if u and u not in tokens:
+                    tokens.append(u)
+            tokens = tokens[:12]
     except Exception:
         tokens = []
 
-    # Resolve tokens via DB-backed config builder (no FS fallback)
+    # Resolve tokens → context via repo index only (no runtime builder calls)
     refs: list[dict] = []
     for tok in tokens:
+        rows = []
         try:
-            cfg, err = build_runnable_instructions_config(project=None, agent=None, prompt=None, target=tok, input=None, merge=False)
+            rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
         except Exception:
-            cfg, err = None, None
-        if cfg and (getattr(cfg, 'type', None) or getattr(cfg, 'path', None) or getattr(cfg, 'url', None)):
-            try:
+            rows = []
+        if not rows:
+            continue
+        try:
+            row = rows[0]
+            rpath = str(row.get('rel_path') or row.get('path') or '').strip()
+            if rpath:
                 from pathlib import Path as _Path
-                ctype = getattr(cfg, 'type', None)
-                cpath = getattr(cfg, 'path', None)
-                if ctype == 'prompt' and cpath:
-                    try:
-                        p = _Path(cpath)
-                        if p.exists():
-                            ref = {
-                                "type": "file",
-                                "name": p.stem,
-                                "path": str(p),
-                                "mutable": True,
-                            }
-                            key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
-                            if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
-                                refs.append(ref)
-                            continue
-                    except Exception:
-                        pass
-                # Generic reference item when not a prompt with a readable path
-                ref = {}
-                if getattr(cfg, 'type', None):
-                    ref["type"] = cfg.type
-                nm = getattr(cfg, 'name', None)
-                if isinstance(nm, str) and nm.strip():
-                    ref["name"] = nm
-                else:
-                    ref["name"] = tok
-                if getattr(cfg, 'path', None):
-                    ref["path"] = cfg.path
-                if getattr(cfg, 'url', None):
-                    ref["url"] = cfg.url
-                if getattr(cfg, 'goal', None):
-                    ref["goal"] = cfg.goal
-                key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
-                if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
+                p = _Path(rpath)
+                # Prefer DB prompt id for name to preserve exact casing (e.g., '50-DiscoveryAgent')
+                name_val = str(row.get('prompt') or '').strip() or (p.stem or tok)
+                # Normalize path to POSIX-style for deterministic JSON
+                path_val = str(p).replace('\\', '/')
+                ref = {"type": "file", "name": name_val, "path": path_val, "mutable": True}
+                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
+                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
                     refs.append(ref)
-            except Exception:
-                continue
+        except Exception:
+            continue
 
     if refs:
         try:
@@ -377,64 +326,53 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
         except Exception:
             ctx_items = refs
 
-    # Optionally download/load context for items with url or path
+    # Optional download
     if download and ctx_items:
         try:
-            import mimetypes as _mimes
-            import base64 as _b64
+            import mimetypes as _mimes, base64 as _b64
             from pathlib import Path as _Path
-            # Prefer httpx if available for robust HTTP fetches
             try:
                 import httpx as _httpx
             except Exception:
                 _httpx = None
-
-            def _is_text_type(mime: str | None, p: str) -> bool:
+            def _is_text(mime: str | None, p: str) -> bool:
                 if not mime:
-                    # Heuristic by extension
                     pl = p.lower()
                     return pl.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
-                return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
-
+                return mime.startswith('text/') or mime in ('application/json','application/yaml','application/x-yaml')
             for it in ctx_items:
                 try:
                     if not isinstance(it, dict):
                         continue
-                    # Skip if already has content or base64
-                    if isinstance(it.get('content'), str) and it['content']:
-                        continue
-                    if isinstance(it.get('base64'), str) and it['base64']:
+                    if (it.get('content') or it.get('base64')):
                         continue
                     url = str(it.get('url') or '').strip()
                     pth = str(it.get('path') or '').strip()
-                    if url:
-                        # Guess mime from URL path
-                        guess, _ = _mimes.guess_type(url)
-                        if _httpx:
-                            try:
-                                with _httpx.Client(timeout=15.0, follow_redirects=True) as c:
-                                    resp = c.get(url)
-                                    if resp.status_code == 200:
-                                        data = resp.content
-                                        if _is_text_type(guess, url):
-                                            try:
-                                                it['content'] = data.decode('utf-8')
-                                            except Exception:
-                                                it['base64'] = _b64.b64encode(data).decode('ascii')
-                                        else:
+                    if url and _httpx:
+                        try:
+                            guess, _ = _mimes.guess_type(url)
+                            with _httpx.Client(timeout=15.0, follow_redirects=True) as c:
+                                resp = c.get(url)
+                                if resp.status_code == 200:
+                                    data = resp.content
+                                    if _is_text(guess, url):
+                                        try:
+                                            it['content'] = data.decode('utf-8')
+                                        except Exception:
                                             it['base64'] = _b64.b64encode(data).decode('ascii')
-                            except Exception:
-                                pass
+                                    else:
+                                        it['base64'] = _b64.b64encode(data).decode('ascii')
+                        except Exception:
+                            pass
                     elif pth:
                         try:
                             p = _Path(pth)
                             if p.exists():
                                 guess, _ = _mimes.guess_type(p.name)
-                                if _is_text_type(guess, p.name):
+                                if _is_text(guess, p.name):
                                     try:
                                         it['content'] = p.read_text(encoding='utf-8')
                                     except Exception:
-                                        # Fallback to base64
                                         it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
                                 else:
                                     it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
@@ -445,21 +383,20 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
         except Exception:
             pass
 
-    # Build ordered payload
     ordered: dict = {}
-    if payload.get("target"):
-        ordered["target"] = payload["target"]
+    if payload.get('target'):
+        ordered['target'] = payload['target']
     if isinstance(reply_text, str) and reply_text.strip():
-        ordered["replay"] = reply_text.strip()
-    if (main_text or "").strip():
-        ordered["input"] = (main_text or "").strip()
+        ordered['replay'] = reply_text.strip()
+    if (main_text or '').strip():
+        ordered['input'] = (main_text or '').strip()
     if ctx_items:
-        ordered["context"] = ctx_items
-
+        ordered['context'] = ctx_items
     if ordered:
         import json as _json
         return (_json.dumps(ordered, ensure_ascii=False), ordered)
-    return ((main_text or ""), None)
+    return ((main_text or ''), None)
+
 
 def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
     """Filesystem scan and DB refresh (uniform name).
@@ -660,35 +597,41 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # If agent resolution fails but prompt is provided, try strict prompt resolution within the provided scope only.
+            # If agent resolution fails but prompt is provided, build a prompt-only runnable
+            prompt_row = None
             if prompt:
                 try:
-                    recs = call_repo.find_prompts(project=project, agent=agent, prompt=prompt)
-                    rec = recs[0] if recs else None
-                    if rec:
-                        # Do NOT broaden project/agent beyond what was explicitly provided by the caller
-                        env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
+                    # Relax agent filter; use project + prompt only
+                    recs = call_repo.find_prompts(project=project, agent=None, prompt=prompt)
+                    prompt_row = recs[0] if recs else None
                 except Exception:
-                    env = None
-            if not env or not env.get("ok"):
-                # Couldn’t resolve the agent or prompt into an agent
-                # Include the phrase 'not found' for CLI/tests compatibility
+                    prompt_row = None
+            if prompt_row is None:
+                # Couldn’t resolve as agent nor locate prompt row — return error
                 err = _error_payload(
                     agent=(agent or ""),
                     input="",
-                    exc=f"No agent found matching criteria (project={project}, agent={agent}, prompt={prompt}) — not found",
+                    exc="No agent found matching criteria",
                     status=404,
                     code="NO_DATA_FOUND",
                     project=project
                 )
                 return None, err
-        # env ok
-        resolved = env.get("resolved") or {}
-        name = str(resolved.get("name") or "")
-        proj = resolved.get("project") or project
-        path = resolved.get("path")
-        from pathlib import Path as _Path
-        path_p = _Path(path) if path else None
+            # Use prompt row to continue building config without agent resolution
+            name = str(prompt or "")
+            proj = prompt_row.get("project") or project
+            path = None
+            from pathlib import Path as _Path
+            path_p = None
+            # Continue to card loading below; pr_path will be derived from the row
+        else:
+            # env ok
+            resolved = env.get("resolved") or {}
+            name = str(resolved.get("name") or "")
+            proj = resolved.get("project") or project
+            path = resolved.get("path")
+            from pathlib import Path as _Path
+            path_p = _Path(path) if path else None
 
     # Load cards using repo index hints (project.yaml/agent.yaml/prompt.md|yaml)
     proj_yaml: _Path | None = None
@@ -729,11 +672,13 @@ def build_runnable_instructions_config(
     pr_meta: Dict[str, Any] | None = None
     try:
         if isinstance(prompt, str) and prompt.strip():
-            recs_pr = call_repo.find_prompts(project=proj, agent=name, prompt=prompt.strip())
+            recs_pr = call_repo.find_prompts(project=proj, agent=None, prompt=prompt.strip())
             rec_pr = recs_pr[0] if recs_pr else None
-            if rec_pr and rec_pr.get("path"):
-                _pp = _Path(rec_pr["path"])  # type: ignore[index]
-                pr_path = _pp if _pp.exists() else None
+            if rec_pr:
+                _pval = rec_pr.get("path") or rec_pr.get("rel_path")
+                if _pval:
+                    _pp = _Path(_pval)  # type: ignore[index]
+                    pr_path = _pp if _pp.exists() else _pp
     except Exception as e:
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 
