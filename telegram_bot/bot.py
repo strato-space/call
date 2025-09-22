@@ -392,28 +392,36 @@ def _normalize_token(tok: str) -> str:
 
 
 def _is_valid_target(token: str, base_project: str | None) -> bool:
-    """Return True if token resolves to an agent, prompt, or project.
+    """Return True if token resolves via the builder (agent, prompt, or project).
 
-    Uses DB-only queries via call_api facade to avoid filesystem fallback and keep behavior predictable.
+    Prefer central validation through build_runnable_instructions_config using the
+    `target` argument so semantics match the library (prompt > agent > project).
     """
     t = _normalize_token(token)
     if not t:
         return False
-    # Prefer agent resolution
+    # Prefer central builder when available (validates prompt > agent > project)
+    try:
+        builder = getattr(_services.call_api, "build_runnable_instructions_config", None)
+        if callable(builder):
+            cfg, err = builder(project=(base_project or None), agent=None, prompt=None, target=t, input=None, merge=False)
+            if err is None and cfg is not None:
+                return True
+    except Exception:
+        pass
+    # Fallback: DB-only checks (resolve_agent for agent/prompt; list for project)
     try:
         env = _services.call_api.resolve_agent(project=(base_project or None), agent=t, prompt=None, target=None)
         if isinstance(env, dict) and env.get("ok"):
             return True
     except Exception:
         pass
-    # Prompt id resolution
     try:
         envp = _services.call_api.resolve_agent(project=(base_project or None), agent=None, prompt=t, target=None)
         if isinstance(envp, dict) and envp.get("ok"):
             return True
     except Exception:
         pass
-    # Project existence
     try:
         lst = _services.call_api.list(project=t)
         if any((isinstance(x, dict) and (str(x.get("name") or "").strip() == t)) for x in (lst or [])):
