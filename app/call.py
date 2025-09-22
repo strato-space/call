@@ -205,28 +205,18 @@ def _model_settings_from_attributes(attrs: Dict[str, Any] | Any | None) -> Model
         except Exception:
             model_name = None
         if isinstance(_attrs, dict) and model_name:
-            # Check a few naming variants for convenience
-            for key in (
-                f"model-params-{model_name}",
-                f"model_params_{model_name}",
-                f"modelParams{model_name}",
-            ):
-                try:
-                    val = _attrs.get(key)
-                except Exception:
-                    val = None
-                if isinstance(val, dict):
-                    params = val
-                    break
+            # Only canonical hyphenated form is supported
+            key = f"model-params-{model_name}"
+            try:
+                val = _attrs.get(key)
+            except Exception:
+                val = None
+            if isinstance(val, dict):
+                params = val
         # Fallback to generic keys when no model-specific params were found
         if not isinstance(params, dict) or not params:
             if isinstance(_attrs, dict):
-                params = (
-                    _attrs.get("model-params")
-                    or _attrs.get("model_params")
-                    or _attrs.get("modelParams")
-                    or {}
-                )
+                params = _attrs.get("model-params") or {}
         if not isinstance(params, dict):
             params = {}
         temp = params.get("temperature")
