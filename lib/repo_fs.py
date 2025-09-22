@@ -121,13 +121,14 @@ def _read_agent_name(path: Path, *, default: str) -> str:
     return name
 
 
-def _scan_agent_repo(cur) -> int:
+def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
     scanned = 0
+    directories: list[dict] = []
     try:
         arepo = discover_agent_repo()
     except Exception as e:
         debug_print("[repo.scan] agent repo not found", str(e))
-        return scanned
+        return scanned, []
 
     # Enumerate projects (filesystem only in sync)
     try:
@@ -165,6 +166,7 @@ def _scan_agent_repo(cur) -> int:
         pdir = Path(arepo) / pname
         if not pdir.exists():
             continue
+        per_project_agents = 0
         # Project-level MD
         proj_md = pdir / "project.md"
         eng = ""; orch = ""
@@ -224,6 +226,7 @@ def _scan_agent_repo(cur) -> int:
                 card=relp,
             )
             scanned += 1
+            per_project_agents += 1
             for pr_id in (prompts_list or []):
                 try:
                     # Prompt declared in agent metadata; use agent path as placeholder
@@ -250,82 +253,95 @@ def _scan_agent_repo(cur) -> int:
         # Per-agent subdirs
         try:
             for child in pdir.iterdir():
-                if not child.is_dir() or child.name.startswith('.'):
-                    continue
-                f = child / "agent.md"
-                if not f.exists():
-                    continue
-                ag_name = _read_agent_name(f, default=child.name)
-                eng = ""; orch = ""; prompts_list: list[str] = []
                 try:
-                    text = f.read_text(encoding="utf-8")
-                    y0 = text.index("<!-- METADATA:START -->")
-                    y1 = text.index("```yaml", y0) + len("```yaml")
-                    y2 = text.index("```", y1)
-                    import yaml as _yaml
-                    meta = _yaml.safe_load(text[y1:y2]) or {}
-                    eng = str(meta.get("engine") or "")
-                    orch = str(meta.get("orchestration") or "")
-                    pv = meta.get("prompts") or []
-                    if isinstance(pv, dict):
-                        prompts_list = [str(k) for k in pv.keys()]
-                    elif isinstance(pv, builtins.list):
-                        prompts_list = [str(k) for k in pv]
-                except Exception:
-                    pass
-                relp, url = _rel_url(f)
-                _upsert_row(
-                    cur,
-                    target=ag_name,
-                    project=pname,
-                    agent=ag_name,
-                    prompt="",
-                    path=str(f),
-                    state="",
-                    engine=eng,
-                    orchestration=orch,
-                    type="agent",
-                    rel_path=relp,
-                    url=url,
-                    goal=str(meta.get("goal") or meta.get("purpose") or ""),
-                    card=relp,
-                )
-                scanned += 1
-                for pr_id in (prompts_list or []):
+                    if not child.is_dir() or child.name.startswith('.'):
+                        continue
+                    f = child / "agent.md"
+                    if not f.exists():
+                        continue
+                    ag_name = _read_agent_name(f, default=child.name)
+                    eng = ""; orch = ""; prompts_list: list[str] = []
+                    meta = {}
                     try:
-                        _upsert_row(
-                            cur,
-                            target=pr_id,
-                            project=pname,
-                            agent=ag_name,
-                            prompt=pr_id,
-                            abs_path=str(f),
-                            state="",
-                            engine=eng,
-                            orchestration=orch,
-                            type="prompt",
-                            rel_path=relp,
-                            url=url,
-                            goal="",
-                            card="",
-                        )
-                        scanned += 1
+                        text = f.read_text(encoding="utf-8")
+                        y0 = text.index("<!-- METADATA:START -->")
+                        y1 = text.index("```yaml", y0) + len("```yaml")
+                        y2 = text.index("```", y1)
+                        import yaml as _yaml
+                        meta = _yaml.safe_load(text[y1:y2]) or {}
+                        eng = str(meta.get("engine") or "")
+                        orch = str(meta.get("orchestration") or "")
+                        pv = meta.get("prompts") or []
+                        if isinstance(pv, dict):
+                            prompts_list = [str(k) for k in pv.keys()]
+                        elif isinstance(pv, builtins.list):
+                            prompts_list = [str(k) for k in pv]
                     except Exception:
-                        pass
+                        meta = {}
+                    relp, url = _rel_url(f)
+                    _upsert_row(
+                        cur,
+                        target=ag_name,
+                        project=pname,
+                        agent=ag_name,
+                        prompt="",
+                        abs_path=str(f),
+                        state="",
+                        engine=eng,
+                        orchestration=orch,
+                        type="agent",
+                        rel_path=relp,
+                        url=url,
+                        goal=str((meta.get("goal") if isinstance(meta, dict) else "") or (meta.get("purpose") if isinstance(meta, dict) else "") or ""),
+                        card=relp,
+                    )
+                    scanned += 1
+                    per_project_agents += 1
+                    for pr_id in (prompts_list or []):
+                        try:
+                            _upsert_row(
+                                cur,
+                                target=pr_id,
+                                project=pname,
+                                agent=ag_name,
+                                prompt=pr_id,
+                                abs_path=str(f),
+                                state="",
+                                engine=eng,
+                                orchestration=orch,
+                                type="prompt",
+                                rel_path=relp,
+                                url=url,
+                                goal="",
+                                card="",
+                            )
+                            scanned += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
         except Exception:
             pass
-    return scanned
+        # Record per-project stats
+        try:
+            directories.append({"project": pname, "path": str(pdir), "agents": int(per_project_agents)})
+        except Exception:
+            pass
+    return scanned, directories
 
 
-def _scan_prompt_repo(cur) -> int:
+def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
     scanned = 0
+    directories: list[dict] = []
     try:
         prepo = discover_prompt_repo()
     except Exception as e:
         debug_print("[repo.scan] prompt repo not found", str(e))
-        return scanned
+        return scanned, []
 
     roots = [Path(prepo) / "ready", Path(prepo) / "draft"]
+    # Aggregate counts per project
+    per_project: dict[str, dict] = {}
     import os as _os
     GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
     GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
@@ -421,9 +437,31 @@ def _scan_prompt_repo(cur) -> int:
                     card=relp,
                 )
                 scanned += 1
+                # Aggregate per-project counts
+                try:
+                    if proj:
+                        d = per_project.setdefault(proj, {"ready": 0, "draft": 0})
+                        d[state] = int(d.get(state, 0)) + 1
+                except Exception:
+                    pass
         except Exception:
             continue
-    return scanned
+    # Emit directories summary for projects we saw
+    try:
+        for proj, counts in per_project.items():
+            try:
+                directories.append({
+                    "project": proj,
+                    "path": str(Path(prepo) / proj),
+                    "ready": int(counts.get("ready", 0)),
+                    "draft": int(counts.get("draft", 0)),
+                    "prompts": int(counts.get("ready", 0)) + int(counts.get("draft", 0)),
+                })
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return scanned, directories
 
 
 def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
@@ -436,12 +474,26 @@ def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
         repos = ["agent", "prompt"]
 
     scanned = 0
+    repos_out: list[dict] = []
     try:
         for r in repos:
             if r == "agent":
-                scanned += _scan_agent_repo(cur)
+                s_count, dirs = _scan_agent_repo(cur)
+                scanned += s_count
+                # Try to include repo root for convenience
+                try:
+                    arepo = discover_agent_repo()
+                    repos_out.append({"name": "agent", "root": str(arepo), "directories": dirs})
+                except Exception:
+                    repos_out.append({"name": "agent", "directories": dirs})
             elif r == "prompt":
-                scanned += _scan_prompt_repo(cur)
+                s_count, dirs = _scan_prompt_repo(cur)
+                scanned += s_count
+                try:
+                    prepo = discover_prompt_repo()
+                    repos_out.append({"name": "prompt", "root": str(prepo), "directories": dirs})
+                except Exception:
+                    repos_out.append({"name": "prompt", "directories": dirs})
         # Prune stale prompt rows (file deleted or moved)
         try:
             cur.execute("SELECT target, path, prompt FROM repo")
@@ -455,7 +507,7 @@ def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
             pass
         conn.commit()
         debug_print("[repo.scan] done", f"repos={repos}", f"scanned={scanned}")
-        return {"ok": True, "scanned": scanned}
+        return {"ok": True, "scanned": scanned, "repos": repos_out}
     except Exception as e:
         conn.rollback()
         return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR", "scanned": scanned}

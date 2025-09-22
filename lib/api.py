@@ -597,6 +597,7 @@ def build_runnable_instructions_config(
         ), None
 
     # Resolve selection to determine agent path and effective project/name
+    pr_path_override: _Path | None = None  # optional filesystem fallback for malformed prompts
     path_p = None
     if (project and not (agent or prompt)):
         # If selection is project-only:
@@ -637,43 +638,91 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # If agent resolution fails, we only proceed with a prompt-only runnable
-            # when a prompt id is explicitly provided. We never widen across projects
-            # if a project filter is set (security: prompt must not replace project/agent).
+            # Agent resolution failed.
+            # 1) If no prompt is provided, return 404 (do NOT fall back to project-only).
+            if not (isinstance(prompt, str) and prompt.strip()):
+                return None, _error_payload(
+                    agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
+                    status=404, code="NO_DATA_FOUND", project=project
+                )
+            # 2) Try DB prompt row (respect project filter first)
             prompt_row = None
-            if isinstance(prompt, str) and prompt.strip():
+            try:
+                recs = call_repo.find_prompts(project=project, agent=None, prompt=prompt)
+                prompt_row = recs[0] if recs else None
+            except Exception:
+                prompt_row = None
+            if (prompt_row is None) and (not project):
                 try:
-                    # Prefer project-scoped lookup when project is provided
-                    recs = call_repo.find_prompts(project=project, agent=None, prompt=prompt)
-                    prompt_row = recs[0] if recs else None
+                    recs_any = call_repo.find_prompts(project=None, agent=None, prompt=prompt)
+                    prompt_row = recs_any[0] if recs_any else None
                 except Exception:
                     prompt_row = None
-                # Only when project is not specified, allow global lookup
-                if (prompt_row is None) and (not project):
-                    try:
-                        recs_any = call_repo.find_prompts(project=None, agent=None, prompt=prompt)
-                        prompt_row = recs_any[0] if recs_any else None
-                    except Exception:
-                        prompt_row = None
             if prompt_row is None:
-                # Couldn’t resolve as agent nor locate prompt row — return error
-                # Include both phrases so CLI tests that look for either will pass.
-                err = _error_payload(
-                    agent=(agent or ""),
-                    input="",
-                    exc="No agent found matching criteria — not found",
-                    status=404,
-                    code="NO_DATA_FOUND",
-                    project=project
-                )
-                return None, err
-            # Use prompt row to continue building config without agent resolution
-            name = str(prompt or "")
-            proj = prompt_row.get("project") or project
-            path = None
-            from pathlib import Path as _Path
-            path_p = None
-            # Continue to card loading below; pr_path will be derived from the row
+                # 3) With project specified, check filesystem for malformed prompt id only to emit 400; otherwise 404
+                if project:
+                    try:
+                        from call.lib.discovery import discover_prompt_repo as _dpr
+                        _base = _Path(_dpr())
+                        pr_fallback: _Path | None = None
+                        for p in (_base / "ready").rglob("*.md"):
+                            if p.stem == str(prompt).strip():
+                                pr_fallback = _Path(p); break
+                        if pr_fallback is None:
+                            for p in (_base / "draft").rglob("*.md"):
+                                if p.stem == str(prompt).strip():
+                                    pr_fallback = _Path(p); break
+                    except Exception:
+                        pr_fallback = None
+                    if pr_fallback is None:
+                        return None, _error_payload(
+                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
+                            status=404, code="NO_DATA_FOUND", project=project
+                        )
+                    # Load card text to detect malformed METADATA; if malformed, allow strict checks later (400); else return 404
+                    meta_chk, body_chk, raw_chk = _load_card(pr_fallback)
+                    if not (isinstance(meta_chk, dict) and meta_chk):
+                        # Malformed -> carry path to enforce BAD_CARD_FORMAT later
+                        name = str(prompt or "")
+                        proj = project
+                        pr_path_override = pr_fallback
+                        path_p = None
+                    else:
+                        # Valid card exists but DB row not in this project -> respect project filter and return 404
+                        return None, _error_payload(
+                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
+                            status=404, code="NO_DATA_FOUND", project=project
+                        )
+                else:
+                    # No project filter: allow filesystem fallback and continue strict validation path
+                    try:
+                        from call.lib.discovery import discover_prompt_repo as _dpr
+                        _base = _Path(_dpr())
+                        pr_fallback: _Path | None = None
+                        for p in (_base / "ready").rglob("*.md"):
+                            if p.stem == str(prompt).strip():
+                                pr_fallback = _Path(p); break
+                        if pr_fallback is None:
+                            for p in (_base / "draft").rglob("*.md"):
+                                if p.stem == str(prompt).strip():
+                                    pr_fallback = _Path(p); break
+                    except Exception:
+                        pr_fallback = None
+                    if pr_fallback is None:
+                        return None, _error_payload(
+                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
+                            status=404, code="NO_DATA_FOUND", project=project
+                        )
+                    name = str(prompt or "")
+                    proj = project
+                    pr_path_override = pr_fallback
+                    path_p = None
+            else:
+                # Use prompt row to continue building config without agent resolution
+                name = str(prompt or "")
+                proj = prompt_row.get("project") or project
+                path_p = None
+            # Continue to card loading below; pr_path will be derived from DB row or override
         else:
             # env ok
             resolved = env.get("resolved") or {}
@@ -760,13 +809,41 @@ def build_runnable_instructions_config(
                         _pp = None
                 if _pp is not None:
                     pr_path = _pp if _pp.exists() else _pp
+            # Filesystem fallback: if DB row is missing (e.g., malformed METADATA stripped project/agent),
+            # attempt to locate a prompt file by stem under prompt repo, preferring 'ready' over 'draft'.
+            # IMPORTANT: only do this when no explicit project filter is provided. Otherwise we might cross projects.
+            if (pr_path is None) and (not proj):
+                try:
+                    from call.lib.discovery import discover_prompt_repo as _dpr
+                    base = _Path(_dpr())
+                    candidates: list[_Path] = []
+                    # Prefer ready
+                    try:
+                        for p in (base / "ready").rglob("*.md"):
+                            if p.stem == prompt.strip():
+                                candidates.append(_Path(p))
+                    except Exception:
+                        pass
+                    # Then draft
+                    try:
+                        for p in (base / "draft").rglob("*.md"):
+                            if p.stem == prompt.strip():
+                                candidates.append(_Path(p))
+                    except Exception:
+                        pass
+                    if candidates:
+                        # Choose the first match (ready-first order) for validation; we do not try to guess project/agent here
+                        pr_path = candidates[0]
+                except Exception:
+                    pr_path = None
     except Exception as e:
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 
     # Parse cards
     proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
     ag_attrs, ag_instr, ag_raw = _load_card(path_p)
-    pr_attrs, pr_instr, pr_raw = _load_card(_Path(pr_path) if pr_path else None)
+    _pr_src = (pr_path_override if pr_path_override is not None else (_Path(pr_path) if pr_path else None))
+    pr_attrs, pr_instr, pr_raw = _load_card(_pr_src)
 
     # Strict validation: cards must be Markdown; prompt MD must contain METADATA
     def _is_md(p: _Path | None) -> bool:
@@ -777,11 +854,11 @@ def build_runnable_instructions_config(
     # Agent card must be MD when present
     if path_p and not _is_md(path_p):
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Agent card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
-    # Prompt card must be MD when present
-    if pr_path and not _is_md(_Path(pr_path)):
+    # Prompt card must be MD when present (use effective source)
+    if _pr_src and not _is_md(_pr_src):
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
     # Prompt MD must contain METADATA YAML
-    if pr_path and _is_md(_Path(pr_path)) and not (isinstance(pr_attrs, dict) and pr_attrs):
+    if _pr_src and _is_md(_pr_src) and not (isinstance(pr_attrs, dict) and pr_attrs):
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt MD missing or invalid METADATA YAML", status=400, code="BAD_CARD_FORMAT", project=proj)
 
     # Build instructions and attributes based on merge
