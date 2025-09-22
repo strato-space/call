@@ -254,8 +254,8 @@ bad: [missing: bracket
         data = json.loads(out)
         assert data.get("ok") is False
         # For malformed METADATA, the index row may be missing project linkage, resulting in 404 (more specific)
-        assert data.get("error_code") in (400, 404)
-        assert (data.get("code") or "").upper() in ("NO_DATA_FOUND", "BAD_CARD_FORMAT")
+        assert data.get("error_code") == 400
+        assert (data.get("code") or "").upper() == "BAD_CARD_FORMAT"
     finally:
         try:
             bad.unlink(missing_ok=True)
