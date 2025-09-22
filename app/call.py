@@ -323,11 +323,54 @@ async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, pa
                 return await safe_send_message(chat_id=chat_id, text=prepared, parse_mode=parse_mode)
             except Exception:
                 return None
-        # Unknown BadRequest: swallow to avoid breaking callers
+
+
+def _attrs_to_yaml_text(attrs) -> str | None:
+    """Convert a dict of attributes to YAML with block style for multi-line strings.
+
+    Standalone helper so main functions stay compact.
+    """
+    if not isinstance(attrs, dict) or not attrs:
         return None
+    class _BlockStrDumper(yaml.SafeDumper):
+        pass
+    def _str_representer(dumper, data):
+        style = '|' if ('\n' in data) else None
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
+    _BlockStrDumper.add_representer(str, _str_representer)
+    try:
+        return yaml.dump(attrs, Dumper=_BlockStrDumper, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
     except Exception:
-        # Never propagate; keep pipelines running
-        return None
+        try:
+            return yaml.safe_dump(attrs, allow_unicode=True, sort_keys=False)
+        except Exception:
+            return None
+
+
+def debug_dump_cfg_preview(cfg) -> None:
+    """Debug: dump cfg.attributes as YAML and preview instructions (truncated).
+
+    Keep logging noise reasonable and avoid inline code in runtime functions.
+    """
+    try:
+        ytxt = _attrs_to_yaml_text(getattr(cfg, 'attributes', None))
+        if ytxt:
+            debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
+    except Exception:
+        pass
+    # Print instructions preview only if not provided inside attributes as 'instructions'
+    try:
+        attrs_has_instr = isinstance(getattr(cfg, 'attributes', None), dict) and ('instructions' in (cfg.attributes or {}))
+    except Exception:
+        attrs_has_instr = False
+    if not attrs_has_instr:
+        try:
+            _instr = getattr(cfg, 'instructions', "") or ""
+            _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
+            debug_print("[app]", "Agent instructions len=", str(len(_instr)))
+            debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
+        except Exception:
+            pass
             
 
 def ensure_env(var: str, default: str = None) -> str:
@@ -2048,42 +2091,11 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # If YAML provided, use what we started; otherwise none
         mcp_servers = mcp_servers_started
 
-        # Debug: dump cfg.attributes back to YAML and optionally print instructions preview
-        def _attrs_to_yaml_text(attrs) -> str | None:
-            if not isinstance(attrs, dict) or not attrs:
-                return None
-            class _BlockStrDumper(yaml.SafeDumper):
-                pass
-            def _str_representer(dumper, data):
-                style = '|' if ('\n' in data) else None
-                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
-            _BlockStrDumper.add_representer(str, _str_representer)
-            try:
-                return yaml.dump(attrs, Dumper=_BlockStrDumper, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
-            except Exception:
-                try:
-                    return yaml.safe_dump(attrs, allow_unicode=True, sort_keys=False)
-                except Exception:
-                    return None
+        # Debug dump (helper)
         try:
-            ytxt = _attrs_to_yaml_text(getattr(cfg, 'attributes', None))
-            if ytxt:
-                debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
+            debug_dump_cfg_preview(cfg)
         except Exception:
             pass
-        # Print instructions preview only if not provided inside attributes as 'instructions'
-        try:
-            attrs_has_instr = isinstance(getattr(cfg, 'attributes', None), dict) and ('instructions' in (cfg.attributes or {}))
-        except Exception:
-            attrs_has_instr = False
-        if not attrs_has_instr:
-            try:
-                _instr = cfg.instructions or ""
-                _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
-                debug_print("[app]", "Agent instructions len=", str(len(_instr)))
-                debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
-            except Exception:
-                pass
 
         # Agents-as-Tools: if the project card exposes 'agents' or 'prompts',
         # create sub-agents as tools so the main agent can call them.

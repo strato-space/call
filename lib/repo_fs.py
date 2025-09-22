@@ -37,7 +37,7 @@ def _upsert_row(
     project: str,
     agent: str,
     prompt: str,
-    path: str,
+    abs_path: str,
     state: str | None = None,
     engine: str | None = None,
     orchestration: str | None = None,
@@ -52,10 +52,19 @@ def _upsert_row(
         old = cur.fetchone()
         if old is not None:
             old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch, old_type, old_rel, old_url, old_goal, old_card = [x or "" for x in old]
+            # Enforce precedence: project > agent > prompt. Do not let lower-precedence overwrite higher-precedence rows.
+            try:
+                new_type = str(type or "")
+                if (old_type == "project") and (new_type in ("agent", "prompt")):
+                    return  # keep project row
+                if (old_type == "agent") and (new_type == "prompt"):
+                    return  # keep agent row
+            except Exception:
+                pass
             eff_project = project or old_project
             eff_agent = agent or old_agent
             eff_prompt = prompt or old_prompt
-            new_path = path or ""
+            new_path = abs_path or ""
             eff_path = new_path or old_path
             new_card = (card or "")
             eff_card = new_card or old_card
@@ -85,7 +94,7 @@ def _upsert_row(
         else:
             cur.execute(
                 "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, project, agent, prompt, path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or ""), (card or "")),
+                (target, project, agent, prompt, abs_path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or ""), (card or "")),
             )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
@@ -171,7 +180,7 @@ def _scan_agent_repo(cur) -> int:
                 project=pname,
                 agent="",
                 prompt="",
-                path=str(proj_md),
+                abs_path=str(proj_md),
                 state="",
                 engine=eng,
                 orchestration=orch,
@@ -204,7 +213,7 @@ def _scan_agent_repo(cur) -> int:
                 project=pname,
                 agent=ag_name,
                 prompt="",
-                path=str(f),
+                abs_path=str(f),
                 state="",
                 engine=eng,
                 orchestration=orch,
@@ -224,7 +233,7 @@ def _scan_agent_repo(cur) -> int:
                         project=pname,
                         agent=ag_name,
                         prompt=pr_id,
-                        path=str(f),
+                        abs_path=str(f),
                         state="",
                         engine=eng,
                         orchestration=orch,
@@ -290,7 +299,7 @@ def _scan_agent_repo(cur) -> int:
                             project=pname,
                             agent=ag_name,
                             prompt=pr_id,
-                            path=str(f),
+                            abs_path=str(f),
                             state="",
                             engine=eng,
                             orchestration=orch,
@@ -352,7 +361,7 @@ def _scan_prompt_repo(cur) -> int:
                     project=proj_name,
                     agent="",
                     prompt="",
-                    path=str(proj_md),
+                    abs_path=str(proj_md),
                     state="",
                     engine=eng,
                     orchestration=orch,
@@ -401,7 +410,7 @@ def _scan_prompt_repo(cur) -> int:
                     project=proj,
                     agent=agent,
                     prompt=pr_id,
-                    path=str(p),
+                    abs_path=str(p),
                     state=state,
                     engine=eng,
                     orchestration=orch,

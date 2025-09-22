@@ -25,6 +25,7 @@ import faulthandler
 
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
+from call.lib.logging import debug_print as _dbg
 
 
 def _emit_output(obj, fmt: str) -> None:
@@ -220,6 +221,15 @@ def cmd_call(args: argparse.Namespace) -> int:
                         extra_context=eff_ctx,
                         reply_text=(eff_replay if isinstance(eff_replay, str) else None),
                     )
+                # Pretty-print payload to debug logs (capped to ~2000 chars)
+                try:
+                    import json as _json
+                    txt = _json.dumps(payload_dict or {}, ensure_ascii=False, indent=2)
+                    if len(txt) > 2000:
+                        txt = txt[:1997] + "..."
+                    _dbg("[cli]", "[PAYLOAD]", txt)
+                except Exception:
+                    pass
             except Exception:
                 payload_json, payload_dict = (parsed_input or None), None
 
@@ -248,8 +258,8 @@ def cmd_call(args: argparse.Namespace) -> int:
                         if not err and cfg:
                             resolved = {
                                 "project": getattr(cfg, 'project', None),
-                                # Always include agent name if present in cfg
-                                "agent": getattr(cfg, 'name', None),
+                                # Agent is null when the selection is a project
+                                "agent": (None if (getattr(cfg, 'type', None) == 'project') else getattr(cfg, 'name', None)),
                                 "prompt": getattr(cfg, 'prompt_override', None),
                                 "type": getattr(cfg, 'type', None),
                                 "path": getattr(cfg, 'path', None),
@@ -366,6 +376,8 @@ def main() -> int:
                     item["type"] = r.get("type")
                 if r.get("rel_path"):
                     item["rel_path"] = r.get("rel_path")
+                if r.get("path"):
+                    item["abs_path"] = r.get("path")
                 if r.get("goal"):
                     item["goal"] = r.get("goal")
                 items.append(item)
