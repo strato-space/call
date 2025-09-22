@@ -1,67 +1,95 @@
 import json
-import types
 import pytest
-from pathlib import Path
 
 pytestmark = pytest.mark.anyio("asyncio")
+
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
 
+
+class DummyDoc:
+    def __init__(self, file_id: str, file_name: str):
+        self.file_id = file_id
+        self.file_name = file_name
+
+
 class DummyMessage:
-    def __init__(self, text: str = ""):
+    def __init__(self, text: str = "", *, reply_to: "DummyMessage | None" = None, document: DummyDoc | None = None):
         self.text = text
         self.caption = ""
-        self.document = None
+        self.document = document
         self.message_thread_id = None
+        self.reply_to_message = reply_to
+
 
 class DummyUpdate:
-    def __init__(self, text: str):
-        self.message = DummyMessage(text=text)
-        # Minimal attrs used by builder
+    def __init__(self, text: str, reply: DummyMessage | None = None):
+        self.message = DummyMessage(text=text, reply_to=reply)
+
         class _Chat:
             id = 123
             type = "private"
+
         self.effective_chat = _Chat()
 
+
 class DummyContext:
-    def __init__(self):
+    def __init__(self, file_path: str | None = None):
+        class _File:
+            def __init__(self, path: str):
+                self.file_path = path
+
         class _Bot:
+            def __init__(self, path: str | None):
+                self._path = path or "documents/file_1.pdf"
+
             async def get_file(self, file_id: str):
-                raise RuntimeError("not used in this test")
-        self.bot = _Bot()
+                return _File(self._path)
+
+        self.bot = _Bot(file_path)
 
 
-async def test_main_text_prompt_token_included_via_fs_fallback(tmp_path, monkeypatch):
-    """
-    Ensure that when main_text contains '@PromptId', the builder adds a
-    context item of type 'file' with the prompt content using the filesystem
-    fallback under prompt/{draft|ready}/PromptId.md
-    """
-    # Arrange: create a temporary prompt repo structure
-    prompt_repo = tmp_path / "prompt"
-    draft_dir = prompt_repo / "draft"
-    draft_dir.mkdir(parents=True, exist_ok=True)
-    p = draft_dir / "3-OnlineChunkSummarization.md"
-    p.write_text("""<!-- METADATA:START -->\n```yaml\nid: 3-OnlineChunkSummarization\nproject: UxFab\nagent: DialogOnlineAnalysis\n```\n<!-- METADATA:END -->\n\n<!-- PROMPT:START -->\nbody\n<!-- PROMPT:END -->\n""", encoding="utf-8")
-
-    # Monkeypatch discovery to point to our temp repo
-    disc = __import__('importlib').import_module('call.lib.discovery')
-    monkeypatch.setattr(disc, 'discover_prompt_repo', lambda: prompt_repo, raising=True)
-
-    # Import builder
+async def test_payload_field_ordering_with_reply_and_context():
     from call.telegram_bot.bot import build_input_payload_from_reply
 
-    # Act: main_text carries the prompt token
-    update = DummyUpdate(text="/call @AgentFab @3-OnlineChunkSummarization")
-    ctx = DummyContext()
-    arg, payload = await build_input_payload_from_reply("AgentFab", "@3-OnlineChunkSummarization", update, ctx)
+    # Arrange: a reply with text and a document for context
+    reply_doc = DummyDoc(file_id="1", file_name="test.pdf")
+    reply_msg = DummyMessage(text="Reply content", document=reply_doc)
+    update = DummyUpdate(text="/call @AgentFab Hello", reply=reply_msg)
+    ctx = DummyContext(file_path="documents/file_1.pdf")
 
-    # Assert: JSON payload contains file context with our prompt path and content
+    # Act
+    arg, payload = await build_input_payload_from_reply("AgentFab", "Hello", update, ctx)
+
+    # Assert key ordering in JSON string (Python preserves insertion order)
+    assert arg.startswith("{")
+    tpos = arg.find('"target"')
+    rpos = arg.find('"replay"')
+    ipos = arg.find('"input"')
+    cpos = arg.find('"context"')
+    assert all(x >= 0 for x in (tpos, rpos, ipos, cpos))
+    assert tpos < rpos < ipos < cpos
+
     parsed = json.loads(arg)
-    ctx_items = parsed.get("context") or []
-    assert any(it.get("type") == "file" and it.get("name") == "3-OnlineChunkSummarization.md" for it in ctx_items)
-    item = next(it for it in ctx_items if it.get("type") == "file")
-    assert item.get("path") and Path(item["path"]).name == "3-OnlineChunkSummarization.md"
-    assert isinstance(item.get("content"), str) and "METADATA" in item.get("content")
+    assert parsed["target"] == "AgentFab"
+    assert parsed["replay"] == "Reply content"
+    assert parsed["input"] == "Hello"
+    assert isinstance(parsed.get("context"), list) and parsed["context"], "expected context from document"
+
+
+async def test_no_fs_fallback_for_prompt_token():
+    from call.telegram_bot.bot import build_input_payload_from_reply
+
+    # Arrange: no reply, a non-existing prompt token in main_text
+    update = DummyUpdate(text="/call @AgentFab @DefinitelyNotExistingPromptToken")
+    ctx = DummyContext()
+
+    # Act
+    arg, payload = await build_input_payload_from_reply("AgentFab", "@DefinitelyNotExistingPromptToken", update, ctx)
+
+    # Assert: no context created from filesystem fallback
+    parsed = json.loads(arg) if payload else {}
+    ctx_items = (parsed.get("context") or []) if parsed else []
+    assert ctx_items == [] or all(it.get("type") != "file" or "path" not in it for it in ctx_items)

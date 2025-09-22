@@ -778,42 +778,7 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
                 except Exception:
                     # Continue to filesystem fallback
                     added = False
-            # 2) Filesystem fallback: treat token as prompt id under prompt/{draft|ready}/<id>.md
-            try:
-                from call.lib.discovery import discover_prompt_repo as _discover_prompt_repo
-                base = _discover_prompt_repo()
-            except Exception:
-                base = None
-            try:
-                if base:
-                    from pathlib import Path as _Path
-                    candidates = [
-                        _Path(base) / "draft" / f"{tok}.md",
-                        _Path(base) / "ready" / f"{tok}.md",
-                    ]
-                    for p in candidates:
-                        try:
-                            if p.exists():
-                                try:
-                                    txt = p.read_text(encoding='utf-8')
-                                except Exception:
-                                    txt = ''
-                                ref = {
-                                    "type": "file",
-                                    "name": p.name,
-                                    "path": str(p),
-                                    "content": txt,
-                                    "mutable": True,
-                                }
-                                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
-                                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
-                                    refs.append(ref)
-                                    added = True
-                                break
-                        except Exception:
-                            continue
-            except Exception:
-                pass
+            # No filesystem fallback by design for predictability
         if refs:
             # Append to context items
             try:
@@ -823,23 +788,27 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     except Exception:
         pass
 
-    if ctx_items:
-        payload["context"] = ctx_items
+    # Reorder fields for predictable output: target, replay, input, context
+    ordered: dict = {}
+    if payload.get("target"):
+        ordered["target"] = payload["target"]
     # Replay: set only when there is reply text (caption). If there are only files, omit replay.
     if reply_text:
-        payload["replay"] = reply_text
+        ordered["replay"] = reply_text
     # Input only when user provided main_text (do not derive from reply text)
     if (main_text or "").strip():
-        payload["input"] = main_text.strip()
+        ordered["input"] = main_text.strip()
+    if ctx_items:
+        ordered["context"] = ctx_items
 
-    if payload:
+    if ordered:
         # Debug-dump payload JSON (safe length)
         try:
             import json as _json
-            debug_print("[bot]", "[PAYLOAD]", _json.dumps(payload, ensure_ascii=False)[:800])
+            debug_print("[bot]", "[PAYLOAD]", _json.dumps(ordered, ensure_ascii=False)[:800])
         except Exception:
             pass
-        return ( __import__('json').dumps(payload, ensure_ascii=False), payload )
+        return ( __import__('json').dumps(ordered, ensure_ascii=False), ordered )
     return (main_text or "", None)
 
 

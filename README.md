@@ -675,9 +675,14 @@ Notes:
   - For each token, the bot attempts to resolve it as a prompt/agent/project via `call.lib.api.build_runnable_instructions_config()`.
   - When a token resolves to a prompt with a known file path, the bot adds a context item of the form:
     - `{ "type": "file", "name": "<PromptId>.md", "path": ".../prompt/<state>/<PromptId>.md", "content": "...", "mutable": true }`
-  - If the DB does not provide a path, the bot performs a filesystem fallback and checks `prompt/draft/<PromptId>.md` then `prompt/ready/<PromptId>.md`.
 - Example:
   - `/call @AgentFab @3-OnlineChunkSummarization` → payload includes a `file` context item for `3-OnlineChunkSummarization.md` so downstream pipelines can consume it directly.
+
+Payload JSON field order (predictable):
+- `target`
+- `replay` (optional)
+- `input` (optional)
+- `context` (optional)
 
 ### Prompt discovery and target resolution (Updated Sep 19, 2025)
 
