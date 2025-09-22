@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
+from pathlib import Path
+from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
 
 try:
     # FastMCP SDK
@@ -21,7 +23,22 @@ from call.lib.api import reload as api_reload
 
 @asynccontextmanager
 async def lifespan(app: FastMCP):
-    load_dotenv()
+    # Load environment deterministically: call/.env then repo-root .env (do not override OS env)
+    try:
+        here = Path(__file__).resolve()
+        call_dir = here.parent.parent  # .../call/
+        load_dotenv(dotenv_path=str(call_dir / ".env"), override=False)
+        load_dotenv(dotenv_path=str(call_dir.parent / ".env"), override=False)
+    except Exception:
+        pass
+    # Configure logging (DEBUG when CALL_DEBUG=1, else INFO)
+    try:
+        call_logging()
+    except Exception:
+        pass
+    log = get_logger("mcp")
+    log.info("Starting mcp-call server (env loaded: call/.env exists=%s)", (call_dir / ".env").exists() if 'call_dir' in locals() else False)
+    debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     # Nothing to preload for library-only usage
     yield {}
 
@@ -77,6 +94,13 @@ def reload(ctx: Context | None = None) -> Any:
 
 
 async def main():
+    # Extra log for explicit execution
+    try:
+        log = get_logger("mcp")
+        log.info("mcp-call main() starting stdio loop")
+        debug_print("[mcp]", "[RUN]", "run_stdio_async")
+    except Exception:
+        pass
     await mcp.run_stdio_async()
 
 
