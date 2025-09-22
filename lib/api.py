@@ -261,6 +261,119 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
     return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
 
 
+def build_input_payload(*, target: Optional[str], main_text: str, extra_context: Optional[list] = None, reply_text: Optional[str] = None) -> tuple[str, dict | None]:
+    """Build a structured input payload JSON used by both Telegram bot and CLI.
+
+    Behavior:
+    - Adds target when provided
+    - Parses tokens from main_text and attempts to resolve them via DB-backed
+      build_runnable_instructions_config(). If a token resolves to a prompt with
+      a known file path, include a file context item with content. No filesystem
+      fallback is performed.
+    - Appends any extra_context items provided by the caller (e.g., Telegram reply files)
+    - Includes reply_text when provided
+    - Orders keys predictably: target, replay, input, context
+    Returns (json_string, payload_dict) or (raw_text, None) if payload would be empty.
+    """
+    payload: dict = {}
+    if isinstance(target, str) and target.strip():
+        payload["target"] = target.strip()
+
+    ctx_items: list = []
+    if isinstance(extra_context, _builtins.list) and extra_context:
+        ctx_items.extend(extra_context)
+
+    # Token parsing from main text
+    tokens: list[str] = []
+    try:
+        import re as _re
+        text_for_tokens = (main_text or "").strip()
+        if text_for_tokens:
+            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", text_for_tokens)
+            for t in raw:
+                s = t.lstrip('@').strip().strip(',.;:')
+                if s and s not in tokens:
+                    tokens.append(s)
+        tokens = tokens[:12]
+    except Exception:
+        tokens = []
+
+    # Resolve tokens via DB-backed config builder (no FS fallback)
+    refs: list[dict] = []
+    for tok in tokens:
+        try:
+            cfg, err = build_runnable_instructions_config(project=None, agent=None, prompt=None, target=tok, input=None, merge=False)
+        except Exception:
+            cfg, err = None, None
+        if cfg and (getattr(cfg, 'type', None) or getattr(cfg, 'path', None) or getattr(cfg, 'url', None)):
+            try:
+                from pathlib import Path as _Path
+                ctype = getattr(cfg, 'type', None)
+                cpath = getattr(cfg, 'path', None)
+                if ctype == 'prompt' and cpath:
+                    try:
+                        p = _Path(cpath)
+                        if p.exists():
+                            try:
+                                txt = p.read_text(encoding='utf-8')
+                            except Exception:
+                                txt = ''
+                            ref = {
+                                "type": "file",
+                                "name": p.name,
+                                "path": str(p),
+                                "content": txt,
+                                "mutable": True,
+                            }
+                            key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
+                            if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
+                                refs.append(ref)
+                            continue
+                    except Exception:
+                        pass
+                # Generic reference item when not a prompt with a readable path
+                ref = {}
+                if getattr(cfg, 'type', None):
+                    ref["type"] = cfg.type
+                nm = getattr(cfg, 'name', None)
+                if isinstance(nm, str) and nm.strip():
+                    ref["name"] = nm
+                else:
+                    ref["name"] = tok
+                if getattr(cfg, 'path', None):
+                    ref["path"] = cfg.path
+                if getattr(cfg, 'url', None):
+                    ref["url"] = cfg.url
+                if getattr(cfg, 'goal', None):
+                    ref["goal"] = cfg.goal
+                key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
+                if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
+                    refs.append(ref)
+            except Exception:
+                continue
+
+    if refs:
+        try:
+            ctx_items.extend(refs)
+        except Exception:
+            ctx_items = refs
+
+    # Build ordered payload
+    ordered: dict = {}
+    if payload.get("target"):
+        ordered["target"] = payload["target"]
+    if isinstance(reply_text, str) and reply_text.strip():
+        ordered["replay"] = reply_text.strip()
+    if (main_text or "").strip():
+        ordered["input"] = (main_text or "").strip()
+    if ctx_items:
+        ordered["context"] = ctx_items
+
+    if ordered:
+        import json as _json
+        return (_json.dumps(ordered, ensure_ascii=False), ordered)
+    return ((main_text or ""), None)
+
 def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
     """Filesystem scan and DB refresh (uniform name).
 

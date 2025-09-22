@@ -670,9 +670,7 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     - Sets 'input' to main_text; if empty, falls back to reply text
     - Returns (JSON-string, payload) when any field is present; otherwise (plain_text, None)
     """
-    payload: dict = {}
-    if name:
-        payload["target"] = name
+    # Collect reply-derived context (files) and reply text; delegate JSON build to call_api
     ctx_items: list = []
     reply_text: str = ""
     try:
@@ -704,112 +702,14 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
                 pass
     except Exception:
         pass
-    # Word-token references: try to resolve each token as project/agent/prompt and add as context refs
+    # Delegate to library for predictable, shared behavior (no FS fallback; ordered keys)
+    input_arg, payload = call_api.build_input_payload(target=(name or None), main_text=(main_text or ""), extra_context=ctx_items or None, reply_text=(reply_text or None))
     try:
-        import re as _re
-        text_for_tokens = (main_text or "").strip()
-        tokens = []
-        if text_for_tokens:
-            # Extract tokens allowing @prefix and path-like specs
-            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", text_for_tokens)
-            # Normalize: strip leading @ and trailing punctuation
-            for t in raw:
-                s = t.lstrip('@').strip().strip(',.;:')
-                if s and s not in tokens:
-                    tokens.append(s)
-        # Hard cap to avoid excessive DB hits
-        tokens = tokens[:12]
-        refs: list[dict] = []
-        for tok in tokens:
-            added = False
-            # 1) Primary: try to resolve via library (DB-backed)
-            try:
-                cfg, err = call_api.build_runnable_instructions_config(project=None, agent=None, prompt=None, target=tok, input=None, merge=False)
-            except Exception:
-                cfg, err = None, None
-            if cfg and (getattr(cfg, 'type', None) or getattr(cfg, 'path', None) or getattr(cfg, 'url', None)):
-                try:
-                    # If a prompt with a known file path is resolved, prefer a 'file' context item with content —
-                    # this is friendlier for downstream pipelines expecting concrete content items.
-                    from pathlib import Path as _Path
-                    ctype = getattr(cfg, 'type', None)
-                    cpath = getattr(cfg, 'path', None)
-                    if ctype == 'prompt' and cpath:
-                        try:
-                            p = _Path(cpath)
-                            if p.exists():
-                                try:
-                                    txt = p.read_text(encoding='utf-8')
-                                except Exception:
-                                    txt = ''
-                                ref = {
-                                    "type": "file",
-                                    "name": p.name,
-                                    "path": str(p),
-                                    "content": txt,
-                                    "mutable": True,
-                                }
-                                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
-                                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
-                                    refs.append(ref)
-                                    added = True
-                        except Exception:
-                            pass
-                    if not added:
-                        ref = {}
-                        if getattr(cfg, 'type', None):
-                            ref["type"] = cfg.type
-                        # Prefer a meaningful name; if cfg.name is empty (agent name), fall back to token
-                        nm = getattr(cfg, 'name', None)
-                        if isinstance(nm, str) and nm.strip():
-                            ref["name"] = nm
-                        else:
-                            ref["name"] = tok
-                        if getattr(cfg, 'path', None):
-                            ref["path"] = cfg.path
-                        if getattr(cfg, 'url', None):
-                            ref["url"] = cfg.url
-                        if getattr(cfg, 'goal', None):
-                            ref["goal"] = cfg.goal
-                        key = (ref.get("type"), ref.get("name"), ref.get("path"), ref.get("url"))
-                        if ref and key not in {(r.get("type"), r.get("name"), r.get("path"), r.get("url")) for r in refs}:
-                            refs.append(ref)
-                            added = True
-                except Exception:
-                    # Continue to filesystem fallback
-                    added = False
-            # No filesystem fallback by design for predictability
-        if refs:
-            # Append to context items
-            try:
-                ctx_items.extend(refs)
-            except Exception:
-                ctx_items = refs
+        import json as _json
+        debug_print("[bot]", "[PAYLOAD]", _json.dumps(payload or {}, ensure_ascii=False)[:800])
     except Exception:
         pass
-
-    # Reorder fields for predictable output: target, replay, input, context
-    ordered: dict = {}
-    if payload.get("target"):
-        ordered["target"] = payload["target"]
-    # Replay: set only when there is reply text (caption). If there are only files, omit replay.
-    if reply_text:
-        ordered["replay"] = reply_text
-    # Input only when user provided main_text (do not derive from reply text)
-    if (main_text or "").strip():
-        ordered["input"] = main_text.strip()
-    if ctx_items:
-        ordered["context"] = ctx_items
-
-    if ordered:
-        # Debug-dump payload JSON (safe length)
-        try:
-            import json as _json
-            debug_print("[bot]", "[PAYLOAD]", _json.dumps(ordered, ensure_ascii=False)[:800])
-        except Exception:
-            pass
-        return ( __import__('json').dumps(ordered, ensure_ascii=False), ordered )
-    return (main_text or "", None)
+    return (input_arg, payload)
 
 
 @_require_allowed_users
