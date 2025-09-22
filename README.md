@@ -89,6 +89,27 @@ python -m call.cli.main agents --project * --format text
 python -m call.cli.main prompts --project * --agent * --state ready --format table
 ```
 
+- Parsed vs raw input (New):
+  - `--input` — passes the text as-is, no token parsing and no context building.
+  - `--parse-input` — uses the shared Telegram parser to build a JSON payload with predictable order (target, replay, input, context). Tokens inside the text (like `@3-OnlineChunkSummarization`) are resolved via the DB and may add `context` items.
+  - Mutually exclusive: only one of `--input` or `--parse-input` may be provided.
+
+- Echo-only preview (New):
+  - When `--echo` is given, the CLI does not execute the pipeline. It prints:
+    - `payload`: the JSON payload that would be sent to the agent.
+    - `resolved`: a small snapshot of the selection (project/agent/prompt/type/path/url) computed from the current filters/target.
+  - Examples:
+    ```powershell
+    # Raw input, print payload only (no execution)
+    python -m call.cli.main call --target AgentFab --input "as is text" --echo
+
+    # Parsed input, print Telegram-identical payload (no execution)
+    python -m call.cli.main call --target AgentFab --parse-input "@3-OnlineChunkSummarization" --echo
+
+    # Parsed from JSON object (CLI --target takes precedence over the object's target)
+    python -m call.cli.main call --parse-input '{"target":"AgentFab","input":"@3-OnlineChunkSummarization","context":[]}' --echo
+    ```
+
 - Agents/list filters:
   - `--state` — filter prompts nested under agents by state (`ready|draft`, supports `*`)
   - `--target` — unified filter applied last (supports `*`). Matches plain names in the `target` column.
@@ -154,10 +175,11 @@ $env:CALL_DEBUG=1; python -m call.cli.main call --project UxFab --agent DialogPo
 - **No registry scanning**: Removed complex metadata matching and registry file processing.
 - **Simple syntax**: `@AgentName` or just `AgentName`.
 
-### Target syntax and precedence (Updated Sep 20, 2025)
+### Target syntax and precedence (Updated Sep 22, 2025)
 
-- Precedence when `target` is provided: prompt > agent > project.
+- Precedence when `target` is provided: `prompt > exact project > agent > fuzzy/wildcard project`.
   - The first category that yields a unique match sets the corresponding fields if not explicitly provided.
+  - Exact project matching takes priority over agent resolution when the token exactly equals a project name (case-insensitive equality).
 - Supported forms:
   - Unprefixed name with wildcards: `Ux*` (interprets as prompt name first, then agent, then project)
   - Path-like notation: `path:project/agent/prompt`
