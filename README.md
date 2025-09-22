@@ -61,6 +61,35 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - Prompts and cards are Markdown-only. Each file follows the Strato Prompt Framework with a `METADATA` fenced YAML block and an optional `PROMPT` block.
 - The index logs warnings for `.md` prompts missing valid `METADATA`. In strict paths (e.g., CLI `--print-instructions`), malformed or missing `METADATA` surfaces a 400 error.
 
+#### Model settings in METADATA (Updated)
+
+- Keys
+  - `model`: the selected model id (e.g., `gpt-5`, `gpt-4.1`).
+  - `model-params`: generic settings applicable across models.
+  - `model-params-<model>`: model-specific settings. This is the recommended, canonical form.
+
+- Excluded (do not use in new cards)
+  - `model_params`, `modelParams` (generic) and `model_params_<model>`, `modelParams<model>` (model-suffixed) are not part of the documented schema and must be avoided. Use the hyphenated forms `model-params` and `model-params-<model>` instead.
+  - Backward-compatibility: the runtime may still recognize these legacy keys, but they are deprecated and will be removed. Prefer hyphenated keys in all new/updated cards.
+
+- Recognized fields in params
+  - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `verbosity` (`low|medium|high`)
+  - `reasoning: { effort: minimal|low|medium|high, summary?: auto|concise|detailed }`
+
+- Example
+
+```yaml
+model: gpt-5
+
+model-params-gpt-5:
+  reasoning:
+    effort: medium
+
+model-params-gpt-4.1:
+  temperature: 0.2
+  top_p: 0.9
+```
+
 ---
 
 ## Telegram Bot (Updated)
@@ -69,6 +98,24 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - `/prompts`, `/prompts_ready`, and `/prompts_draft` are powered by the repo index with flexible filters and `state` support.
   - Filters: `--project`, `--agent`, `--prompt`, `--target`, `--state ready|draft`, key=value forms, and `@Agent` shorthand. All filters are ANDed.
 - The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
+
+### Telegram parsing and behavior (Updated)
+
+- Private DMs
+  - Plain text (no @) is treated as input-only (equivalent to `/call <input>`).
+  - `@Target <input>` executes when Target exists (prompt > agent > project lookup).
+  - Leading `@BotName` is allowed and stripped for convenience in private chats.
+  - A single `@ <input>` means input-only (no target).
+
+- Group chats
+  - Only messages with an explicit @-mention are handled (to avoid reacting to every message).
+  - `@Target <input>` executes only if Target exists; otherwise the message is ignored.
+  - `@BotName Target <input>` executes when Target exists; if Target is not valid, the text is treated as input-only.
+  - `@ <input>` is treated as input-only (no target).
+
+- Validation
+  - Targets are validated via DB-only calls before scheduling runs: `resolve_agent()` for agents/prompts and `list(project=...)` for projects. Project scoping is derived from the bot name (e.g., `AgentFabBot` scopes to `AgentFab`), while `StratoSpaceAiBot` lists all projects.
+  - Enable rich debug logs with `CALL_DEBUG=1` to see `[bot]` parsing decisions.
 
 ### CLI Quickstart
 
@@ -89,7 +136,41 @@ python -m call.cli.main agents --project * --format text
 python -m call.cli.main prompts --project * --agent * --state ready --format table
 ```
 
-- Parsed vs raw input (New):
+## Call vs Exec (Updated)
+
+- call (keyword-based)
+  - Selectors are provided as flags: `--project`, `--agent`, `--prompt`, `--target`.
+  - `--input` passes raw text; `--parse-input` uses the shared Telegram parser to build a JSON payload (tokens such as `@3-OnlineChunkSummarization` may resolve into `context`).
+  - `--print-instructions` prints the merged instructions for the selection and exits (no execution).
+  - `--echo` prints the payload preview and resolved selection snapshot.
+  - `--format json|yaml|text` controls output format for previews and listings.
+
+- exec (payload-based)
+  - Merges selectors and content items into a single JSON payload (best for content buckets and Actions/MCP).
+  - If exactly one selector among `project|agent|prompt|target` is provided, the CLI uses the single-source-of-truth validator `interpret_exec_payload()`; otherwise it falls back to a backward-compatible path and calls using explicit selectors with the full payload JSON as input.
+  - `--echo` prints the merged payload and exits (no execution).
+  - `--format json|yaml|text` controls output format.
+
+Examples (PowerShell):
+
+```powershell
+# call with raw input
+python -m call.cli.main call --target AgentFab --input "as is text"
+
+# call with parsed input (Telegram-identical payload)
+python -m call.cli.main call --target AgentFab --parse-input "@3-OnlineChunkSummarization" --echo --format yaml
+
+# exec with content items
+python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
+  --content-item "https://docs.google.com/document/d/FILE_ID/edit" \
+  --content-item '{"type":"text","text":"Hello"}' --output-type html
+
+# exec with multiple selectors (falls back to explicit call path)
+python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target 33-Questioning --echo
+```
+
+#### Parsed vs raw input (New)
+
   - `--input` — passes the text as-is, no token parsing and no context building.
   - `--parse-input` — uses the shared Telegram parser to build a JSON payload with predictable order (target, replay, input, context). Tokens inside the text (like `@3-OnlineChunkSummarization`) are resolved via the DB and may add `context` items.
   - Mutually exclusive: only one of `--input` or `--parse-input` may be provided.
