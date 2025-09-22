@@ -209,6 +209,29 @@ def cmd_call(args: argparse.Namespace) -> int:
             except Exception:
                 payload_json, payload_dict = (parsed_input or None), None
 
+        # If --echo is set, do NOT call the LLM pipeline; just emit the prepared payload
+        if bool(getattr(args, "echo", False)):
+            try:
+                # If we didn't build payload yet (no --parse-input), build it from raw input
+                if not payload_json:
+                    pj, pd = call_api.build_input_payload(
+                        target=(args.target or None),
+                        main_text=(raw_input or ''),
+                        extra_context=None,
+                        reply_text=None,
+                    )
+                    payload_json = pj
+                # Print payload JSON (already a JSON string). Ensure pretty format for readability.
+                try:
+                    obj = json.loads(payload_json) if payload_json else {}
+                    _safe_print(json.dumps(obj, ensure_ascii=False, indent=2))
+                except Exception:
+                    _safe_print(payload_json or "{}")
+                return 0
+            except Exception as e:
+                print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
+                return 1
+
         result = call_api.call(
             project=(args.project or None),
             agent=agent or None,

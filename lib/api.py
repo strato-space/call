@@ -155,7 +155,25 @@ def interpret_target(
                 "options": prompt_matches,
                 "description": "Multiple prompts matched your criteria",
             }
-        # 2) Agent name/alias
+        # 2) Exact Project match first (prefer project over agent when ambiguous exact name)
+        try:
+            rows_exact = call_repo.find_projects(project=tgt)
+        except Exception:
+            rows_exact = []
+        if rows_exact:
+            # If any row has exact name equality (case-insensitive), treat as project
+            try:
+                tgt_low = tgt.lower()
+                exacts = [r for r in rows_exact if str(r.get("project") or "").lower() == tgt_low]
+            except Exception:
+                exacts = rows_exact
+            if len(exacts) == 1 and not (prompt or agent):
+                if not (project or "").strip():
+                    project = exacts[0].get("project") or project
+                return project, agent, prompt, None
+            # If multiple exacts (shouldn't happen), fall through to original logic
+
+        # 3) Agent name/alias
         try:
             ra = resolve_agent(project=project, agent=tgt, prompt=prompt, target=None)
         except Exception:
@@ -165,7 +183,7 @@ def interpret_target(
             return project, agent, prompt, None
         elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
             return project, agent, prompt, ra
-        # 3) Project using repo DB
+        # 4) Project using repo DB (fuzzy/wildcard)
         rows = []
         try:
             rows = call_repo.find_projects(project=tgt)
