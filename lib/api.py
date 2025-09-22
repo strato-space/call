@@ -171,8 +171,37 @@ def interpret_target(
                 return project, agent, prompt, {"code": "NO_DATA_FOUND", "status": 404, "description": "No prompt matched", "options": []}
             return project, agent, prompt, {"code": "TOO_MANY_ROWS", "status": 400, "description": "Multiple prompts matched", "options": rows[:20]}
 
+        # 1) Exact Project match first (prefer project over agent and prompt when exact name matches)
+        try:
+            rows_exact = call_repo.find_projects(project=tgt)
+        except Exception:
+            rows_exact = []
+        if rows_exact:
+            # If any row has exact name equality (case-insensitive), treat as project
+            try:
+                tgt_low = tgt.lower()
+                exacts = [r for r in rows_exact if str(r.get("project") or "").lower() == tgt_low]
+            except Exception:
+                exacts = rows_exact
+            if len(exacts) == 1 and not (prompt or agent):
+                if not (project or "").strip():
+                    project = exacts[0].get("project") or project
+                return project, agent, prompt, None
+            # If multiple exacts (shouldn't happen), fall through to original logic
+
+        # 2) Agent name/alias
+        try:
+            ra = resolve_agent(project=project, agent=tgt, prompt=prompt, target=None)
+        except Exception:
+            ra = {"ok": False}
+        if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
+            agent = tgt
+            return project, agent, prompt, None
+        elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
+            return project, agent, prompt, ra
+        
+        # 3) Prompt match via repo index (last)
         p_regex = _compile_wildcard_regex(tgt)
-        # 1) Prompt match via repo index
         prompt_matches: list[dict] = []
         if p_regex:
             try:
@@ -203,34 +232,7 @@ def interpret_target(
                 "options": prompt_matches,
                 "description": "Multiple prompts matched your criteria",
             }
-        # 2) Exact Project match first (prefer project over agent when ambiguous exact name)
-        try:
-            rows_exact = call_repo.find_projects(project=tgt)
-        except Exception:
-            rows_exact = []
-        if rows_exact:
-            # If any row has exact name equality (case-insensitive), treat as project
-            try:
-                tgt_low = tgt.lower()
-                exacts = [r for r in rows_exact if str(r.get("project") or "").lower() == tgt_low]
-            except Exception:
-                exacts = rows_exact
-            if len(exacts) == 1 and not (prompt or agent):
-                if not (project or "").strip():
-                    project = exacts[0].get("project") or project
-                return project, agent, prompt, None
-            # If multiple exacts (shouldn't happen), fall through to original logic
 
-        # 3) Agent name/alias
-        try:
-            ra = resolve_agent(project=project, agent=tgt, prompt=prompt, target=None)
-        except Exception:
-            ra = {"ok": False}
-        if isinstance(ra, dict) and ra.get("ok") and not (agent or "").strip():
-            agent = tgt
-            return project, agent, prompt, None
-        elif isinstance(ra, dict) and (not ra.get("ok")) and str(ra.get("code")) == "TOO_MANY_ROWS":
-            return project, agent, prompt, ra
         # 4) Project using repo DB (fuzzy/wildcard)
         rows = []
         try:
@@ -355,6 +357,13 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
                                 resp = c.get(url)
                                 if resp.status_code == 200:
                                     data = resp.content
+                                    # Record content type from server when available
+                                    try:
+                                        ct = resp.headers.get('content-type')
+                                        if ct:
+                                            it['content_type'] = ct
+                                    except Exception:
+                                        pass
                                     if _is_text(guess, url):
                                         try:
                                             it['content'] = data.decode('utf-8')
@@ -369,6 +378,11 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
                             p = _Path(pth)
                             if p.exists():
                                 guess, _ = _mimes.guess_type(p.name)
+                                if guess:
+                                    try:
+                                        it['content_type'] = guess
+                                    except Exception:
+                                        pass
                                 if _is_text(guess, p.name):
                                     try:
                                         it['content'] = p.read_text(encoding='utf-8')
@@ -585,9 +599,11 @@ def build_runnable_instructions_config(
     # Resolve selection to determine agent path and effective project/name
     path_p = None
     if (project and not (agent or prompt)):
-        # If this is a preview/build (input is None), allow project-level runnable for resolved snapshot.
-        # Otherwise (real run), attempt agent resolution to satisfy runtime tests.
-        if input is None:
+        # If selection is project-only:
+        # - When coming from explicit target, always keep project-level runnable (security: prompt must not replace project/agent)
+        # - For preview/build (input is None), keep project-level
+        # - Otherwise (legacy path without target), attempt agent resolution to satisfy historical tests
+        if (target and str(target).strip()) or (input is None):
             name = str(project or "")
             proj = project
             path_p = None
@@ -621,15 +637,24 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # If agent resolution fails but prompt is provided, build a prompt-only runnable
+            # If agent resolution fails, we only proceed with a prompt-only runnable
+            # when a prompt id is explicitly provided. We never widen across projects
+            # if a project filter is set (security: prompt must not replace project/agent).
             prompt_row = None
-            if prompt:
+            if isinstance(prompt, str) and prompt.strip():
                 try:
-                    # Relax agent filter; use project + prompt only
+                    # Prefer project-scoped lookup when project is provided
                     recs = call_repo.find_prompts(project=project, agent=None, prompt=prompt)
                     prompt_row = recs[0] if recs else None
                 except Exception:
                     prompt_row = None
+                # Only when project is not specified, allow global lookup
+                if (prompt_row is None) and (not project):
+                    try:
+                        recs_any = call_repo.find_prompts(project=None, agent=None, prompt=prompt)
+                        prompt_row = recs_any[0] if recs_any else None
+                    except Exception:
+                        prompt_row = None
             if prompt_row is None:
                 # Couldn’t resolve as agent nor locate prompt row — return error
                 # Include both phrases so CLI tests that look for either will pass.

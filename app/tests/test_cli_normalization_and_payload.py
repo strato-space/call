@@ -83,4 +83,5 @@ def test_cli_echo_includes_resolved_when_flag(monkeypatch, capsys):
     assert data.get("input") == "hello"
     assert "resolved" in data
     assert data["resolved"]["project"] == "AgentFab"
-    assert data["resolved"]["agent"] == "DiscoveryAgent"
+    # When type is 'project', resolved.agent must be null per new behavior
+    assert data["resolved"].get("agent") is None

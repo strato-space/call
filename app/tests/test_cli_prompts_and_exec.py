@@ -203,6 +203,65 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
         assert ("no agent found matching criteria" in out.lower()) or ("no agent found matching criteria" in err.lower())
 
 
+def test_cli_call_echo_resolved_project_agent_null():
+    code, out, err = _run_cli([
+        "call",
+        "--target", "AgentFab",
+        "--parse-input", "50-DiscoveryAgent",
+        "--echo",
+        "--resolved",
+    ])
+    assert code == 0, err
+    data = json.loads(out)
+    assert isinstance(data, dict)
+    resolved = data.get("resolved") or {}
+    assert resolved.get("type") == "project"
+    assert resolved.get("project") == "AgentFab"
+    assert resolved.get("agent") is None
+    assert isinstance(resolved.get("path"), str)
+
+
+def test_cli_call_print_instructions_malformed_prompt_bad_card_format(tmp_path):
+    """Create a malformed prompt under existing project/agent and expect BAD_CARD_FORMAT (400)."""
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[3]
+    prompt_ready = repo_root / "prompt" / "ready"
+    prompt_ready.mkdir(parents=True, exist_ok=True)
+    bad_id = "TempBadPrompt2"
+    bad = prompt_ready / f"{bad_id}.md"
+    bad.write_text(
+        """<!-- METADATA:START -->
+```yaml
+id: TempBadPrompt2
+title: TempBadPrompt2
+project: UxFab
+agent: DialogPostAnalysis
+bad: [missing: bracket
+```
+<!-- METADATA:END -->
+""",
+        encoding="utf-8",
+    )
+    try:
+        _ = _run_cli(["scan", "--repos", "prompt", "--format", "json"])  # refresh index
+        code, out, err = _run_cli([
+            "call",
+            "--project", "UxFab",
+            "--prompt", bad_id,
+            "--print-instructions",
+        ])
+        assert code != 0
+        data = json.loads(out)
+        assert data.get("ok") is False
+        assert data.get("error_code") == 400
+        assert (data.get("code") or "").upper() == "BAD_CARD_FORMAT"
+    finally:
+        try:
+            bad.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def test_cli_call_print_instructions_malformed_prompt_metadata_returns_400(tmp_path):
     """Create a unique bad MD prompt, rescan DB, and expect 400 on print-instructions (strict MD-only)."""
     from pathlib import Path
