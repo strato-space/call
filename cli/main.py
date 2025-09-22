@@ -5,14 +5,19 @@ Command Reference (one-line):
   # List projects/agents/prompts (hierarchical JSON)
   python -m call.cli.main agents [--project UxFab] [--agent Agent*] [--prompt 10*]
 
-  # Call an agent with optional prompt override
+  # Call: keyword-based API (best for MCP/REST/Actions). Selectors via flags, optional echo/trace.
   python -m call.cli.main call --agent BusinessAnalyticAgent --input "Analyze Q3" [--project UxFab]
   python -m call.cli.main call --agent BusinessAnalyticAgent --prompt Draft --input "Analyze Q3" [--project UxFab]
 
+  # Exec: payload-based API (best for buckets of content items). All args merged into JSON payload.
+  python -m call.cli.main exec --target Name --content-item "{...}" --input "text" [--echo]
+
 Debug flags:
-  --trace SECONDS       Dump all thread stacks every N seconds
-  --trace-file PATH     Write stack dumps to a file instead of stderr
-  --echo                Include echo metadata in response
+  --debug              Force DEBUG logging (overrides CALL_DEBUG)
+  --json-logs          Emit logs as JSON lines
+  --trace SECONDS      Dump all thread stacks every N seconds
+  --trace-file PATH    Write stack dumps to a file instead of stderr
+  --echo               Include echo metadata in response
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
 from dotenv import load_dotenv
 from pathlib import Path as _Path
+import logging as _logging
 
 
 def _emit_output(obj, fmt: str) -> None:
@@ -126,6 +132,20 @@ def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
         for i, (key, header) in enumerate(columns):
             cells.append(str(r.get(key, '')).ljust(widths[i]))
         _safe_print(" | ".join(cells))
+
+
+def cmd_clear_session(args: argparse.Namespace) -> int:
+    try:
+        if not args.chat_id:
+            _safe_print(json.dumps({"ok": False, "error_code": 400, "description": "--chat-id is required"}, ensure_ascii=False))
+            return 1
+        # name is optional; empty clears all for chat/thread
+        res = call_api.asyncio.run(call_api.clear_session((args.name or None), chat_id=int(args.chat_id), thread_id=(int(args.thread_id) if args.thread_id is not None else None)))  # type: ignore[attr-defined]
+        _safe_print(json.dumps(res, ensure_ascii=False))
+        return 0 if (isinstance(res, dict) and res.get("ok")) else 1
+    except Exception as e:
+        _safe_print(json.dumps({"ok": False, "error_code": 500, "description": str(e)}, ensure_ascii=False))
+        return 1
 
 
 def cmd_call(args: argparse.Namespace) -> int:
@@ -478,15 +498,21 @@ def main() -> int:
         return item
 
     def cmd_exec(args: argparse.Namespace) -> int:
-        # Build input payload
+        # Build payload by merging all provided args (no strict mutual exclusivity).
         payload: dict = {}
-        if args.prompt and args.agent:
-            print(json.dumps({"ok": False, "error": "Specify only one of --prompt or --agent"}, ensure_ascii=False))
-            return 1
-        if args.prompt:
-            payload["prompt"] = args.prompt
+        # Selectors: merged into payload only; interpretation is deferred to the library
+        if args.target:
+            payload["target"] = args.target
         if args.agent:
             payload["agent"] = args.agent
+        if args.prompt:
+            payload["prompt"] = args.prompt
+        if args.project:
+            payload["project"] = args.project
+
+        # Input and content/context
+        if args.input:
+            payload["input"] = args.input
         ctx: list = []
         for ci in (args.content_item or []):
             try:
@@ -498,7 +524,42 @@ def main() -> int:
         if args.output_type:
             payload["output-type"] = args.output_type
 
-        # Optional: print instructions only
+        # Optional parse-input: build payload identical to Telegram builder and merge
+        if args.parse_input:
+            try:
+                eff_target = payload.get("target") or None
+                eff_main = args.parse_input
+                eff_ctx = payload.get("context") if isinstance(payload.get("context"), list) else None
+                eff_replay = None
+                try:
+                    if (eff_main.strip().startswith('{') and eff_main.strip().endswith('}')):
+                        obj = json.loads(eff_main)
+                        if isinstance(obj, dict):
+                            eff_target = eff_target or (obj.get('target') or obj.get('taget') or None)
+                            eff_main = str(obj.get('input') or '')
+                            ctx_val = obj.get('context')
+                            eff_ctx = ctx_val if isinstance(ctx_val, list) else eff_ctx
+                            eff_replay = obj.get('replay') or obj.get('reply')
+                except Exception:
+                    pass
+                pj, pd = call_api.build_input_payload(
+                    target=eff_target,
+                    main_text=(eff_main or ''),
+                    extra_context=eff_ctx,
+                    reply_text=(eff_replay if isinstance(eff_replay, str) else None),
+                    download=bool(getattr(args, 'download_context', False)) if hasattr(args, 'download_context') else False,
+                )
+                # Merge keys from builder payload into our payload (builder keys take precedence)
+                try:
+                    pobj = json.loads(pj) if pj else {}
+                except Exception:
+                    pobj = {}
+                if isinstance(pobj, dict):
+                    payload.update({k: v for k, v in pobj.items() if v is not None})
+            except Exception:
+                pass
+
+        # Optional: print instructions only (interprets selectors from args, not payload)
         if getattr(args, "print_instructions", False):
             cfg, err = call_api.build_runnable_instructions_config(
                 project=(args.project or None),
@@ -519,44 +580,37 @@ def main() -> int:
             _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 
-        # Execute via call API, passing payload as input JSON string
-        result = call_api.call(
-            project=(args.project or None),
-            agent=(args.agent or None),
-            prompt=(args.prompt or None),
-            input=json.dumps(payload, ensure_ascii=False),
-            session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
-            echo=bool(getattr(args, "echo", False)),
-        )
+        # Echo path: print payload JSON and exit (do not execute)
+        if bool(getattr(args, "echo", False)):
+            _emit_output(payload, getattr(args, "format", "json"))
+            return 0
+
+        # Execute via payload-only interpretation (single source of truth)
+        kwargs, err = call_api.api_interpret_exec_payload(payload)
+        if err:
+            _emit_output(err, getattr(args, "format", "json"))
+            return 1
+        result = call_api.call(**kwargs)
         _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
 
-    p_exec = sub.add_parser("exec", help="Execute with context items (JSON input)")
-    p_exec.add_argument("--project", default="", help="Project name (optional)")
-    p_exec.add_argument("--agent", default="", help="Agent name (mutually exclusive with --prompt)")
-    p_exec.add_argument("--prompt", default="", help="Prompt name (mutually exclusive with --agent)")
+    # Add exec subparser now that cmd_exec is defined
+    p_exec = sub.add_parser("exec", help="Execute via payload (best for content buckets)")
+    p_exec.add_argument("--project", default="", help="Project name (optional; merged into payload)")
+    p_exec.add_argument("--agent", default="", help="Agent name (merged into payload)")
+    p_exec.add_argument("--prompt", default="", help="Prompt name (merged into payload)")
+    p_exec.add_argument("--target", default="", help="Unified target (project|agent|prompt) merged into payload")
+    p_exec.add_argument("--input", default="", help="Plain LLM input text (merged into payload)")
+    p_exec.add_argument("--parse-input", default="", help="Parse user text into payload (identical to Telegram builder)")
     p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")
     p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
-    p_exec.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
+    p_exec.add_argument("--echo", action="store_true", help="Print the merged payload and exit (no execution)")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)
 
-    # clear-session subcommand
-    def cmd_clear_session(args: argparse.Namespace) -> int:
-        try:
-            if not args.chat_id:
-                _safe_print(json.dumps({"ok": False, "error_code": 400, "description": "--chat-id is required"}, ensure_ascii=False))
-                return 1
-            # name is optional; empty clears all for chat/thread
-            res = call_api.asyncio.run(call_api.clear_session((args.name or None), chat_id=int(args.chat_id), thread_id=(int(args.thread_id) if args.thread_id is not None else None)))  # type: ignore[attr-defined]
-            _safe_print(json.dumps(res, ensure_ascii=False))
-            return 0 if (isinstance(res, dict) and res.get("ok")) else 1
-        except Exception as e:
-            _safe_print(json.dumps({"ok": False, "error_code": 500, "description": str(e)}, ensure_ascii=False))
-            return 1
-
+    # clear-session subcommand (uses global handler defined above)
     p_clear = sub.add_parser("clear-session", help="Clear conversation session(s) for a chat/thread from SQLite")
     p_clear.add_argument("--name", default="", help="Agent name to clear (optional). If omitted, clears all sessions for chat/thread")
     p_clear.add_argument("--chat-id", required=True, help="Telegram chat id (required)")
@@ -565,12 +619,13 @@ def main() -> int:
 
     # Global flags
     parser.add_argument("--json-logs", action="store_true", help="Emit JSON logs (overrides CALL_LOG_JSON)")
+    parser.add_argument("--debug", action="store_true", help="Force DEBUG logging (overrides CALL_DEBUG)")
 
     args = parser.parse_args()
 
     # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
     try:
-        call_logging(json=bool(getattr(args, "json_logs", False)))
+        call_logging(level=(_logging.DEBUG if bool(getattr(args, "debug", False)) else None), json=bool(getattr(args, "json_logs", False)))
     except Exception:
         pass
 

@@ -381,37 +381,106 @@ def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
     return at, f"https://t.me/{handle}"
 
 
-def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) -> tuple[str, str, bool]:
-    """Parse plain text into (agent_name, input_text, should_handle).
+def _normalize_token(tok: str) -> str:
+    try:
+        s = (tok or "").strip()
+        if s.startswith("@"): s = s[1:].lstrip()
+        if s.endswith(".md"): s = s[:-3]
+        return s
+    except Exception:
+        return (tok or "").strip()
 
-    Rules:
-    - In groups (is_private=False), only handle messages starting with '@Name'.
-    - In private chats, 'Name <input>' and '@Name <input>' are both accepted.
-    - Minimal special-case: when text starts with '@' and no name is provided, do not handle.
-      (Earlier behavior mentioned AgentFab default, but we keep this conservative here.)
+
+def _is_valid_target(token: str, base_project: str | None) -> bool:
+    """Return True if token resolves to an agent, prompt, or project.
+
+    Uses DB-only queries via call_api facade to avoid filesystem fallback and keep behavior predictable.
+    """
+    t = _normalize_token(token)
+    if not t:
+        return False
+    # Prefer agent resolution
+    try:
+        env = _services.call_api.resolve_agent(project=(base_project or None), agent=t, prompt=None, target=None)
+        if isinstance(env, dict) and env.get("ok"):
+            return True
+    except Exception:
+        pass
+    # Prompt id resolution
+    try:
+        envp = _services.call_api.resolve_agent(project=(base_project or None), agent=None, prompt=t, target=None)
+        if isinstance(envp, dict) and envp.get("ok"):
+            return True
+    except Exception:
+        pass
+    # Project existence
+    try:
+        lst = _services.call_api.list(project=t)
+        if any((isinstance(x, dict) and (str(x.get("name") or "").strip() == t)) for x in (lst or [])):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) -> tuple[str, str, bool]:
+    """Parse text into (target_name, input_text, should_handle) with conservative rules.
+
+    - Group chats: require an explicit @-mention; support:
+        @Target <input>            -> execute only when Target is valid; else ignore
+        @BotName Target <input>    -> execute when Target is valid; else treat as input-only
+        @ <input>                  -> input-only (no target)
+    - Private chats: plain text behaves like '/call <input>' (no implicit target).
+        @Target <input>            -> same validation as in groups
+        plain text                 -> input-only (no target)
     """
     s = (text or "").strip()
     if not s:
         return "", "", False
-    # Groups must mention explicitly
-    if not is_private and not s.startswith("@"):
-        return "", "", False
+
+    # Helper: own bot handle (e.g., StratoSpaceAiBot)
+    try:
+        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+    except Exception:
+        own = ""
+
     if s.startswith("@"):
-        body = s[1:].lstrip()
+        body = s[1:]
+        # '@' followed by nothing -> ignore
         if not body:
-            # '@' alone — ignore
             return "", "", False
-        parts = body.split(None, 1)
-        name = parts[0].lstrip("@")
+        # '@ <input>' (space after '@'): treat as input-only
+        try:
+            if body and body[0].isspace():
+                return "", body.strip(), True
+        except Exception:
+            pass
+        parts = body.lstrip().split(None, 1)
+        head = _normalize_token(parts[0])
         rest = parts[1] if len(parts) > 1 else ""
-        return name, rest, True
-    # Private chat: allow 'Name <input>' without '@'
-    parts = s.split(None, 1)
-    if not parts:
+        
+        # '@BotName ...' -> address bot explicitly; next token may be target
+        if own and (head == own):
+            if not rest.strip():
+                return "", "", False
+            sub = rest.strip().split(None, 1)
+            cand = _normalize_token(sub[0]) if sub else ""
+            tail = sub[1] if len(sub) > 1 else ""
+            if cand and _is_valid_target(cand, base_project or None):
+                return cand, tail, True
+            # Not a valid target -> treat all as input-only
+            return "", rest.strip(), True
+        # '@Target ...' -> validate target; if invalid, ignore (group) / ignore (private mention form too)
+        if head and _is_valid_target(head, base_project or None):
+            return head, rest, True
         return "", "", False
-    name = parts[0].lstrip("@")
-    rest = parts[1] if len(parts) > 1 else ""
-    return name, rest, True
+
+    # No leading '@'
+    if is_private:
+        # Private DM: treat plain text as input-only (identical to '/call <input>')
+        return "", s, True
+    # Group chat without mention -> ignore
+    return "", "", False
 
 
 @_require_allowed_users
