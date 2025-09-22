@@ -171,12 +171,23 @@ def cmd_call(args: argparse.Namespace) -> int:
                 pass
             faulthandler.dump_traceback_later(delay, repeat=True, file=target)
 
+        # Build Telegram-identical payload from CLI flags (predictable ordering, no FS fallback)
+        try:
+            payload_json, payload_dict = call_api.build_input_payload(
+                target=(args.target or None),
+                main_text=(args.input or ""),
+                extra_context=None,
+                reply_text=None,
+            )
+        except Exception:
+            payload_json, payload_dict = (args.input or None), None
+
         result = call_api.call(
             project=(args.project or None),
             agent=agent or None,
             prompt=(args.prompt or None),
             target=(args.target or None) if hasattr(args, "target") else None,
-            input=(args.input or None),
+            input=(payload_json if payload_dict else (args.input or None)),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
             merge=bool(getattr(args, "merge", False)),
