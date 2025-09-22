@@ -29,18 +29,19 @@ def _ensure_db() -> sqlite3.Connection:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS repo (
-            target  TEXT PRIMARY KEY,
-            project TEXT,
-            agent   TEXT,
-            prompt  TEXT,
-            path    TEXT,
-            state   TEXT,
-            engine  TEXT,
+            target   TEXT PRIMARY KEY,
+            project  TEXT,
+            agent    TEXT,
+            prompt   TEXT,
+            path     TEXT,
+            state    TEXT,
+            engine   TEXT,
             orchestration TEXT,
-            type    TEXT,
+            type     TEXT,
             rel_path TEXT,
-            url     TEXT,
-            goal    TEXT
+            url      TEXT,
+            goal     TEXT,
+            card     TEXT
         )
         """
     )
@@ -68,6 +69,8 @@ def _ensure_db() -> sqlite3.Connection:
             cur.execute("ALTER TABLE repo ADD COLUMN url TEXT")
         if "goal" not in cols:
             cur.execute("ALTER TABLE repo ADD COLUMN goal TEXT")
+        if "card" not in cols:
+            cur.execute("ALTER TABLE repo ADD COLUMN card TEXT")
     except Exception:
         pass
     conn.commit()
@@ -124,24 +127,24 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     rx_p = _rx(prompt)
     # IMPORTANT: do NOT filter by prompt in SQL — we need agent-level rows (prompt="")
     where, params = _build_where_and_params(project, agent, None, state)
-    sql = "SELECT project, agent, prompt, path, state, target, type, rel_path, url, goal FROM repo WHERE " + " AND ".join(where)
+    sql = "SELECT project, agent, prompt, path, state, target, type, rel_path, url, goal, card FROM repo WHERE " + " AND ".join(where)
     cur.execute(sql, tuple(params))
     rows = cur.fetchall()
     cur.close(); conn.close()
 
     # Filter in Python for simplicity
-    items: List[Tuple[str, str, str, str, str, str, str, str, str, str]] = []
-    for prj, ag, pr, path, st, tgt, typ, rel, url, goal in rows:
+    items: List[Tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
+    for prj, ag, pr, path, st, tgt, typ, rel, url, goal, card in rows:
         if rx_t and not (tgt and rx_t.match(tgt)):
             continue
         # prompt filter: keep agent-level rows (pr == ""), and only include prompt rows that match
         if rx_p and pr and not rx_p.match(pr):
             continue
-        items.append((prj or "", ag or "", pr or "", path or "", st or "", tgt or "", typ or "", rel or "", url or "", goal or ""))
+        items.append((prj or "", ag or "", pr or "", path or "", st or "", tgt or "", typ or "", rel or "", url or "", goal or "", card or ""))
 
     # Build hierarchy: project -> agents[] (name/path/prompts[])
     proj_map: Dict[str, Dict[str, object]] = {}
-    for prj, ag, pr, path, st, tgt, typ, rel, url, goal in items:
+    for prj, ag, pr, path, st, tgt, typ, rel, url, goal, card in items:
         # Ensure project bucket
         if prj not in proj_map:
             proj_map[prj] = {"name": prj, "type": "project", "agents": []}
@@ -156,7 +159,7 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
                 agent_entry = a
                 break
         if agent_entry is None:
-            agent_entry = {"type": "agent", "id": "", "name": ag, "aliases": [], "prompts": [], "path": path if ag and not pr else ""}
+            agent_entry = {"type": "agent", "id": "", "name": ag, "aliases": [], "prompts": [], "path": path if ag and not pr else "", "card": card if ag and not pr else ""}
             agents_list.append(agent_entry)
         # Add prompt if present
         if pr:
@@ -167,8 +170,11 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
             if pr not in prompts:
                 prompts.append(pr)
         # Update path for agent rows when pr is empty (agent-level record)
-        if ag and not pr and path:
-            agent_entry["path"] = path
+        if ag and not pr:
+            if path:
+                agent_entry["path"] = path
+            if card:
+                agent_entry["card"] = card
 
     # If project filter without wildcard, return only that project
     out = _builtins.list(proj_map.values())
@@ -188,11 +194,11 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
         where, params = _build_where_and_params(project, agent, prompt, state)
         # Ensure we only select prompt rows
         where = ["prompt != ''"] + [w for w in where if w != "1=1"]
-        sql = "SELECT project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal FROM repo WHERE " + " AND ".join(where)
+        sql = "SELECT project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal, card FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         out: List[Dict[str, str]] = []
-        for prj, ag, pr, path, st, tgt, eng, orch, typ, rel, url, goal in rows:
+        for prj, ag, pr, path, st, tgt, eng, orch, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
             out.append({
@@ -209,6 +215,7 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
                 "rel_path": rel or "",
                 "url": url or "",
                 "goal": goal or "",
+                "card": card or "",
             })
         return out
     finally:
@@ -228,11 +235,11 @@ def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, t
         where, params = _build_where_and_params(project, agent, None, None)
         # Only non-prompt agent rows
         where = ["(prompt IS NULL OR prompt = '')", "agent != ''"] + [w for w in where if w != "1=1"]
-        sql = "SELECT project, agent, path, target, type, rel_path, url, goal FROM repo WHERE " + " AND ".join(where)
+        sql = "SELECT project, agent, path, target, type, rel_path, url, goal, card FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         out: List[Dict[str, str]] = []
-        for prj, ag, path, tgt, typ, rel, url, goal in rows:
+        for prj, ag, path, tgt, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
             out.append({
@@ -244,6 +251,7 @@ def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, t
                 "rel_path": rel or "",
                 "url": url or "",
                 "goal": goal or "",
+                "card": card or "",
             })
         return out
     finally:
@@ -258,11 +266,11 @@ def find_projects(*, project: Optional[str] = None, target: Optional[str] = None
         where, params = _build_where_and_params(project, None, None, None)
         # Only project-level rows
         where = ["prompt = ''", "agent = ''", "project != ''"] + [w for w in where if w != "1=1"]
-        sql = "SELECT project, path, target, type, rel_path, url, goal FROM repo WHERE " + " AND ".join(where)
+        sql = "SELECT project, path, target, type, rel_path, url, goal, card FROM repo WHERE " + " AND ".join(where)
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         out: List[Dict[str, str]] = []
-        for prj, path, tgt, typ, rel, url, goal in rows:
+        for prj, path, tgt, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
             out.append({
@@ -273,6 +281,7 @@ def find_projects(*, project: Optional[str] = None, target: Optional[str] = None
                 "rel_path": rel or "",
                 "url": url or "",
                 "goal": goal or "",
+                "card": card or "",
             })
         return out
     finally:

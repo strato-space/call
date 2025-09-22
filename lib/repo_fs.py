@@ -45,23 +45,28 @@ def _upsert_row(
     rel_path: str | None = None,
     url: str | None = None,
     goal: str | None = None,
+    card: str | None = None,
 ) -> None:
     try:
-        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal FROM repo WHERE target = ?", (target,))
+        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card FROM repo WHERE target = ?", (target,))
         old = cur.fetchone()
         if old is not None:
-            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch, old_type, old_rel, old_url, old_goal = [x or "" for x in old]
+            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch, old_type, old_rel, old_url, old_goal, old_card = [x or "" for x in old]
             eff_project = project or old_project
             eff_agent = agent or old_agent
             eff_prompt = prompt or old_prompt
             new_path = path or ""
             eff_path = new_path or old_path
+            new_card = (card or "")
+            eff_card = new_card or old_card
             try:
                 if (eff_prompt or old_prompt):  # prompt row
-                    old_is_prompt_file = isinstance(old_path, str) and old_path.lower().endswith(('.md',)) and (('\\prompt\\' in old_path.lower()) or ('/prompt/' in old_path.lower()))
+                    old_is_prompt_file = isinstance(old_path, str) and old_path.lower().endswith(('.md',)) and (("\\prompt\\" in old_path.lower()) or ('/prompt/' in old_path.lower()))
                     new_is_agent_card = isinstance(new_path, str) and (new_path.lower().endswith(('agent.md',)))
                     if old_is_prompt_file and new_is_agent_card:
                         eff_path = old_path
+                        # Preserve prompt card if replacing with agent card placeholder
+                        eff_card = old_card or eff_card
             except Exception:
                 pass
             eff_state = (state or "") or old_state
@@ -74,13 +79,13 @@ def _upsert_row(
             if old_path and eff_path and (old_path != eff_path):
                 debug_print("[repo.scan] overwrite", f"target={target}", f"old={old_path}", f"new={eff_path}")
             cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch, eff_type, eff_rel, eff_url, eff_goal),
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch, eff_type, eff_rel, eff_url, eff_goal, eff_card),
             )
         else:
             cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, project, agent, prompt, path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or "")),
+                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (target, project, agent, prompt, path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or ""), (card or "")),
             )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
@@ -174,6 +179,7 @@ def _scan_agent_repo(cur) -> int:
                 rel_path=relp,
                 url=url,
                 goal=goal,
+                card=relp,
             )
             scanned += 1
 
@@ -206,6 +212,7 @@ def _scan_agent_repo(cur) -> int:
                 rel_path=relp,
                 url=url,
                 goal=goal,
+                card=relp,
             )
             scanned += 1
             for pr_id in (prompts_list or []):
@@ -225,6 +232,7 @@ def _scan_agent_repo(cur) -> int:
                         rel_path=relp,
                         url=url,
                         goal="",
+                        card="",
                     )
                     scanned += 1
                 except Exception:
@@ -271,6 +279,7 @@ def _scan_agent_repo(cur) -> int:
                     rel_path=relp,
                     url=url,
                     goal=str(meta.get("goal") or meta.get("purpose") or ""),
+                    card=relp,
                 )
                 scanned += 1
                 for pr_id in (prompts_list or []):
@@ -289,6 +298,7 @@ def _scan_agent_repo(cur) -> int:
                             rel_path=relp,
                             url=url,
                             goal="",
+                            card="",
                         )
                         scanned += 1
                     except Exception:
@@ -350,6 +360,7 @@ def _scan_prompt_repo(cur) -> int:
                     rel_path=relp,
                     url=url,
                     goal=goal,
+                    card=relp,
                 )
                 scanned += 1
     except Exception:
@@ -398,6 +409,7 @@ def _scan_prompt_repo(cur) -> int:
                     rel_path=relp,
                     url=url,
                     goal=(goal if 'goal' in locals() else ""),
+                    card=relp,
                 )
                 scanned += 1
         except Exception:
