@@ -2048,14 +2048,42 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # If YAML provided, use what we started; otherwise none
         mcp_servers = mcp_servers_started
 
-        # Debug: print instructions length and a short preview
+        # Debug: dump cfg.attributes back to YAML and optionally print instructions preview
+        def _attrs_to_yaml_text(attrs) -> str | None:
+            if not isinstance(attrs, dict) or not attrs:
+                return None
+            class _BlockStrDumper(yaml.SafeDumper):
+                pass
+            def _str_representer(dumper, data):
+                style = '|' if ('\n' in data) else None
+                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
+            _BlockStrDumper.add_representer(str, _str_representer)
+            try:
+                return yaml.dump(attrs, Dumper=_BlockStrDumper, allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
+            except Exception:
+                try:
+                    return yaml.safe_dump(attrs, allow_unicode=True, sort_keys=False)
+                except Exception:
+                    return None
         try:
-            _instr = cfg.instructions or ""
-            _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
-            debug_print("[app]", "Agent instructions len=", str(len(_instr)))
-            debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
+            ytxt = _attrs_to_yaml_text(getattr(cfg, 'attributes', None))
+            if ytxt:
+                debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
         except Exception:
             pass
+        # Print instructions preview only if not provided inside attributes as 'instructions'
+        try:
+            attrs_has_instr = isinstance(getattr(cfg, 'attributes', None), dict) and ('instructions' in (cfg.attributes or {}))
+        except Exception:
+            attrs_has_instr = False
+        if not attrs_has_instr:
+            try:
+                _instr = cfg.instructions or ""
+                _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
+                debug_print("[app]", "Agent instructions len=", str(len(_instr)))
+                debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
+            except Exception:
+                pass
 
         # Agents-as-Tools: if the project card exposes 'agents' or 'prompts',
         # create sub-agents as tools so the main agent can call them.
@@ -2124,6 +2152,25 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             debug_print("[tools]", f"Sub-cfg built: name={sub_cfg.name} prompt={sub_cfg.prompt_override} instr_len={len(sub_cfg.instructions or '')}")
                         except Exception:
                             pass
+                        # Debug: dump sub-cfg attributes YAML and optionally its instructions
+                        try:
+                            ytxt2 = _attrs_to_yaml_text(getattr(sub_cfg, 'attributes', None))
+                            if ytxt2:
+                                debug_print("[tools]", f"Sub-cfg attributes (YAML) for {sub_cfg.name or sub_name}:\n" + ytxt2)
+                        except Exception:
+                            pass
+                        try:
+                            sub_attrs_has_instr = isinstance(getattr(sub_cfg, 'attributes', None), dict) and ('instructions' in (sub_cfg.attributes or {}))
+                        except Exception:
+                            sub_attrs_has_instr = False
+                        if not sub_attrs_has_instr:
+                            try:
+                                prev = (sub_cfg.instructions or "")
+                                if len(prev) > 2048:
+                                    prev = prev[:2045] + "..."
+                                debug_print("[tools]", f"Sub-cfg instructions preview for {sub_cfg.name or sub_name}:\n" + prev)
+                            except Exception:
+                                pass
                         sub_agent = Agent(
                             name=sub_cfg.name or sub_name,
                             instructions=sub_cfg.instructions or "",
