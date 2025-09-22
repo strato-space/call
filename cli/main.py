@@ -126,16 +126,20 @@ def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
 
 
 def cmd_call(args: argparse.Namespace) -> int:
-    agent = (args.agent or "").lstrip("@") if isinstance(args.agent, str) else (args.agent or None)
+    # Normalize selectors
+    agent = call_api.normalize_selector(getattr(args, 'agent', None)) or None
+    project = call_api.normalize_selector(getattr(args, 'project', None)) or None
+    prompt = call_api.normalize_selector(getattr(args, 'prompt', None)) or None
+    target = call_api.normalize_selector(getattr(args, 'target', None)) or None
     trace_fp = None
     try:
         # Optional: print instructions and exit
         if getattr(args, "print_instructions", False):
             # Build directly; this handles wildcard interpretation and strict validation (MD-only)
             cfg, err = call_api.build_runnable_instructions_config(
-                project=(args.project or None),
-                agent=(agent or None),
-                prompt=(args.prompt or None),
+                project=project,
+                agent=agent,
+                prompt=prompt,
                 merge=bool(getattr(args, "merge", False)),
             )
             if err:
@@ -184,7 +188,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             # Build Telegram-identical payload from CLI flags (predictable ordering, no FS fallback)
             try:
                 # If parsed_input is a JSON object, use its keys as hints
-                eff_target = (args.target or None)
+                eff_target = target
                 eff_main = parsed_input
                 eff_ctx = None
                 eff_replay = None
@@ -200,72 +204,79 @@ def cmd_call(args: argparse.Namespace) -> int:
                             eff_replay = obj.get('replay') or obj.get('reply')
                 except Exception:
                     pass
-                payload_json, payload_dict = call_api.build_input_payload(
-                    target=eff_target,
-                    main_text=(eff_main or ''),
-                    extra_context=eff_ctx,
-                    reply_text=(eff_replay if isinstance(eff_replay, str) else None),
-                    download=bool(getattr(args, 'download_context', False)),
-                )
+                try:
+                    payload_json, payload_dict = call_api.build_input_payload(
+                        target=eff_target,
+                        main_text=(eff_main or ''),
+                        extra_context=eff_ctx,
+                        reply_text=(eff_replay if isinstance(eff_replay, str) else None),
+                        download=bool(getattr(args, 'download_context', False)),
+                    )
+                except TypeError:
+                    # Backward-compat for test stubs without 'download' kw
+                    payload_json, payload_dict = call_api.build_input_payload(
+                        target=eff_target,
+                        main_text=(eff_main or ''),
+                        extra_context=eff_ctx,
+                        reply_text=(eff_replay if isinstance(eff_replay, str) else None),
+                    )
             except Exception:
                 payload_json, payload_dict = (parsed_input or None), None
 
         # If --echo is set, do NOT call the LLM pipeline; just emit the prepared payload
         if bool(getattr(args, "echo", False)):
             try:
-                # If we didn't build payload yet (no --parse-input), build it from raw input
+                # If we didn't build payload yet (no --parse-input), DO NOT build token context.
+                # Echo only top-level fields: target and input
                 if not payload_json:
-                    pj, pd = call_api.build_input_payload(
-                        target=(args.target or None),
-                        main_text=(raw_input or ''),
-                        extra_context=None,
-                        reply_text=None,
-                        download=bool(getattr(args, 'download_context', False)),
-                    )
-                    payload_json = pj
+                    payload_json = json.dumps({
+                        "target": target,
+                        "input": (raw_input or ''),
+                    }, ensure_ascii=False)
                 # Prepare resolved selection snapshot without executing the pipeline
                 resolved: dict | None = None
-                try:
-                    cfg, err = call_api.build_runnable_instructions_config(
-                        project=(args.project or None),
-                        agent=(agent or None),
-                        prompt=(args.prompt or None),
-                        target=(args.target or None),
-                        input=None,
-                        merge=bool(getattr(args, "merge", False)),
-                    )
-                    if not err and cfg:
-                        resolved = {
-                            "project": getattr(cfg, 'project', None),
-                            "agent": getattr(cfg, 'name', None) if getattr(cfg, 'type', None) in ("agent", None) else None,
-                            "prompt": getattr(cfg, 'prompt_override', None),
-                            "type": getattr(cfg, 'type', None),
-                            "path": getattr(cfg, 'path', None),
-                            "url": getattr(cfg, 'url', None),
-                        }
-                except Exception:
-                    resolved = None
+                if bool(getattr(args, 'resolved', False)):
+                    try:
+                        cfg, err = call_api.build_runnable_instructions_config(
+                            project=project,
+                            agent=agent,
+                            prompt=prompt,
+                            target=target,
+                            input=None,
+                            merge=bool(getattr(args, "merge", False)),
+                        )
+                        if not err and cfg:
+                            resolved = {
+                                "project": getattr(cfg, 'project', None),
+                                # Always include agent name if present in cfg
+                                "agent": getattr(cfg, 'name', None),
+                                "prompt": getattr(cfg, 'prompt_override', None),
+                                "type": getattr(cfg, 'type', None),
+                                "path": getattr(cfg, 'path', None),
+                                "url": getattr(cfg, 'url', None),
+                            }
+                    except Exception:
+                        resolved = None
 
                 # Print a compact echo object containing payload and resolved selection
-                out_obj = {}
                 try:
                     payload_obj = json.loads(payload_json) if payload_json else {}
                 except Exception:
                     payload_obj = payload_json or {}
-                out_obj["payload"] = payload_obj
+                # Flatten: print top-level payload fields; add resolved when requested
                 if resolved:
-                    out_obj["resolved"] = resolved
-                _safe_print(json.dumps(out_obj, ensure_ascii=False, indent=2))
+                    payload_obj["resolved"] = resolved
+                _safe_print(json.dumps(payload_obj, ensure_ascii=False, indent=2))
                 return 0
             except Exception as e:
                 print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
                 return 1
 
         result = call_api.call(
-            project=(args.project or None),
-            agent=agent or None,
-            prompt=(args.prompt or None),
-            target=(args.target or None) if hasattr(args, "target") else None,
+            project=project,
+            agent=agent,
+            prompt=prompt,
+            target=target if hasattr(args, "target") else None,
             input=(payload_json if payload_dict else (raw_input or None)),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
@@ -306,15 +317,16 @@ def main() -> int:
     p_agents.set_defaults(func=cmd_list)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
-    p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard)")
-    p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard)")
-    p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
-    p_call.add_argument("--target", default="", help="Unified selector (project|agent|prompt pattern)")
+    p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard). '@' and '.md' suffix are stripped")
+    p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard). '@' and '.md' suffix are stripped")
+    p_call.add_argument("--prompt", default="", help="Prompt override (exact or with *). '@' and '.md' suffix are stripped")
+    p_call.add_argument("--target", default="", help="Unified selector (project|agent|prompt). '@' and '.md' suffix are stripped")
     p_call.add_argument("--input", default="", help="Raw input text for the agent (passed as-is)")
     p_call.add_argument("--parse-input", default="", help="Parse input and build JSON payload identical to Telegram (uses shared builder)")
     p_call.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
     p_call.add_argument("--download-context", action="store_true", help="Download/inline context by url/path (content for text, base64 for binaries)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
+    p_call.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_call.add_argument("--merge", dest="merge", action="store_true", help="Enable attribute/instructions merge (off by default)")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
@@ -324,12 +336,17 @@ def main() -> int:
     # prompts subcommand
     def cmd_prompts(args: argparse.Namespace) -> int:
         try:
+            # Normalize selectors (API-level)
+            pj = call_api.normalize_selector(args.project) or None
+            ag = call_api.normalize_selector(args.agent) or None
+            pr = call_api.normalize_selector(args.prompt) or None
+            tg = call_api.normalize_selector(args.target) or None
             rows = call_api.list_prompts(
-                project=(args.project or None),
-                agent=(args.agent or None),
-                prompt=(args.prompt or None),
+                project=pj,
+                agent=ag,
+                prompt=pr,
                 state=(args.state or None),
-                target=(args.target or None),
+                target=tg,
             )
             # Normalize schema for CLI output
             items = []

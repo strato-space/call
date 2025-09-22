@@ -706,7 +706,11 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     input_arg, payload = call_api.build_input_payload(target=(name or None), main_text=(main_text or ""), extra_context=ctx_items or None, reply_text=(reply_text or None))
     try:
         import json as _json
-        debug_print("[bot]", "[PAYLOAD]", _json.dumps(payload or {}, ensure_ascii=False)[:800])
+        # Pretty-print payload with indentation; cap length to ~2000 chars to avoid noisy logs
+        txt = _json.dumps(payload or {}, ensure_ascii=False, indent=2)
+        if len(txt) > 2000:
+            txt = txt[:1997] + "..."
+        debug_print("[bot]", "[PAYLOAD]", txt)
     except Exception:
         pass
     return (input_arg, payload)
