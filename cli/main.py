@@ -205,6 +205,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                     main_text=(eff_main or ''),
                     extra_context=eff_ctx,
                     reply_text=(eff_replay if isinstance(eff_replay, str) else None),
+                    download=bool(getattr(args, 'download_context', False)),
                 )
             except Exception:
                 payload_json, payload_dict = (parsed_input or None), None
@@ -219,6 +220,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                         main_text=(raw_input or ''),
                         extra_context=None,
                         reply_text=None,
+                        download=bool(getattr(args, 'download_context', False)),
                     )
                     payload_json = pj
                 # Prepare resolved selection snapshot without executing the pipeline
@@ -311,6 +313,7 @@ def main() -> int:
     p_call.add_argument("--input", default="", help="Raw input text for the agent (passed as-is)")
     p_call.add_argument("--parse-input", default="", help="Parse input and build JSON payload identical to Telegram (uses shared builder)")
     p_call.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
+    p_call.add_argument("--download-context", action="store_true", help="Download/inline context by url/path (content for text, base64 for binaries)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
     p_call.add_argument("--merge", dest="merge", action="store_true", help="Enable attribute/instructions merge (off by default)")
