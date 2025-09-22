@@ -242,14 +242,24 @@ def main() -> int:
             # Normalize schema for CLI output
             items = []
             for r in (rows or []):
-                items.append({
+                # Base fields expected by existing tests
+                item = {
                     "prompt_id": r.get("prompt", ""),
                     "name": r.get("prompt", ""),
                     "agent": r.get("agent", ""),
                     "project": r.get("project", ""),
                     "state": r.get("state", ""),
-                    "url": r.get("path", ""),
-                })
+                    # Prefer canonical URL from DB; fallback to path for older rows
+                    "url": r.get("url", "") or r.get("path", ""),
+                }
+                # Extra details for richer JSON/YAML output (table remains unchanged)
+                if r.get("type"):
+                    item["type"] = r.get("type")
+                if r.get("rel_path"):
+                    item["rel_path"] = r.get("rel_path")
+                if r.get("goal"):
+                    item["goal"] = r.get("goal")
+                items.append(item)
 
             fmt = (args.format or 'table').lower()
             if fmt == 'json':

@@ -668,6 +668,17 @@ Notes:
   - `TELEGRAM_THREAD_ID` is optional. If not set or set to `0`, it is treated as `None` and no thread id is sent to Telegram.
   - The library will also automatically retry without a thread id when Telegram returns `BadRequest: Message thread not found` (see `safe_send_message()` wrapper).
 
+#### Context extraction from message text (New Sep 22, 2025)
+
+- The bot builds a structured JSON payload when a `/call` command (or a plain message handled as a call) is sent as a reply, and also parses inline tokens from the main text:
+  - Tokens beginning with `@` are normalized by stripping the leading `@` and punctuation.
+  - For each token, the bot attempts to resolve it as a prompt/agent/project via `call.lib.api.build_runnable_instructions_config()`.
+  - When a token resolves to a prompt with a known file path, the bot adds a context item of the form:
+    - `{ "type": "file", "name": "<PromptId>.md", "path": ".../prompt/<state>/<PromptId>.md", "content": "...", "mutable": true }`
+  - If the DB does not provide a path, the bot performs a filesystem fallback and checks `prompt/draft/<PromptId>.md` then `prompt/ready/<PromptId>.md`.
+- Example:
+  - `/call @AgentFab @3-OnlineChunkSummarization` → payload includes a `file` context item for `3-OnlineChunkSummarization.md` so downstream pipelines can consume it directly.
+
 ### Prompt discovery and target resolution (Updated Sep 19, 2025)
 
 - Target precedence: `prompt > agent > project`.

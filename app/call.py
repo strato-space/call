@@ -2006,7 +2006,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - instructions: str
       - model: str | None
       - attributes: dict | None (may contain 'vs')
-      - agent_yaml_path: str | None
+      - path: str | None (repo-relative path like 'agent/Proj/Agent/agent.md'; optional)
+        Note: absolute 'agent_yaml_path' is deprecated and not used by this runtime.
     """
     # MCP servers configuration via YAML (optional; gated by CALL_ENABLE_MCP)
     cfg_yaml: dict | None = None

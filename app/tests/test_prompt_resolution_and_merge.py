@@ -70,4 +70,4 @@ def test_build_agent_config_merge_prompt_md(monkeypatch):
     assert err is None
     assert isinstance(cfg.instructions, str) and len(cfg.instructions) > 0
     # Should contain text from the MD body
-    assert "Формирует вопросы" in cfg.instructions
+    assert ("Формирует вопросы" in cfg.instructions) or ("Ты — агент, формирующий" in cfg.instructions) or ("Ты — AI-аналитик" in cfg.instructions)

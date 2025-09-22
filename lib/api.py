@@ -456,11 +456,20 @@ def build_runnable_instructions_config(
             return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
         if not isinstance(env, dict) or not env.get("ok"):
-            # Fallback: treat project card as runnable when agent/prompt resolution fails
-            # Do NOT return an error; proceed without an agent path and let project.md drive instructions
-            name = str(project or "")
-            proj = project
-            path_p = None
+            # Only apply "project-as-runnable" fallback when caller provided an explicit target token
+            # (e.g., @AgentFab or path:AgentFab). Pure project filters must preserve legacy errors.
+            if isinstance(target, str) and target.strip():
+                name = str(project or "")
+                proj = project
+                path_p = None
+            else:
+                # Preserve original status/code/options from resolve_agent/list()
+                code = (env.get("code") if isinstance(env, dict) else "NO_DATA_FOUND")
+                status = int(env.get("error_code", 404)) if isinstance(env, dict) else 404
+                desc = env.get("description", "not found") if isinstance(env, dict) else "not found"
+                return None, _error_payload(
+                    agent=(agent or ""), input=(input or ""), exc=desc, status=status, code=str(code), project=project, options=(env.get("options") if isinstance(env, dict) else None)
+                )
         else:
             resolved = env.get("resolved") or {}
             name = str(resolved.get("name") or "")
@@ -965,12 +974,21 @@ async def call_async(
     # Proceed with cfg-driven run; build 'resolved' from cfg
     chosen_name = cfg.name if cfg else ""
     chosen_project = (cfg.project if cfg else None) or (project or "")
-    # Prefer new repo-relative path and expose absolute path for backward-compat
-    yaml_path = (cfg.agent_yaml_path or None) if cfg else None
+    # Back-compat: absolute path (if any) for agent echo
+    try:
+        yaml_path = getattr(cfg, "agent_yaml_path", None)
+    except Exception:
+        yaml_path = None
+    # Resolved descriptor for response/echo
     resolved = {
         "project": chosen_project,
         "name": chosen_name,
-        "path": yaml_path,
+        # New semantics: path is repo-relative (e.g., 'agent/Proj/Agent/agent.md' or 'prompt/ready/...')
+        "path": (getattr(cfg, "path", None) if cfg else None),
+        # Optional helpful fields
+        "url": (getattr(cfg, "url", None) if cfg else None),
+        "type": (getattr(cfg, "type", None) if cfg else None),
+        "goal": (getattr(cfg, "goal", None) if cfg else None),
         "aliases": [],
         "prompts": [],
     }
