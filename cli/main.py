@@ -26,6 +26,8 @@ import faulthandler
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
+from dotenv import load_dotenv
+from pathlib import Path as _Path
 
 
 def _emit_output(obj, fmt: str) -> None:
@@ -292,7 +294,8 @@ def cmd_call(args: argparse.Namespace) -> int:
             echo=bool(getattr(args, "echo", False)),
             merge=bool(getattr(args, "merge", False)),
         )
-        _safe_print(json.dumps(result, ensure_ascii=False))
+        # Honor --format for output (json|yaml|text)
+        _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
     except Exception as e:
         err = {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
@@ -312,6 +315,15 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    # Load environment from call/.env first, then repo-root .env; do not override existing OS env
+    try:
+        _here = _Path(__file__).resolve()
+        _call_dir = _here.parent.parent  # .../call/
+        load_dotenv(dotenv_path=str(_call_dir / ".env"), override=False)
+        load_dotenv(dotenv_path=str(_call_dir.parent / ".env"), override=False)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         description="call — CLI for listing and invoking agents (keyword-only API)",
     )
@@ -341,6 +353,7 @@ def main() -> int:
     p_call.add_argument("--merge", dest="merge", action="store_true", help="Enable attribute/instructions merge (off by default)")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
+    p_call.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_call.set_defaults(func=cmd_call)
 
     # prompts subcommand
@@ -515,7 +528,7 @@ def main() -> int:
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
         )
-        _safe_print(json.dumps(result, ensure_ascii=False))
+        _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
 
     p_exec = sub.add_parser("exec", help="Execute with context items (JSON input)")
@@ -527,6 +540,7 @@ def main() -> int:
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
     p_exec.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
+    p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)
 
     # clear-session subcommand
