@@ -171,23 +171,50 @@ def cmd_call(args: argparse.Namespace) -> int:
                 pass
             faulthandler.dump_traceback_later(delay, repeat=True, file=target)
 
-        # Build Telegram-identical payload from CLI flags (predictable ordering, no FS fallback)
-        try:
-            payload_json, payload_dict = call_api.build_input_payload(
-                target=(args.target or None),
-                main_text=(args.input or ""),
-                extra_context=None,
-                reply_text=None,
-            )
-        except Exception:
-            payload_json, payload_dict = (args.input or None), None
+        # Inputs: --input is raw text; --parse-input builds a JSON payload via shared builder
+        raw_input = (args.input or "") if hasattr(args, "input") else ""
+        parsed_input = (args.parse_input or "") if hasattr(args, "parse_input") else ""
+        if raw_input and parsed_input:
+            _safe_print(json.dumps({"ok": False, "error_code": 400, "code": "BAD_REQUEST", "description": "Use either --input or --parse-input, not both."}, ensure_ascii=False))
+            return 1
+
+        payload_json = None
+        payload_dict = None
+        if parsed_input:
+            # Build Telegram-identical payload from CLI flags (predictable ordering, no FS fallback)
+            try:
+                # If parsed_input is a JSON object, use its keys as hints
+                eff_target = (args.target or None)
+                eff_main = parsed_input
+                eff_ctx = None
+                eff_replay = None
+                try:
+                    if (parsed_input.strip().startswith('{') and parsed_input.strip().endswith('}')):
+                        obj = json.loads(parsed_input)
+                        if isinstance(obj, dict):
+                            # CLI flag takes precedence
+                            eff_target = eff_target or (obj.get('target') or obj.get('taget') or None)
+                            eff_main = str(obj.get('input') or '')
+                            ctx_val = obj.get('context')
+                            eff_ctx = ctx_val if isinstance(ctx_val, list) else None
+                            eff_replay = obj.get('replay') or obj.get('reply')
+                except Exception:
+                    pass
+                payload_json, payload_dict = call_api.build_input_payload(
+                    target=eff_target,
+                    main_text=(eff_main or ''),
+                    extra_context=eff_ctx,
+                    reply_text=(eff_replay if isinstance(eff_replay, str) else None),
+                )
+            except Exception:
+                payload_json, payload_dict = (parsed_input or None), None
 
         result = call_api.call(
             project=(args.project or None),
             agent=agent or None,
             prompt=(args.prompt or None),
             target=(args.target or None) if hasattr(args, "target") else None,
-            input=(payload_json if payload_dict else (args.input or None)),
+            input=(payload_json if payload_dict else (raw_input or None)),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
             merge=bool(getattr(args, "merge", False)),
@@ -231,7 +258,8 @@ def main() -> int:
     p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard)")
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with * for selection)")
     p_call.add_argument("--target", default="", help="Unified selector (project|agent|prompt pattern)")
-    p_call.add_argument("--input", default="", help="Input text for the agent")
+    p_call.add_argument("--input", default="", help="Raw input text for the agent (passed as-is)")
+    p_call.add_argument("--parse-input", default="", help="Parse input and build JSON payload identical to Telegram (uses shared builder)")
     p_call.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
