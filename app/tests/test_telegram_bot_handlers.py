@@ -36,7 +36,20 @@ class FakeCallApi:
         return {"ok": False, "error_code": 404, "code": "NO_DATA_FOUND", "description": "not found"}
 
     def list(self, **kwargs):
+        # Minimal project listing to satisfy _is_valid_target(project)
+        proj = (kwargs.get("project") or "").strip()
+        if proj in {"AgentFab", "UxFab", "FanFab"}:
+            return [{"name": proj}]
         return []
+
+    def resolve_agent(self, **kwargs):
+        # Accept a few known tokens as valid targets for tests
+        agent = (kwargs.get("agent") or "").strip()
+        prompt = (kwargs.get("prompt") or "").strip()
+        token = agent or prompt
+        if token in {"Vasil3", "3-OnlineChunkSummarization", "DialogPostAnalysis"}:
+            return {"ok": True, "resolved": {"project": "UxFab", "name": token, "path": ""}}
+        return {"ok": False, "error_code": 404, "description": "not found"}
 
     def list_prompts(self, **kwargs):
         return []
@@ -130,3 +143,93 @@ def test_handle_call_project_plus_prompt_calls_api_with_target(monkeypatch):
 
     assert services.last_call is not None
     assert services.last_call["target"] == "AgentFab"
+
+
+def test_plain_private_input_only_calls_api_with_no_target(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("just text")
+    upd.effective_chat.type = "private"
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.01)
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert (services.last_call["target"] or "") == ""
+    assert "just text" in (services.last_call["input"] or "")
+
+
+def test_plain_private_at_target_valid_calls_api_with_target(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("@Vasil3 do work")
+    upd.effective_chat.type = "private"
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.01)
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert services.last_call["target"] == "Vasil3"
+
+
+def test_plain_group_plain_text_is_ignored(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("hello everyone")
+    # No type => not private => group-like
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.01)
+    asyncio.run(_runner())
+    assert services.last_call is None
+
+
+def test_plain_group_single_at_means_input_only(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("@ just input only")
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.01)
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert (services.last_call["target"] or "") == ""
+    assert "just input only" in (services.last_call["input"] or "")
+
+
+def test_plain_group_atbot_target_valid(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    # Pretend the bot name derived project is AgentFab
+    tg_bot.SELECTED_BOT_NAME = "AgentFabBot"
+    tg_bot.PROJECT_NAME = "AgentFab"
+    upd = DummyUpdate("@AgentFabBot Vasil3 run this")
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.05)
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert services.last_call["target"] == "Vasil3"
+
+
+def test_plain_group_at_target_invalid_is_ignored(monkeypatch):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("@UnknownAgent run")
+    ctx = DummyContext()
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.02)
+    asyncio.run(_runner())
+    assert services.last_call is None
