@@ -276,12 +276,12 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
         except Exception:
             ctx_items = [x for x in extra_context if isinstance(x, dict)]
 
-    # Tokenize
+    # Tokenize (allow '*' inside tokens to support wildcard patterns like '@31-*')
     tokens: list[str] = []
     try:
         s = (main_text or "").strip()
         if s:
-            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\-]*", s)
+            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\\-*]*", s)
             for t in raw:
                 u = t.lstrip('@').strip().strip(',.;:')
                 ul = u.lower()
@@ -299,13 +299,29 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     refs: list[dict] = []
     for tok in tokens:
         rows = []
-        try:
-            rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
-        except Exception:
-            rows = []
+
+        # Support wildcard prompts like '31-*' by filtering DB prompts via regex when '*' present
+        if ('*' in tok):
+            try:
+                import re as _re2
+                rx = _re2.compile('^' + _re2.escape(tok).replace('\\*', '.*') + '$', _re2.IGNORECASE)
+                try:
+                    items = list_prompts(project=None, agent=None, prompt=None, state=None, target=None)
+                except Exception:
+                    items = []
+                rows = [x for x in (items or []) if rx.match(str(x.get('prompt') or ''))]
+            except Exception:
+                rows = []
+        else:
+            try:
+                rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
+            except Exception:
+                rows = []
+
         if not rows:
             continue
         try:
+            # If multiple rows matched (rare under wildcard), pick the first for context purposes
             row = rows[0]
             rpath = str(row.get('rel_path') or row.get('path') or '').strip()
             if rpath:
