@@ -40,7 +40,7 @@
 - [Карточка AgentFab в Prompt Repo](https://github.com/strato-space/prompt/blob/main/AgentFab/AgentFab.md)
 - [Карточка StratoFormatter](https://github.com/strato-space/prompt/blob/main/AgentFab/StratoFormatter.md)
 - [Конексный бокс BusinessAnalyticAgent](https://github.com/strato-space/prompt/tree/main/AgentFab/ContentBoxes/DialogOnlineAnalysis/content)
-- [Промпт 49-BusinessagAntanalytic](https://github.com/strato-space/prompt/blob/main/draft/49-BusinessagAntanalytic.md)
+- [Промпт 49-BusinessAnalyticAgent](https://github.com/strato-space/prompt/blob/main/draft/49-BusinessAnalyticAgent.md)
 - [Промпт 50-Discoveryagent.md](https://github.com/strato-space/prompt/blob/main/draft/50-Discoveryagent.md)
 - [Выключенный SelfReflection](https://github.com/strato-space/prompt/blob/main/AgentFab/SelfReflection/agent.md)
 
@@ -390,7 +390,7 @@ UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft
 UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/43-DoccompletenessChecker.md
 44-ResearchgapAnalyzer                                                               | 44-ResearchgapAnalyzer                                                               | UxManager             | 
 UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/44-ResearchgapAnalyzer.md
-49-Businessagentanalytic                                                             | 49-Businessagentanalytic                                                             | DialogOnlineAnalysis  | 
+49-BusinessAnalyticAgent                                                           | 49-BusinessAnalyticAgent                                                           | DialogOnlineAnalysis  | 
 UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/49-BusinessagAntanalytic.md
 5-InterviewSummary                                                                   | 5-InterviewSummary                                                                   | DialogSummary         | 
 UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/5-InterviewSummary.md
