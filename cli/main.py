@@ -585,6 +585,36 @@ def main() -> int:
             _emit_output(payload, getattr(args, "format", "json"))
             return 0
 
+        # Optional: MCP build-and-stop — construct cfg and exit without running
+        if bool(getattr(args, "mcp_build_and_stop", False)):
+            cfg, err = call_api.build_runnable_instructions_config(
+                project=(args.project or None),
+                agent=(args.agent or None),
+                prompt=(args.prompt or None),
+                target=(args.target or None),
+                input=None,
+                merge=True,
+            )
+            if err:
+                _emit_output(err, getattr(args, "format", "json"))
+                return 1
+            # Emit compact snapshot suitable for MCP preflight
+            try:
+                from dataclasses import asdict as _asdict
+                snap = _asdict(cfg) if cfg is not None else {}
+            except Exception:
+                snap = {
+                    "name": getattr(cfg, "name", None),
+                    "project": getattr(cfg, "project", None),
+                    "prompt_override": getattr(cfg, "prompt_override", None),
+                    "type": getattr(cfg, "type", None),
+                    "path": getattr(cfg, "path", None),
+                    "url": getattr(cfg, "url", None),
+                    "model": getattr(cfg, "model", None),
+                }
+            _emit_output({"ok": True, "cfg": snap}, getattr(args, "format", "json"))
+            return 0
+
         # Execute: prefer payload-only interpretation when exactly one selector is present.
         selectors = [str(getattr(args, k) or "").strip() for k in ("project", "agent", "prompt", "target")]
         sel_count = sum(1 for s in selectors if s)
@@ -622,6 +652,7 @@ def main() -> int:
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
     p_exec.add_argument("--echo", action="store_true", help="Print the merged payload and exit (no execution)")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
+    p_exec.add_argument("--mcp-build-and-stop", dest="mcp_build_and_stop", action="store_true", help="Build runnable config, print and exit (no execution)")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)
 
