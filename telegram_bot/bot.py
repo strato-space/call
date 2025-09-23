@@ -527,6 +527,30 @@ Notes:
 
 
 @_require_allowed_users
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Concise help with guide link as the very first line."""
+    log.debug("handle_help: chat_id=%s user_id=%s", getattr(update.effective_chat, 'id', None), getattr(update.effective_user, 'id', None))
+    m = Messenger(context=context, update=update)
+    debug_print("[bot]", "[HELP]", f"entry chat_id={getattr(update.effective_chat, 'id', None)}")
+    txt = (
+        """
+https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
+
+Быстро:
+- /call @AgentFab @31-* — обработать 31-* через AgentFab
+- /call @AiNewsAggr Новости Apple — запустить агента AiNewsAggr с входом
+- /prompts_ready | /prompts_draft — списки промптов (фильтры: --project, --agent, --prompt, --target, --state)
+- /reload — пересканировать репозитории и обновить индекс
+
+Подсказки:
+- В личных чатах можно без @; в группах используйте @упоминание или /call
+- Приоритет target: prompt > точный project > agent > шаблонный project
+        """.strip()
+    )
+    await m.reply(txt, parse_mode=None)
+    debug_print("[bot]", "[HELP]", "replied")
+
+@_require_allowed_users
 async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.debug("handle_list: incoming text=%r", getattr(update.message, 'text', None))
     m = Messenger(context=context, update=update)
@@ -1082,7 +1106,7 @@ def main() -> None:
     )
 
     app.add_handler(CommandHandler("start", handle_start))
-    app.add_handler(CommandHandler("help", handle_start))
+    app.add_handler(CommandHandler("help", handle_help))
     # Preferred: /agents; keep /list as a temporary alias
     app.add_handler(CommandHandler("agents", handle_list))
     app.add_handler(CommandHandler("list", handle_list))

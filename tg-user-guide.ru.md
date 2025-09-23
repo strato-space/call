@@ -210,6 +210,343 @@
   - `REQUEST_FORBIDDEN` (403) — ограничения провайдера/трассинга
 - Включите `CALL_DEBUG=1` и смотрите строки `[bot]`, чтобы понять, как бот распознал сообщение.
 
+## CLI интерфейс
+
+```bash
+py -m call.cli.main --
+usage: main.py [-h] [--json-logs] [--debug]
+               {agents,list,projects,call,prompts,reload,scan,exec,clear-session} ...
+main.py: error: the following arguments are required: cmd
+(.venv) PS C:\home\strato-space> py -m call.cli.main --help
+usage: main.py [-h] [--json-logs] [--debug]
+               {agents,list,projects,call,prompts,reload,scan,exec,clear-session} ...
+
+call — CLI for listing and invoking agents (keyword-only API)
+
+positional arguments:
+  {agents,list,projects,call,prompts,reload,scan,exec,clear-session}
+    agents (list, projects)
+                        List projects and agents (hierarchical)
+    call                Call an agent with input text
+    prompts             List prompts (flat)
+    reload              Scan repositories and rebuild repo.db
+    scan                Alias of reload (will be removed)
+    exec                Execute via payload (best for content buckets)
+    clear-session       Clear conversation session(s) for a chat/thread from SQLite
+
+options:
+  -h, --help            show this help message and exit
+  --json-logs           Emit JSON logs (overrides CALL_LOG_JSON)
+  --debug               Force DEBUG logging (overrides CALL_DEBUG)
+```
+
+```bash
+py -m call.cli.main call --target AgentFab --parse-input "31-OnlineQuestionsBabook 32-InterviewSummary" --echo
+{
+  "target": "AgentFab",
+  "input": "31-OnlineQuestionsBabook 32-InterviewSummary",
+  "context": [
+    {
+      "type": "file",
+      "name": "31-OnlineQuestionsBabook",
+      "path": "prompt/draft/31-OnlineQuestionsBabook.md",
+      "mutable": true
+    },
+    {
+      "type": "file",
+      "name": "32-InterviewSummary",
+      "path": "prompt/draft/32-InterviewSummary.md",
+      "mutable": true
+    }
+  ]
+}
+```
+
+```
+py -m call.cli.main exec --target AgentFab --parse-input "31-OnlineQuestionsBabook 32-InterviewSummary" --echo
+{
+  "target": "AgentFab",
+  "input": "31-OnlineQuestionsBabook 32-InterviewSummary",
+  "context": [
+    {
+      "type": "file",
+      "name": "31-OnlineQuestionsBabook",
+      "path": "prompt/draft/31-OnlineQuestionsBabook.md",
+      "mutable": true
+    },
+    {
+      "type": "file",
+      "name": "32-InterviewSummary",
+      "path": "prompt/draft/32-InterviewSummary.md",
+      "mutable": true
+    }
+  ]
+}
+```
+
+```bash
+py -m call.cli.main prompts
+id                                                                                   | name        
+                                                                         | agent                 | 
+project       | state | url
+
+-------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------+-----------------------+---------------+-------+------------------------------------------------------------------------------------------------
+{'prompt': 'готовить протоколы по транскрибациям StratoVoice согласно structure.md'} | {'prompt': 'готовить протоколы по транскрибациям StratoVoice согласно structure.md'} | StratoSummarizer2     | 
+FanFab        |       | https://github.com/strato-space/agent/blob/master/FanFab/StratoSummarizer2/agent.md
+TempBadPrompt                                                                        | TempBadPrompt                                                                        |                       | 
+              | ready | https://github.com/strato-space/prompt/blob/master/ready/TempBadPrompt.md  
+
+1-Categorization                                                                     | 1-Categorization                                                                     | DialogChunk           | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/1-Categorization.md
+10-HighlightOptimizationProposals                                                    | 10-HighlightOptimizationProposals                                                    | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/10-HighlightOptimizationProposals.md
+10-SelfReflection                                                                    | 10-SelfReflection                                                                    | SelfReflection        | 
+AgentFab      | draft | https://github.com/strato-space/prompt/blob/master/draft/10-SelfReflection.md
+11-ExtractUserPain                                                                   | 11-ExtractUserPain                                                                   | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/11-ExtractUserPain.md
+12-ExtractProblems                                                                   | 12-ExtractProblems                                                                   | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/12-ExtractProblems.md
+13-GroupUserQuotes                                                                   | 13-GroupUserQuotes                                                                   | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/13-GroupUserQuotes.md
+130-QAcriteriaDefinition                                                             | 130-QAcriteriaDefinition                                                             | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/130-QAcriteriaDefinition.md
+131-DocumentationReview                                                              | 131-DocumentationReview                                                              | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/131-DocumentationReview.md
+132-TestScenarioReview                                                               | 132-TestScenarioReview                                                               | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/132-TestScenarioReview.md
+133-UXIssuesDetection                                                                | 133-UXIssuesDetection                                                                | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/133-UXIssuesDetection.md
+134-QualityImprovementSuggestions                                                    | 134-QualityImprovementSuggestions                                                    | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/134-QualityImprovementSuggestions.md
+135-RegulatoryComplianceCheck                                                        | 135-RegulatoryComplianceCheck                                                        | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/135-RegulatoryComplianceCheck.md
+136-UserFeedbackAnalysis                                                             | 136-UserFeedbackAnalysis                                                             | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/136-UserFeedbackAnalysis.md
+137-QAreportGeneration                                                               | 137-QAreportGeneration                                                               | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/137-QAreportGeneration.md
+14-Stakeholderneeds                                                                  | 14-Stakeholderneeds                                                                  | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/14-Stakeholderneeds.md
+15-Featurerequest                                                                    | 15-Featurerequest                                                                    | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/15-Featurerequest.md
+16-Explicitreqs                                                                      | 16-Explicitreqs                                                                      | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/16-Explicitreqs.md
+17-Implicitreqs                                                                      | 17-Implicitreqs                                                                      | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/17-Implicitreqs.md
+18-Reqclassification                                                                 | 18-Reqclassification                                                                 | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/18-Reqclassification.md
+19-Requirementssummary                                                               | 19-Requirementssummary                                                               | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/19-Requirementssummary.md
+2-SplitByTopics                                                                      | 2-SplitByTopics                                                                      | DialogTopics          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/2-SplitByTopics.md
+20-Processextractor                                                                  | 20-Processextractor                                                                  | BusinessAnalyticAgent | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/20-Processextractor.md
+202-ContextReminder                                                                  | 202-ContextReminder                                                                  |                       | 
+              | draft | https://github.com/strato-space/prompt/blob/master/draft/202-ContextReminder.md
+203-BacklogMaster                                                                    | 203-BacklogMaster                                                                    |                       | 
+              | draft | https://github.com/strato-space/prompt/blob/master/draft/203-BacklogMaster.md
+21-Roleextractor                                                                     | 21-Roleextractor                                                                     | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/21-Roleextractor.md
+22-Systemextractor                                                                   | 22-Systemextractor                                                                   | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/22-Systemextractor.md
+23-Artifactextractor                                                                 | 23-Artifactextractor                                                                 | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/23-Artifactextractor.md
+24-Rolemodelindex                                                                    | 24-Rolemodelindex                                                                    | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/24-Rolemodelindex.md
+25-SpecificGlossary                                                                  | 25-SpecificGlossary                                                                  | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/25-SpecificGlossary.md
+3-OnlineChunkSummarization                                                           | 3-OnlineChunkSummarization                                                           | DialogOnlineAnalysis  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/3-OnlineChunkSummarization.md
+30-OnlineChunkSummarization                                                          | 30-OnlineChunkSummarization                                                          | DialogOnlineAnalysis  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/30-OnlineChunkSummarization.md
+31-OnlineQuestionsBabook                                                             | 31-OnlineQuestionsBabook                                                             | DialogOnlineAnalysis  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/31-OnlineQuestionsBabook.md
+32-InterviewSummary                                                                  | 32-InterviewSummary                                                                  | DialogSummary         | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/32-InterviewSummary.md
+33-Questioning                                                                       | 33-Questioning                                                                       | DialogPostAnalysis    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/33-Questioning.md 
+
+34-CollectUnresolvedEscalationItems                                                  | 34-CollectUnresolvedEscalationItems                                                  | DialogPostAnalysis    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/34-CollectUnresolvedEscalationItems.md
+35-Coremessage                                                                       | 35-Coremessage                                                                       | PresentMaker          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/35-Coremessage.md 
+
+36-Presentarchitect                                                                  | 36-Presentarchitect                                                                  | PresentMaker          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/36-Presentarchitect.md
+37-ContentScen                                                                       | 37-ContentScen                                                                       | PresentMaker          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/37-ContentScen.md 
+
+38-Visualslide                                                                       | 38-Visualslide                                                                       | PresentMaker          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/38-Visualslide.md 
+
+39-Controliteration                                                                  | 39-Controliteration                                                                  | PresentMaker          | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/39-Controliteration.md
+4-OnlineQuestionsBabook                                                              | 4-OnlineQuestionsBabook                                                              | DialogOnlineAnalysis  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/4-OnlineQuestionsBabook.md
+40-ChunkStakePrior                                                                   | 40-ChunkStakePrior                                                                   | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/40-ChunkStakePrior.md
+42-RolesetBuilder                                                                    | 42-RolesetBuilder                                                                    | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/42-RolesetBuilder.md
+43-DoccompletenessChecker                                                            | 43-DoccompletenessChecker                                                            | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/43-DoccompletenessChecker.md
+44-ResearchgapAnalyzer                                                               | 44-ResearchgapAnalyzer                                                               | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/44-ResearchgapAnalyzer.md
+49-Businessagentanalytic                                                             | 49-Businessagentanalytic                                                             | DialogOnlineAnalysis  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/49-BusinessagAntanalytic.md
+5-InterviewSummary                                                                   | 5-InterviewSummary                                                                   | DialogSummary         | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/5-InterviewSummary.md
+50-DiscoveryAgent                                                                    | 50-DiscoveryAgent                                                                    | DiscoveryAgent        | 
+AgentFab      | draft | https://github.com/strato-space/prompt/blob/master/draft/50-Discoveryagent.md
+6-Questioning                                                                        | 6-Questioning                                                                        | DialogPostAnalysis    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/6-Questioning.md  
+
+7-CollectUnresolvedEscalationItems                                                   | 7-CollectUnresolvedEscalationItems                                                   | DialogPostAnalysis    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/7-CollectUnresolvedEscalationItems.md
+8-ListOfInterview                                                                    | 8-ListOfInterview                                                                    | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/8-ListOfInterview.md
+9-ExtractInsights                                                                    | 9-ExtractInsights                                                                    | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/9-ExtractInsights.md
+AgentFab_Context_Rebuilder                                                           | AgentFab_Context_Rebuilder                                                           |                       | 
+              | draft | https://github.com/strato-space/prompt/blob/master/draft/AgentFab_Context_Rebuilder.md
+AIHaiku                                                                              | AIHaiku     
+                                                                         | HaikuMaster           | 
+CreativityLab | draft | https://github.com/strato-space/prompt/blob/master/draft/AIHaiku.md        
+
+ArtifactAcceptanceChecklist                                                          | ArtifactAcceptanceChecklist                                                          | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ArtifactAcceptanceChecklist.md
+ArtifactStatusTracer                                                                 | ArtifactStatusTracer                                                                 | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ArtifactStatusTracer.md
+dynamic_reasoning_methods                                                            | dynamic_reasoning_methods                                                            | BusinessAnalyticAgent | 
+AgentFab      | draft | https://github.com/strato-space/prompt/blob/master/draft/dynamic_reasoning_methods.md
+e2eMetricsCollector                                                                  | e2eMetricsCollector                                                                  | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/e2eMetricsCollector.md
+ErrorMessages                                                                        | ErrorMessages                                                                        | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ErrorMessages.md  
+
+FeedbackBot                                                                          | FeedbackBot 
+                                                                         | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/FeedbackBot.md    
+
+FeedbackLoop                                                                         | FeedbackLoop                                                                         | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/FeedbackLoop.md   
+
+FeedbackLoopIntegrator                                                               | FeedbackLoopIntegrator                                                               | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/FeedbackLoopIntegrator.md
+FeedbackReactor                                                                      | FeedbackReactor                                                                      | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/FeedbackReactor.md
+FeedbackToReqUpdater                                                                 | FeedbackToReqUpdater                                                                 | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/FeedbackToReqUpdater.md
+GapToTaskGenerator                                                                   | GapToTaskGenerator                                                                   | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/GapToTaskGenerator.md
+ImpactValidator                                                                      | ImpactValidator                                                                      | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ImpactValidator.md
+InsightToActionTracker                                                               | InsightToActionTracker                                                               | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/InsightToActionTracker.md
+LessonsLearned                                                                       | LessonsLearned                                                                       | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/LessonsLearned.md 
+
+MasterFlow                                                                           | MasterFlow  
+                                                                         | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/MasterFlow.md     
+
+NotificationHub                                                                      | NotificationHub                                                                      | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/NotificationHub.md
+PainTrendAnalyzer                                                                    | PainTrendAnalyzer                                                                    | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/PainTrendAnalyzer.md
+PatternsAndAntiPatterns                                                              | PatternsAndAntiPatterns                                                              | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/PatternsAndAntiPatterns.md
+QAFeedbackToTask                                                                     | QAFeedbackToTask                                                                     | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/QAFeedbackToTask.md
+ReqActionNotifier                                                                    | ReqActionNotifier                                                                    | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ReqActionNotifier.md
+ReqCrossTraceabilityMatrix                                                           | ReqCrossTraceabilityMatrix                                                           | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ReqCrossTraceabilityMatrix.md
+ReqErrorTrendAnalyzer                                                                | ReqErrorTrendAnalyzer                                                                | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ReqErrorTrendAnalyzer.md
+ReqSelfReviewLoop                                                                    | ReqSelfReviewLoop                                                                    | UxResearcherReq       | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/ReqSelfReviewLoop.md
+RequirementTraceabilityQA                                                            | RequirementTraceabilityQA                                                            | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/RequirementTraceabilityQA.md
+RiskAndResponsibilityMap                                                             | RiskAndResponsibilityMap                                                             | UxManager             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RiskAndResponsibilityMap.md
+RoleCrossTraceLinker                                                                 | RoleCrossTraceLinker                                                                 | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RoleCrossTraceLinker.md
+RoleDynamicVisualizer                                                                | RoleDynamicVisualizer                                                                | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RoleDynamicVisualizer.md
+RoleFeedbackIntegrator                                                               | RoleFeedbackIntegrator                                                               | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RoleFeedbackIntegrator.md
+RoleGapNotifier                                                                      | RoleGapNotifier                                                                      | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RoleGapNotifier.md
+RoleModelAutoUpdater                                                                 | RoleModelAutoUpdater                                                                 | UxRoleModelExtract    | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/RoleModelAutoUpdater.md
+self-check                                                                           | self-check  
+                                                                         | BusinessAnalyticAgent | 
+AgentFab      | draft | https://github.com/strato-space/prompt/blob/master/draft/self-check.md     
+
+SelfImproveChecklist                                                                 | SelfImproveChecklist                                                                 | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/SelfImproveChecklist.md
+SelfReviewChecklist                                                                  | SelfReviewChecklist                                                                  | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/SelfReviewChecklist.md
+SolutionPatternRecommender                                                           | SolutionPatternRecommender                                                           | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/SolutionPatternRecommender.md
+StratoSammary                                                                        | StratoSammary                                                                        | Stratoslav            | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/StratoSammary.md  
+
+TrendFeedbackAggregator                                                              | TrendFeedbackAggregator                                                              | UxQA                  | 
+FanFab        | draft | https://github.com/strato-space/prompt/blob/master/draft/TrendFeedbackAggregator.md
+UserHint                                                                             | UserHint    
+                                                                         | UxCreator             | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/UserHint.md       
+
+UserQuotePool                                                                        | UserQuotePool                                                                        | UxResearcherInsights  | 
+UxFab         | draft | https://github.com/strato-space/prompt/blob/master/draft/UserQuotePool.md  
+
+```
+
+## Тесты
+
+```bash
+pytest call
+====================================== test session starts ======================================= 
+platform win32 -- Python 3.13.7, pytest-8.4.2, pluggy-1.6.0
+benchmark: 5.1.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: C:\home\strato-space\call
+configfile: pytest.ini
+plugins: anyio-4.10.0, benchmark-5.1.0, cov-7.0.0
+collected 108 items
+
+call\app\tests\test_actions_api_unit.py .....                                               [  4%] 
+call\app\tests\test_bot_filters.py ....                                                     [  8%] 
+call\app\tests\test_bot_payload_builder.py ..                                               [ 10%] 
+call\app\tests\test_bot_plain_text.py .                                                     [ 11%] 
+call\app\tests\test_bot_token_prompt_context.py ..                                          [ 12%] 
+call\app\tests\test_builder_config.py ....                                                  [ 16%] 
+call\app\tests\test_call_async_selection.py ...                                             [ 19%] 
+call\app\tests\test_cli_normalization_and_payload.py ...                                    [ 22%] 
+call\app\tests\test_cli_payload_builder.py ..                                               [ 24%] 
+call\app\tests\test_cli_prompts_and_exec.py ..................                              [ 40%]
+call\app\tests\test_discovery.py ...                                                        [ 43%]
+call\app\tests\test_html_sanitizer.py ...                                                   [ 46%]
+call\app\tests\test_init_compat.py .                                                        [ 47%]
+call\app\tests\test_list_agents.py .....                                                    [ 51%]
+call\app\tests\test_mcp_config_yaml.py .                                                    [ 52%]
+call\app\tests\test_model_settings.py .......                                               [ 59%]
+call\app\tests\test_payload_wildcard_tokens.py .....                                        [ 63%]
+call\app\tests\test_prompt_resolution_and_merge.py .....                                    [ 68%]
+call\app\tests\test_prompts_listing.py ....                                                 [ 72%]
+call\app\tests\test_send_digest_notification.py ...                                         [ 75%]
+call\app\tests\test_session_id.py ...                                                       [ 77%]
+call\app\tests\test_target_interpretation.py ....                                           [ 81%]
+call\app\tests\test_target_resolution_via_target.py .....                                   [ 86%]
+call\app\tests\test_telegram_bot_handlers.py .........                                      [ 94%]
+call\app\tests\test_telegram_bot_logging.py .                                               [ 95%]
+call\app\tests\test_telegram_send.py ..                                                     [ 97%]
+call\app\tests\test_telegram_text.py ..                                                     [ 99%] 
+call\app\tests\test_welcome_html.py .                                                       [100%]
+
+====================================== 108 passed in 31.76s ====================================== 
+
+```
+
 ## Ссылки
 
 - Источник истины по поведению: `call/README.md`.
