@@ -171,6 +171,29 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
 
+# Simple Agent factory/cache to avoid re-instantiating identical Agents within a run
+AGENT_CACHE: dict[str, Agent] = {}
+
+def get_or_create_agent(*, name: str, instructions: str, model: str, model_settings: ModelSettings, tools: list, mcp_servers: list) -> Agent:
+    try:
+        if name in AGENT_CACHE:
+            return AGENT_CACHE[name]
+    except Exception:
+        pass
+    agent = Agent(
+        name=name,
+        instructions=instructions,
+        model=model,
+        model_settings=model_settings,
+        tools=tools,
+        mcp_servers=mcp_servers,
+    )
+    try:
+        AGENT_CACHE[name] = agent
+    except Exception:
+        pass
+    return agent
+
 def _model_settings_from_attributes(attrs: Dict[str, Any] | Any | None) -> ModelSettings:
     """
     Build ModelSettings from either:
@@ -2245,9 +2268,9 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                                 debug_print("[tools]", f"Sub-cfg instructions preview for {sub_cfg.name or sub_name}:\n" + prev)
                             except Exception:
                                 pass
-                        sub_agent = Agent(
-                            name=sub_cfg.name or sub_name,
-                            instructions=sub_cfg.instructions or "",
+                        sub_agent = get_or_create_agent(
+                            name=(sub_cfg.name or sub_name),
+                            instructions=(sub_cfg.instructions or ""),
                             model=cfg.model,
                             model_settings=_model_settings_from_attributes(sub_cfg),
                             tools=base_tools_snapshot,
@@ -2327,6 +2350,23 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                                     return result
 
                         except Exception:
+                            pass
+
+                        # Finally, add the tool to the toolset
+                        tools.append(tool)
+                        try:
+                            debug_print("[tools]", f"Tool added: {sub_name} (resolved={sub_cfg.name or '?'}); tools_count={len(tools)}")
+                        except Exception:
+                            pass
+                    except Exception:
+                        try:
+                            from call.app.utils.common import format_exception_text as _fmt
+                        except Exception:
+                            _fmt = None
+                        try:
+                            debug_print("[tools]", f"Error building tool for {sub_name}: " + (_fmt(Exception()) if _fmt else ""))
+                        except Exception:
+                            pass
         except Exception:
             pass
 

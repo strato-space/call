@@ -120,7 +120,7 @@ def test_list_agentfab_contains_core_agents(monkeypatch):
                 {"type": "agent", "id": "", "name": "BusinessAnalyticAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"},
                 {"type": "agent", "id": "", "name": "SelfReflection", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/SelfReflection/agent.yaml"},
                 {"type": "agent", "id": "", "name": "DiscoveryAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/DiscoveryAgent/agent.yaml"},
-                {"type": "agent", "id": "", "name": "StratoFormater", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.yaml"},
+                {"type": "agent", "id": "", "name": "StratoFormatter", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.md"},
             ]}
         ],
         raising=True,
@@ -129,6 +129,6 @@ def test_list_agentfab_contains_core_agents(monkeypatch):
     tree = mod.list(project="AgentFab")
     assert len(tree) == 1
     agents = {a["name"] for a in (tree[0].get("agents") or [])}
-    expected = {"BusinessAnalyticAgent", "SelfReflection", "DiscoveryAgent", "StratoFormater"}
+    expected = {"BusinessAnalyticAgent", "SelfReflection", "DiscoveryAgent", "StratoFormatter"}
     # At least 4 required agents present
     assert expected.issubset(agents)
