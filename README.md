@@ -169,11 +169,11 @@ python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target 33-Questioning --echo
 ```
 
-#### Parsed vs raw input (New)
+### Parsed vs raw input (New)
 
-  - `--input` — passes the text as-is, no token parsing and no context building.
-  - `--parse-input` — uses the shared Telegram parser to build a JSON payload with predictable order (target, replay, input, context). Tokens inside the text (like `@3-OnlineChunkSummarization`) are resolved via the DB and may add `context` items.
-  - Mutually exclusive: only one of `--input` or `--parse-input` may be provided.
+- `--input` — passes the text as-is, no token parsing and no context building.
+- `--parse-input` — uses the shared Telegram parser to build a JSON payload with predictable order (target, replay, input, context). Tokens inside the text (like `@3-OnlineChunkSummarization`) are resolved via the DB and may add `context` items.
+- Mutually exclusive: only one of `--input` or `--parse-input` may be provided.
 
 - Echo-only preview (New):
   - When `--echo` is given, the CLI does not execute the pipeline. It prints:
