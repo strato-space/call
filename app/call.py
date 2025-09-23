@@ -2199,8 +2199,10 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 for sub_name, sub_desc in entries:
                     try:
                         debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
+                        # AgentFab may resolve cross-project; other projects restricted to own scope
+                        _proj_scope = None if ((cfg.name or "").strip() == "AgentFab") else (cfg.project or None)
                         sub_cfg, sub_err = _build_cfg(
-                            project=(cfg.project or None),
+                            project=_proj_scope,
                             agent=None,
                             prompt=None,
                             target=sub_name,
@@ -2213,6 +2215,13 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             except Exception:
                                 pass
                             continue
+                        # Skip adding self as a tool if resolution points back to the current agent
+                        try:
+                            if (sub_cfg.name or "").strip() == (cfg.name or "").strip():
+                                debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({cfg.name})")
+                                continue
+                        except Exception:
+                            pass
                         try:
                             debug_print("[tools]", f"Sub-cfg built: name={sub_cfg.name} prompt={sub_cfg.prompt_override} instr_len={len(sub_cfg.instructions or '')}")
                         except Exception:
@@ -2245,7 +2254,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                             mcp_servers=mcp_servers,
                         )
                         tool = sub_agent.as_tool(
-                            tool_name=sub_cfg.name or sub_name,
+                            tool_name=sub_name,
                             tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
                         )
                         # Wrap FunctionTool invocation to log to DEBUG and Telegram (start -> completed)
@@ -2317,28 +2326,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                                         pass
                                     return result
 
-                                tool.on_invoke_tool = _wrapped_on_invoke
                         except Exception:
-                            pass
-                        tools.append(tool)
-                        try:
-                            debug_print("[tools]", f"Tool added: {sub_cfg.name or sub_name}; tools_count={len(tools)}")
-                        except Exception:
-                            pass
-                    except Exception:
-                        try:
-                            from call.app.utils.common import format_exception_text as _fmt
-                        except Exception:
-                            _fmt = None
-                        try:
-                            debug_print("[tools]", f"Error building tool for {sub_name}: " + (_fmt(Exception()) if _fmt else ""))
-                        except Exception:
-                            pass
-            elif _build_cfg and not entries:
-                try:
-                    debug_print("[tools]", "No tool entries found in cfg.attributes")
-                except Exception:
-                    pass
         except Exception:
             pass
 
