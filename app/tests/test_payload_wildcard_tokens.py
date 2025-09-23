@@ -60,3 +60,63 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     assert names == ["31-OnlineQuestionsBabook", "32-InterviewSummary"]
     paths = [r["path"].replace("\\", "/") for r in ctx]
     assert paths == ["prompt/draft/31-OnlineQuestionsBabook.md", "prompt/draft/32-InterviewSummary.md"]
+
+
+def test_build_input_payload_wildcard_no_matches(monkeypatch):
+    from call.lib import api as call_api
+
+    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+        # No items in DB
+        return []
+
+    monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
+
+    payload_json, payload_dict = call_api.build_input_payload(target="AgentFab", main_text="@99-*")
+    obj = json.loads(payload_json)
+    assert obj["target"] == "AgentFab"
+    # No context array when nothing matched
+    assert obj.get("context") is None or obj.get("context") == []
+
+
+def test_build_input_payload_deduplicate_refs(monkeypatch):
+    from call.lib import api as call_api
+
+    items = [
+        {"prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md"},
+    ]
+
+    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+        if prompt:
+            return [it for it in items if it["prompt"] == prompt]
+        return items
+
+    monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
+
+    # Provide both exact and wildcard that resolve to the same item
+    payload_json, _ = call_api.build_input_payload(target="AgentFab", main_text="31-OnlineQuestionsBabook 31-*")
+    obj = json.loads(payload_json)
+    ctx = obj.get("context")
+    # Expect only one entry
+    assert isinstance(ctx, list) and len(ctx) == 1
+    assert ctx[0]["name"] == "31-OnlineQuestionsBabook"
+
+
+def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
+    from call.lib import api as call_api
+
+    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+        items = [
+            {"prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md"},
+        ]
+        if prompt:
+            return [it for it in items if it["prompt"] == prompt]
+        return items
+
+    monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
+
+    # Token includes .markdown suffix and leading '@'
+    payload_json, _ = call_api.build_input_payload(target="AgentFab", main_text="@32-InterviewSummary.markdown")
+    obj = json.loads(payload_json)
+    ctx = obj.get("context")
+    assert isinstance(ctx, list) and len(ctx) == 1
+    assert ctx[0]["name"] == "32-InterviewSummary"
