@@ -2004,6 +2004,10 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
     """
     mcp_servers_started: list[Any] = []
     if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
+        try:
+            debug_print("[mcp]", f"Config contains {len(cfg_yaml.get('mcpServers') or {})} server entries")
+        except Exception:
+            pass
 
         async def _open_stdio(name: str, spec: dict, timeout: int):
             cmd = (spec or {}).get("command")
@@ -2018,12 +2022,20 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
                     client_session_timeout_seconds=timeout,
                 )
             )
+            try:
+                debug_print("[mcp]", f"Started MCP stdio server '{name}' with command={cmd} args={args} timeout={timeout}s")
+            except Exception:
+                pass
             return server
 
         for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
             if not isinstance(spec, dict):
                 continue
             if not spec.get("enabled", False):
+                try:
+                    debug_print("[mcp]", f"Skipping '{name}': enabled=false")
+                except Exception:
+                    pass
                 continue
             if "command" in spec:
                 timeout = int(spec.get("timeoutSeconds", 120))
@@ -2050,9 +2062,17 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
                         mcp_servers_started.append(srv)
                 else:
                     logging.info("MCP '%s' has serverUrl but no bridge.command; skipping.", name)
+                    try:
+                        debug_print("[mcp]", f"Skipping remote '{name}': bridge.command missing")
+                    except Exception:
+                        pass
             else:
                 if "serverUrl" in spec:
                     logging.info("MCP '%s' is remote (%s) but no bridge is defined; skipping.", name, spec.get("serverUrl"))
+                    try:
+                        debug_print("[mcp]", f"Skipping remote '{name}': no bridge for serverUrl={spec.get('serverUrl')}")
+                    except Exception:
+                        pass
     return mcp_servers_started
 
 
@@ -2089,13 +2109,29 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             if p.exists():
                 cfg_yaml = _load_yaml(p)
                 _enable = str(os.environ.get("CALL_ENABLE_MCP", "")).strip().lower() in ("1", "true", "yes", "on")
+                try:
+                    debug_print("[mcp]", f"CALL_ENABLE_MCP={_enable} config_path={cfg_path}")
+                except Exception:
+                    pass
                 if _enable:
                     try:
                         mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
-                    except Exception:
+                        try:
+                            debug_print("[mcp]", f"MCP started: {[getattr(s,'name',None) or getattr(s,'id',None) for s in (mcp_servers_started or [])]}")
+                        except Exception:
+                            pass
+                    except Exception as e:
                         mcp_servers_started = []
+                        try:
+                            debug_print("[mcp]", f"Error while starting MCP servers: {type(e).__name__}: {e}")
+                        except Exception:
+                            pass
         except Exception:
             cfg_yaml = None
+            try:
+                debug_print("[mcp]", "No MCP config loaded (missing file or parse error)")
+            except Exception:
+                pass
 
         # Build tools based on cfg.attributes.vs (resolve via vector store index)
         tools = [WebSearchTool()]
@@ -2351,6 +2387,16 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             # Explicitly disable routing and sessions
             selected_chat_id = None
             selected_thread_id = None
+
+        # If nothing selected yet, fall back to .env defaults (CLI without --chat-id)
+        if (selected_chat_id is None) and (TELEGRAM_CHAT_ID is not None):
+            try:
+                debug_print("[app]", f"No chat selected by config; falling back to TELEGRAM_CHAT_ID={TELEGRAM_CHAT_ID}")
+            except Exception:
+                pass
+            selected_chat_id = TELEGRAM_CHAT_ID
+        if (selected_thread_id is None) and (TELEGRAM_THREAD_ID is not None):
+            selected_thread_id = TELEGRAM_THREAD_ID
 
         # Now that selected_chat_id is finalized, create or skip SQLite session
         if (selected_chat_id is not None):

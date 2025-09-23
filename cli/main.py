@@ -598,6 +598,25 @@ def main() -> int:
             if err:
                 _emit_output(err, getattr(args, "format", "json"))
                 return 1
+            # Preflight start to initialize MCP and emit logs, then exit without a turn
+            try:
+                import asyncio as _asyncio
+                from call.app.call import build_and_run_agent as _build_and_run_agent
+
+                async def _preflight_start():
+                    try:
+                        # Enter and exit immediately; this triggers MCP init and logs
+                        async with _build_and_run_agent(cfg, user_input=""):
+                            return
+                    except Exception:
+                        # Do not fail CLI on preflight errors; continue to print cfg
+                        return
+
+                _asyncio.run(_preflight_start())
+            except Exception:
+                # If app layer missing or import error, still print cfg below
+                pass
+
             # Emit compact snapshot suitable for MCP preflight
             try:
                 from dataclasses import asdict as _asdict
