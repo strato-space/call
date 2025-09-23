@@ -83,7 +83,7 @@ model: gpt-5
 
 model-params-gpt-5:
   reasoning:
-    effort: medium
+    effort: low
 
 model-params-gpt-4.1:
   temperature: 0.2
@@ -174,6 +174,23 @@ python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target
 - `--input` — passes the text as-is, no token parsing and no context building.
 - `--parse-input` — uses the shared Telegram parser to build a JSON payload with predictable order (target, replay, input, context). Tokens inside the text (like `@3-OnlineChunkSummarization`) are resolved via the DB and may add `context` items.
 - Mutually exclusive: only one of `--input` or `--parse-input` may be provided.
+
+#### Wildcard tokens
+
+- You can reference prompts using wildcard patterns in tokens, for example: `@31-*` or `32-*`.
+- Behavior:
+  - If a token contains `*`, the CLI lists prompts from the repo DB and applies a regex filter to find matches.
+  - For each wildcard token, the first match is added to `context` as a file reference: `{ type: "file", name, path, mutable: true }`.
+  - Multiple wildcard tokens are supported; results are de-duplicated when multiple tokens point to the same prompt.
+  - The tokenizer strips leading `@` and removes `.md`/`.markdown` suffixes automatically.
+- Examples:
+  ```powershell
+  # Single wildcard → one context item
+  python -m call.cli.main call --target AgentFab --parse-input "@31-*" --echo
+
+  # Multiple wildcards → multiple context items
+  python -m call.cli.main call --target AgentFab --parse-input "31-* 32-*" --echo
+  ```
 
 - Echo-only preview (New):
   - When `--echo` is given, the CLI does not execute the pipeline. It prints:
