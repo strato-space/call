@@ -37,12 +37,12 @@
 
 ## Как изменить состав или инстукции AgentFab
 
-- [Карточка AgentFab в Prompt Repo](https://github.com/strato-space/prompt/blob/main/AgentFab/AgentFab.md)
-- [Карточка StratoFormatter](https://github.com/strato-space/prompt/blob/main/AgentFab/StratoFormatter.md)
+- [Карточка AgentFab в Prompt Repo](https://github.com/strato-space/prompt/blob/main/AgentFab/project.md)
+- [Карточка StratoFormatter](https://github.com/strato-space/prompt/blob/main/AgentFab/StratoFormater/agent.md)
 - [Конексный бокс BusinessAnalyticAgent](https://github.com/strato-space/prompt/tree/main/AgentFab/ContentBoxes/DialogOnlineAnalysis/content)
 - [Промпт 49-BusinessAnalyticAgent](https://github.com/strato-space/prompt/blob/main/draft/49-BusinessAnalyticAgent.md)
 - [Промпт 50-Discoveryagent.md](https://github.com/strato-space/prompt/blob/main/draft/50-Discoveryagent.md)
-- [Выключенный SelfReflection](https://github.com/strato-space/prompt/blob/main/AgentFab/SelfReflection/agent.md)
+- [Off: Выключенный SelfReflection](https://github.com/strato-space/prompt/blob/main/AgentFab/SelfReflection/agent.md)
 
 
 ## Как добавить новый пропмп в цепочку в AgentFab
