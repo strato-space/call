@@ -6,7 +6,6 @@
 logs/*
 !logs/.gitkeep
 *.log
-wallet/
 news/
 node_modules/
 vendor/
