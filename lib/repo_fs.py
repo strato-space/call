@@ -342,6 +342,11 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
     roots = [Path(prepo) / "ready", Path(prepo) / "draft"]
     # Aggregate counts per project
     per_project: dict[str, dict] = {}
+    # Aggregate counts per root (ready/draft) for directory summary
+    per_root_counts: dict[str, int] = {"ready": 0, "draft": 0}
+    # Additional aggregations for output
+    per_project_agents_prompt_repo: dict[str, int] = {}
+    per_project_has_project_card: set[str] = set()
     import os as _os
     GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
     GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
@@ -355,7 +360,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
         rel_with_repo = f"prompt/{rel_inside}"
         url = f"{GITHUB_ORG}/prompt/blob/{GITHUB_BRANCH}/{rel_inside}" if (GITHUB_ORG and rel_inside) else ""
         return rel_with_repo, url
-    # Also scan top-level project directories in prompt repo for project.md
+    # Phase 1A: scan top-level project directories in prompt repo for project.md (hierarchical)
     try:
         for child in Path(prepo).iterdir():
             if not child.is_dir() or child.name.startswith('.') or child.name in ("ready", "draft"):
@@ -388,9 +393,91 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     card=relp,
                 )
                 scanned += 1
+                try:
+                    per_project_has_project_card.add(proj_name)
+                except Exception:
+                    pass
     except Exception:
         pass
 
+    # Phase 1B: scan hierarchical agent cards under prompt/<Project>/**/agent.md (exclude ready/draft)
+    try:
+        for agent_md in Path(prepo).rglob("agent.md"):
+            try:
+                # Skip ready/draft trees
+                parts = agent_md.resolve().parts
+                if any((p.lower() == "ready" or p.lower() == "draft") for p in parts):
+                    continue
+                # Derive project from first segment under prepo
+                rel = agent_md.resolve().relative_to(Path(prepo).resolve())
+                proj_name = rel.parts[0] if len(rel.parts) >= 1 else ""
+            except Exception:
+                proj_name = ""
+            # Read agent name and metadata
+            ag_name = _read_agent_name(agent_md, default=agent_md.parent.name)
+            meta = _read_prompt_metadata(agent_md) or {}
+            eng = str(meta.get("engine") or "")
+            orch = str(meta.get("orchestration") or "")
+            goal = str(meta.get("goal") or meta.get("purpose") or "")
+            prompts_list: list[str] = []
+            try:
+                pv = meta.get("prompts") or []
+                if isinstance(pv, dict):
+                    prompts_list = [str(k) for k in pv.keys()]
+                elif isinstance(pv, builtins.list):
+                    prompts_list = [str(k) for k in pv]
+            except Exception:
+                prompts_list = []
+            relp, url = _rel_url(agent_md)
+            _upsert_row(
+                cur,
+                target=ag_name,
+                project=str(meta.get("project") or proj_name or ""),
+                agent=ag_name,
+                prompt="",
+                abs_path=str(agent_md),
+                state="",
+                engine=eng,
+                orchestration=orch,
+                type="agent",
+                rel_path=relp,
+                url=url,
+                goal=goal,
+                card=relp,
+            )
+            scanned += 1
+            try:
+                _pname = str(meta.get("project") or proj_name or "")
+                if _pname:
+                    per_project_agents_prompt_repo[_pname] = int(per_project_agents_prompt_repo.get(_pname, 0)) + 1
+            except Exception:
+                pass
+            # Insert placeholder prompts declared on the agent card
+            for pr_id in (prompts_list or []):
+                try:
+                    _upsert_row(
+                        cur,
+                        target=str(pr_id),
+                        project=str(meta.get("project") or proj_name or ""),
+                        agent=ag_name,
+                        prompt=str(pr_id),
+                        abs_path=str(agent_md),
+                        state="",
+                        engine=eng,
+                        orchestration=orch,
+                        type="prompt",
+                        rel_path=relp,
+                        url=url,
+                        goal="",
+                        card="",
+                    )
+                    scanned += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Phase 2: scan flat trees ready/ and draft/ for prompt cards ONLY (policy)
     for root in roots:
         if not root.exists():
             continue
@@ -402,7 +489,8 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 files = []
             debug_print("[repo.scan] prompt root", f"path={root}", f"files={len(files)}")
             for p in files:
-                proj = ""; agent = ""; pr_id = ""; eng = ""; orch = ""
+                proj = ""; agent = ""; pr_id = ""; eng = ""; orch = ""; goal = ""
+                # Treat every file in ready/draft as a prompt card
                 try:
                     meta = _read_prompt_metadata(p) or {}
                     if not meta:
@@ -418,7 +506,13 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 except Exception:
                     pr_id = p.stem
                 target = pr_id
-                state = "draft" if ("draft" in str(p).lower()) else "ready"
+                # Determine state based on root directory name
+                try:
+                    state = root.name.lower()
+                    if state not in ("ready", "draft"):
+                        state = "ready" if ("ready" in str(root).lower()) else ("draft" if ("draft" in str(root).lower()) else "ready")
+                except Exception:
+                    state = "ready" if ("ready" in str(p).lower()) else "draft"
                 relp, url = _rel_url(p)
                 _upsert_row(
                     cur,
@@ -437,6 +531,12 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     card=relp,
                 )
                 scanned += 1
+                # Aggregate per-root counts (ready/draft)
+                try:
+                    if state in per_root_counts:
+                        per_root_counts[state] = int(per_root_counts.get(state, 0)) + 1
+                except Exception:
+                    pass
                 # Aggregate per-project counts
                 try:
                     if proj:
@@ -446,16 +546,42 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     pass
         except Exception:
             continue
-    # Emit directories summary for projects we saw
+    # Emit directories summary for REAL directories under prompt root only (no virtual)
     try:
-        for proj, counts in per_project.items():
+        all_projects: set[str] = set(per_project.keys()) | set(per_project_agents_prompt_repo.keys()) | set(per_project_has_project_card)
+        for proj in sorted(all_projects):
             try:
-                directories.append({
+                pdir = Path(prepo) / proj
+                if not pdir.exists() or not pdir.is_dir():
+                    continue
+                counts = per_project.get(proj, {})
+                total_prompts = int(counts.get("ready", 0)) + int(counts.get("draft", 0))
+                entry = {
                     "project": proj,
-                    "path": str(Path(prepo) / proj),
-                    "ready": int(counts.get("ready", 0)),
-                    "draft": int(counts.get("draft", 0)),
-                    "prompts": int(counts.get("ready", 0)) + int(counts.get("draft", 0)),
+                    "path": str(pdir),
+                    "prompts": total_prompts,
+                }
+                # Indicate presence of project card (project.md) in this directory
+                has_proj_card = (proj in per_project_has_project_card)
+                if has_proj_card:
+                    entry["project_card"] = True
+                    # Include agents count discovered hierarchically under prompt/<Project>/** if > 0
+                    agc = int(per_project_agents_prompt_repo.get(proj, 0))
+                    if agc > 0:
+                        entry["agents_project"] = agc
+                directories.append(entry)
+            except Exception:
+                continue
+        # Also include ready/ and draft/ directories with total prompt counts if they exist
+        for state_name in ("ready", "draft"):
+            try:
+                sdir = Path(prepo) / state_name
+                if not sdir.exists() or not sdir.is_dir():
+                    continue
+                directories.append({
+                    "project": state_name,
+                    "path": str(sdir),
+                    "prompts": int(per_root_counts.get(state_name, 0)),
                 })
             except Exception:
                 continue
