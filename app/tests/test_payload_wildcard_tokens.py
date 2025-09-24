@@ -1,3 +1,5 @@
+"""Validate wildcard token handling when building input payloads for AgentFab tools."""
+
 import json
 import pytest
 

@@ -388,39 +388,300 @@ def _attrs_to_yaml_text(attrs) -> str | None:
 
 
 def debug_dump_cfg_preview(cfg) -> None:
-    """Debug: dump cfg.attributes as YAML and preview instructions (truncated).
-
-    Keep logging noise reasonable and avoid inline code in runtime functions.
-    """
+    """Debug: dump cfg attributes and instruction preview to the log."""
     try:
-        ytxt = _attrs_to_yaml_text(getattr(cfg, 'attributes', None))
+        ytxt = _attrs_to_yaml_text(getattr(cfg, "attributes", None))
         if ytxt:
             debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
     except Exception:
         pass
-    # Print instructions preview only if not provided inside attributes as 'instructions'
+
     try:
-        attrs_has_instr = isinstance(getattr(cfg, 'attributes', None), dict) and ('instructions' in (cfg.attributes or {}))
+        attrs_has_instr = isinstance(getattr(cfg, "attributes", None), dict) and ("instructions" in (cfg.attributes or {}))
     except Exception:
         attrs_has_instr = False
-    if not attrs_has_instr:
+
+    if attrs_has_instr:
+        return
+
+    try:
+        instr = getattr(cfg, "instructions", "") or ""
+        preview = instr[:4096] + ("…" if len(instr) > 4096 else "")
+        debug_print("[app]", "Agent instructions len=", str(len(instr)))
+        debug_print("[app]", "Agent instructions preview=\n" + preview)
+    except Exception:
+        pass
+
+
+async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict | None]:
+    """Load MCP configuration (if present) and start enabled servers."""
+    cfg_yaml: dict | None = None
+    servers: list[Any] = []
+    try:
+        cfg_path = os.environ.get("CALL_MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
+        path = Path(cfg_path)
+        if path.exists():
+            cfg_yaml = _load_yaml(path)
+            enabled = str(os.environ.get("CALL_ENABLE_MCP", "")).strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                debug_print("[mcp]", f"CALL_ENABLE_MCP={enabled} config_path={cfg_path}")
+            except Exception:
+                pass
+            if enabled:
+                try:
+                    servers = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
+                    try:
+                        names = [getattr(s, "name", None) or getattr(s, "id", None) for s in servers]
+                        debug_print("[mcp]", f"MCP started: {names}")
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    servers = []
+                    try:
+                        debug_print("[mcp]", f"Error while starting MCP servers: {type(exc).__name__}: {exc}")
+                    except Exception:
+                        pass
+    except Exception:
+        cfg_yaml = None
         try:
-            _instr = getattr(cfg, 'instructions', "") or ""
-            _instr_preview = _instr[:4096] + ("…" if len(_instr) > 4096 else "")
-            debug_print("[app]", "Agent instructions len=", str(len(_instr)))
-            debug_print("[app]", "Agent instructions preview=\n" + _instr_preview)
+            debug_print("[mcp]", "No MCP config loaded (missing file or parse error)")
         except Exception:
             pass
-            
+    return servers, cfg_yaml
+
+
+async def _base_tools_for_cfg(cfg) -> list[Any]:
+    """Return the default tool list for a cfg."""
+    tools: list[Any] = [WebSearchTool()]
+    try:
+        attrs = getattr(cfg, "attributes", {}) or {}
+        vs_ids = await resolve_vector_stores(attrs.get("vs"))
+        if vs_ids:
+            tools.append(FileSearchTool(vector_store_ids=vs_ids))
+    except Exception:
+        pass
+    return tools
+
+
+def _collect_tool_entries(cfg) -> list[tuple[str, str]]:
+    """Extract agent/prompt entries that should be exposed as tools."""
+    entries: list[tuple[str, str]] = []
+    attrs = getattr(cfg, "attributes", {}) if hasattr(cfg, "attributes") else {}
+    if not isinstance(attrs, dict):
+        return entries
+
+    ag_map = attrs.get("agents")
+    if isinstance(ag_map, dict):
+        for name, desc in ag_map.items():
+            try:
+                entries.append((str(name), "" if desc is None else str(desc)))
+            except Exception:
+                continue
+
+    pr_map = attrs.get("prompts")
+    try:
+        debug_print(
+            "[tools]",
+            f"Scanning project attributes for agents/prompts; has_agents={isinstance(ag_map, dict)} has_prompts={isinstance(pr_map, (dict, list))}",
+        )
+    except Exception:
+        pass
+
+    if isinstance(pr_map, dict):
+        for name, desc in pr_map.items():
+            try:
+                entries.append((str(name), "" if desc is None else str(desc)))
+            except Exception:
+                continue
+    elif isinstance(pr_map, list):
+        for name in pr_map:
+            try:
+                entries.append((str(name), ""))
+            except Exception:
+                continue
+
+    return entries
+
+
+def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
+    """Replace FunctionTool handler to emit debug/Telegram logs."""
+    if not isinstance(tool, FunctionTool):
+        return
+
+    orig_invoke = tool.on_invoke_tool
+
+    async def _wrapped_on_invoke(ctx, input: str):
+        try:
+            preview = (input or "")
+            if len(preview) > 800:
+                preview = preview[:797] + "..."
+            debug_print("[tool-call]", f"{getattr(sub_cfg, 'name', '') or sub_name}", preview)
+        except Exception:
+            pass
+
+        tg_msg = None
+        try:
+            if selected_chat_id is not None:
+                await init_bot()
+                title = f"🛠️ <b>{clean_html_for_telegram(getattr(sub_cfg, 'name', '') or sub_name)}</b>"
+                caller = f"<i>from</i> <b>{clean_html_for_telegram(getattr(cfg, 'name', '') or '')}</b>"
+                body = ""
+                try:
+                    import json as _json, html as _html
+
+                    js = _json.loads(input) if input else {}
+                    pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                    if len(pretty) > 1500:
+                        pretty = pretty[:1497] + "..."
+                    body = f"\n<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
+                except Exception:
+                    esc = clean_html_for_telegram(input or "")
+                    if len(esc) > 1500:
+                        esc = esc[:1497] + "..."
+                    body = f"\n<code>{esc}</code>"
+                text = f"{title} {caller}{body}"
+                tg_msg = await safe_send_message(
+                    chat_id=selected_chat_id,
+                    message_thread_id=selected_thread_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception:
+            tg_msg = None
+
+        result = await orig_invoke(ctx, input)
+
+        if tg_msg is not None:
+            try:
+                from telegram.error import BadRequest as _BadReq
+
+                await init_bot()
+                try:
+                    import html as _html
+
+                    rtxt = str(result)
+                    if len(rtxt) > 1200:
+                        rtxt = rtxt[:1197] + "..."
+                    rtxt = _html.escape(rtxt)
+                    updated = f"{title} {caller}\n<b>✓ Completed</b>\n<pre><code>{rtxt}</code></pre>"
+                    updated = clean_html_for_telegram(updated)
+                    await safe_edit_message_text(
+                        chat_id=tg_msg.chat_id,
+                        message_id=tg_msg.message_id,
+                        text=updated,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except _BadReq:
+                    await safe_send_message(
+                        chat_id=tg_msg.chat_id,
+                        text=f"{title} {caller} — ✓ Completed",
+                        parse_mode=ParseMode.HTML,
+                    )
+            except Exception:
+                pass
+
+        try:
+            debug_print("[tool-call]", f"{getattr(sub_cfg, 'name', '') or sub_name}", "✓ completed")
+        except Exception:
+            pass
+        return result
+
+    try:
+        tool.on_invoke_tool = _wrapped_on_invoke
+    except Exception:
+        pass
+
+
+def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot: list[Any], mcp_servers: list[Any], build_cfg):
+    """Create a sub-agent tool and return it (or None on failure)."""
+    try:
+        debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
+    except Exception:
+        pass
+
+    project_scope = None if (str(getattr(cfg, "name", "")).strip() == "AgentFab") else (cfg.project or None)
+    try:
+        sub_cfg, sub_err = build_cfg(
+            project=project_scope,
+            agent=None,
+            prompt=None,
+            target=sub_name,
+            input=None,
+            merge=bool(getattr(cfg, "merge", False)),
+        )
+    except Exception as exc:
+        sub_cfg, sub_err = None, exc
+
+    if sub_err or not sub_cfg:
+        try:
+            desc = getattr(sub_err, "description", None)
+            if isinstance(sub_err, dict):
+                desc = sub_err.get("description")
+            debug_print("[tools]", f"Skip entry {sub_name}: error={desc or sub_err}")
+        except Exception:
+            pass
+        return None
+
+    try:
+        if (str(getattr(sub_cfg, "name", "")).strip() or "") == (str(getattr(cfg, "name", "")).strip() or ""):
+            debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({cfg.name})")
+            return None
+    except Exception:
+        pass
+
+    try:
+        debug_print(
+            "[tools]",
+            f"Sub-cfg built: name={getattr(sub_cfg, 'name', None)} prompt={getattr(sub_cfg, 'prompt_override', None)} instr_len={len(getattr(sub_cfg, 'instructions', '') or '')}",
+        )
+    except Exception:
+        pass
+
+    try:
+        attrs_yaml = _attrs_to_yaml_text(getattr(sub_cfg, "attributes", None))
+        if attrs_yaml:
+            debug_print("[tools]", f"Sub-cfg attributes (YAML) for {getattr(sub_cfg, 'name', None) or sub_name}:\n" + attrs_yaml)
+    except Exception:
+        pass
+
+    try:
+        sub_attrs_has_instr = isinstance(getattr(sub_cfg, "attributes", None), dict) and ("instructions" in (getattr(sub_cfg, "attributes", {}) or {}))
+    except Exception:
+        sub_attrs_has_instr = False
+    if not sub_attrs_has_instr:
+        try:
+            prev = (getattr(sub_cfg, "instructions", "") or "")
+            if len(prev) > 2048:
+                prev = prev[:2045] + "..."
+            debug_print("[tools]", f"Sub-cfg instructions preview for {getattr(sub_cfg, 'name', None) or sub_name}:\n" + prev)
+        except Exception:
+            pass
+
+    sub_agent = get_or_create_agent(
+        name=(getattr(sub_cfg, "name", None) or sub_name),
+        instructions=(getattr(sub_cfg, "instructions", "") or ""),
+        model=getattr(sub_cfg, "model", None),
+        model_settings=_model_settings_from_attributes(sub_cfg),
+        tools=base_tools_snapshot,
+        mcp_servers=mcp_servers,
+    )
+    tool = sub_agent.as_tool(
+        tool_name=sub_name,
+        tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
+    )
+    _wrap_function_tool(tool, sub_cfg=sub_cfg, sub_name=sub_name, cfg=cfg)
+    try:
+        debug_print("[tools]", f"Tool added: {sub_name} (resolved={getattr(sub_cfg, 'name', None) or '?'})")
+    except Exception:
+        pass
+    return tool
+
 
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
     value = os.environ.get(var, default)
     if not value:
         raise EnvironmentError(f"Required environment variable {var} is not set")
-    # Remove any whitespace and control characters
-    if value:
-        value = ''.join(char for char in value if char.isprintable() and not char.isspace())
     return value
 
 
@@ -2110,60 +2371,9 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - path: str | None (repo-relative path like 'agent/Proj/Agent/agent.md'; optional)
         Note: absolute 'agent_yaml_path' is deprecated and not used by this runtime.
     """
-    # MCP servers configuration via YAML (optional; gated by CALL_ENABLE_MCP)
-    cfg_yaml: dict | None = None
-    should_start_mcp = False
-
     async with AsyncExitStack() as astack:
-        servers = []
-
-        def _spec(name: str) -> dict | None:
-            if not cfg_yaml:
-                return None
-            return (cfg_yaml.get("mcpServers") or {}).get(name)
-
-        # Optionally load and start MCP servers from YAML when enabled
-        mcp_servers_started: list[Any] = []
-        try:
-            cfg_path = os.environ.get("CALL_MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
-            p = Path(cfg_path)
-            if p.exists():
-                cfg_yaml = _load_yaml(p)
-                _enable = str(os.environ.get("CALL_ENABLE_MCP", "")).strip().lower() in ("1", "true", "yes", "on")
-                try:
-                    debug_print("[mcp]", f"CALL_ENABLE_MCP={_enable} config_path={cfg_path}")
-                except Exception:
-                    pass
-                if _enable:
-                    try:
-                        mcp_servers_started = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
-                        try:
-                            debug_print("[mcp]", f"MCP started: {[getattr(s,'name',None) or getattr(s,'id',None) for s in (mcp_servers_started or [])]}")
-                        except Exception:
-                            pass
-                    except Exception as e:
-                        mcp_servers_started = []
-                        try:
-                            debug_print("[mcp]", f"Error while starting MCP servers: {type(e).__name__}: {e}")
-                        except Exception:
-                            pass
-        except Exception:
-            cfg_yaml = None
-            try:
-                debug_print("[mcp]", "No MCP config loaded (missing file or parse error)")
-            except Exception:
-                pass
-
-        # Build tools based on cfg.attributes.vs (resolve via vector store index)
-        tools = [WebSearchTool()]
-        try:
-            vs_ids = await resolve_vector_stores((cfg.attributes or {}).get("vs"))
-            if vs_ids:
-                tools.append(FileSearchTool(vector_store_ids=vs_ids))
-        except Exception:
-            pass
-        # If YAML provided, use what we started; otherwise none
-        mcp_servers = mcp_servers_started
+        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
+        tools = await _base_tools_for_cfg(cfg)
 
         # Debug dump (helper)
         try:
@@ -2179,198 +2389,20 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             _build_cfg = None  # graceful
 
         try:
-            # Snapshot current toolset to avoid recursive growth
-            base_tools_snapshot = list(tools)
-            entries: list[tuple[str, str]] = []
-            attrs = (cfg.attributes or {}) if hasattr(cfg, 'attributes') else {}
-            # 'agents' may be a dict name->description
-            ag_map = attrs.get('agents') if isinstance(attrs, dict) else None
-            if isinstance(ag_map, dict):
-                for nm, desc in ag_map.items():
-                    try:
-                        entries.append((str(nm), str(desc) if desc is not None else ""))
-                    except Exception:
-                        continue
-            # 'prompts' may be a list or dict; prefer keys/names
-            pr_map = attrs.get('prompts') if isinstance(attrs, dict) else None
-            try:
-                debug_print("[tools]",
-                            f"Scanning project attributes for agents/prompts; has_agents={isinstance(ag_map, dict)} has_prompts={isinstance(pr_map, (dict, list))}")
-            except Exception:
-                pass
-            if isinstance(pr_map, dict):
-                for nm, desc in pr_map.items():
-                    try:
-                        entries.append((str(nm), str(desc) if desc is not None else ""))
-                    except Exception:
-                        continue
-            elif isinstance(pr_map, list):
-                for nm in pr_map:
-                    try:
-                        entries.append((str(nm), ""))
-                    except Exception:
-                        continue
-
-            # Build a sub-agent for each entry and expose as tool
+            entries = _collect_tool_entries(cfg)
             if _build_cfg and entries:
-                try:
-                    debug_print("[tools]", f"Found {len(entries)} tool entries: {[n for n,_ in entries][:10]}" )
-                except Exception:
-                    pass
+                base_tools_snapshot = list(tools)
                 for sub_name, sub_desc in entries:
-                    try:
-                        debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
-                        # AgentFab may resolve cross-project; other projects restricted to own scope
-                        _proj_scope = None if ((cfg.name or "").strip() == "AgentFab") else (cfg.project or None)
-                        sub_cfg, sub_err = _build_cfg(
-                            project=_proj_scope,
-                            agent=None,
-                            prompt=None,
-                            target=sub_name,
-                            input=None,
-                            merge=bool(getattr(cfg, 'merge', False)),
-                        )
-                        if sub_err or not sub_cfg:
-                            try:
-                                debug_print("[tools]", f"Skip entry {sub_name}: error={getattr(sub_err,'description', None) or (sub_err.get('description') if isinstance(sub_err, dict) else sub_err)}")
-                            except Exception:
-                                pass
-                            continue
-                        # Skip adding self as a tool if resolution points back to the current agent
-                        try:
-                            if (sub_cfg.name or "").strip() == (cfg.name or "").strip():
-                                debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({cfg.name})")
-                                continue
-                        except Exception:
-                            pass
-                        try:
-                            debug_print("[tools]", f"Sub-cfg built: name={sub_cfg.name} prompt={sub_cfg.prompt_override} instr_len={len(sub_cfg.instructions or '')}")
-                        except Exception:
-                            pass
-                        # Debug: dump sub-cfg attributes YAML and optionally its instructions
-                        try:
-                            ytxt2 = _attrs_to_yaml_text(getattr(sub_cfg, 'attributes', None))
-                            if ytxt2:
-                                debug_print("[tools]", f"Sub-cfg attributes (YAML) for {sub_cfg.name or sub_name}:\n" + ytxt2)
-                        except Exception:
-                            pass
-                        try:
-                            sub_attrs_has_instr = isinstance(getattr(sub_cfg, 'attributes', None), dict) and ('instructions' in (sub_cfg.attributes or {}))
-                        except Exception:
-                            sub_attrs_has_instr = False
-                        if not sub_attrs_has_instr:
-                            try:
-                                prev = (sub_cfg.instructions or "")
-                                if len(prev) > 2048:
-                                    prev = prev[:2045] + "..."
-                                debug_print("[tools]", f"Sub-cfg instructions preview for {sub_cfg.name or sub_name}:\n" + prev)
-                            except Exception:
-                                pass
-                        sub_agent = get_or_create_agent(
-                            name=(sub_cfg.name or sub_name),
-                            instructions=(sub_cfg.instructions or ""),
-                            model=sub_cfg.model,
-                            model_settings=_model_settings_from_attributes(sub_cfg),
-                            tools=base_tools_snapshot,
-                            mcp_servers=mcp_servers,
-                        )
-                        tool = sub_agent.as_tool(
-                            tool_name=sub_name,
-                            tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
-                        )
-                        # Wrap FunctionTool invocation to log to DEBUG and Telegram (start -> completed)
-                        try:
-                            if isinstance(tool, FunctionTool):
-                                orig_invoke = tool.on_invoke_tool
-
-                                async def _wrapped_on_invoke(ctx, input: str):
-                                    # Debug log input (truncated)
-                                    try:
-                                        preview = (input or "")
-                                        if len(preview) > 800:
-                                            preview = preview[:797] + "..."
-                                        debug_print("[tool-call]", f"{sub_cfg.name or sub_name}", preview)
-                                    except Exception:
-                                        pass
-
-                                    # Telegram notification (best-effort)
-                                    tg_msg = None
-                                    try:
-                                        if selected_chat_id is not None:
-                                            await init_bot()
-                                            title = f"🛠️ <b>{clean_html_for_telegram(sub_cfg.name or sub_name)}</b>"
-                                            caller = f"<i>from</i> <b>{clean_html_for_telegram(cfg.name)}</b>"
-                                            body = ""
-                                            try:
-                                                import json as _json, html as _html
-                                                js = _json.loads(input) if input else {}
-                                                pretty = _json.dumps(js, ensure_ascii=False, indent=2)
-                                                if len(pretty) > 1500:
-                                                    pretty = pretty[:1497] + "..."
-                                                body = f"\n<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
-                                            except Exception:
-                                                esc = clean_html_for_telegram(input or "")
-                                                if len(esc) > 1500:
-                                                    esc = esc[:1497] + "..."
-                                                body = f"\n<code>{esc}</code>"
-                                            text = f"{title} {caller}{body}"
-                                            tg_msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=text, parse_mode=ParseMode.HTML)
-                                    except Exception:
-                                        tg_msg = None
-
-                                    # Invoke original tool
-                                    result = await orig_invoke(ctx, input)
-
-                                    # Edit Telegram message with completion
-                                    if tg_msg is not None:
-                                        try:
-                                            from telegram.error import BadRequest as _BadReq
-                                            await init_bot()
-                                            try:
-                                                import html as _html
-                                                rtxt = str(result)
-                                                if len(rtxt) > 1200:
-                                                    rtxt = rtxt[:1197] + "..."
-                                                rtxt = _html.escape(rtxt)
-                                                updated = f"{title} {caller}\n<b>✓ Completed</b>\n<pre><code>{rtxt}</code></pre>"
-                                                updated = clean_html_for_telegram(updated)
-                                                await safe_edit_message_text(chat_id=tg_msg.chat_id, message_id=tg_msg.message_id, text=updated, parse_mode=ParseMode.HTML)
-                                            except _BadReq:
-                                                # Fallback: send a new message
-                                                await safe_send_message(chat_id=tg_msg.chat_id, text=f"{title} {caller} — ✓ Completed", parse_mode=ParseMode.HTML)
-                                        except Exception:
-                                            pass
-
-                                    try:
-                                        debug_print("[tool-call]", f"{sub_cfg.name or sub_name}", "✓ completed")
-                                    except Exception:
-                                        pass
-                                    return result
-
-                                # Replace the handler so the wrapper is actually used
-                                try:
-                                    tool.on_invoke_tool = _wrapped_on_invoke
-                                except Exception:
-                                    pass
-
-                        except Exception:
-                            pass
-
-                        # Finally, add the tool to the toolset
+                    tool = _build_agent_tool(
+                        cfg=cfg,
+                        sub_name=sub_name,
+                        sub_desc=sub_desc,
+                        base_tools_snapshot=base_tools_snapshot,
+                        mcp_servers=mcp_servers,
+                        build_cfg=_build_cfg,
+                    )
+                    if tool:
                         tools.append(tool)
-                        try:
-                            debug_print("[tools]", f"Tool added: {sub_name} (resolved={sub_cfg.name or '?'}); tools_count={len(tools)}")
-                        except Exception:
-                            pass
-                    except Exception:
-                        try:
-                            from call.app.utils.common import format_exception_text as _fmt
-                        except Exception:
-                            _fmt = None
-                        try:
-                            debug_print("[tools]", f"Error building tool for {sub_name}: " + (_fmt(Exception()) if _fmt else ""))
-                        except Exception:
-                            pass
         except Exception:
             pass
 
@@ -2461,7 +2493,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                     agent_name=(cfg.name or ''),
                     agent_yaml_path=(cfg.agent_yaml_path or None),
                     user_input=user_input,
-                    mcp_servers_started=mcp_servers_started,
+                    mcp_servers_started=mcp_servers,
                     vs_list=((cfg.attributes or {}).get('vs')),
                     model=(cfg.model or None),
                 )
