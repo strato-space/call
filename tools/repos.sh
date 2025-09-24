@@ -1,6 +1,271 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: ./tools/repos.sh [--pip] [--mcp]
+
+Flags:
+  --pip         Ensure .venv exists and install Python dependencies from requirements files.
+  --mcp         Install uv and JavaScript MCP servers (filesystem, sequential-thinking).
+  -h, --help    Show this help message.
+EOF
+}
+
+log_section() {
+  printf '\n==> %s\n' "$1"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+detect_python_binary() {
+  if command_exists python3; then
+    echo "python3"
+    return 0
+  fi
+  if command_exists python; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
+ensure_venv() {
+  if [ -d ".venv" ]; then
+    return 0
+  fi
+
+  local python_bin
+  if ! python_bin="$(detect_python_binary)"; then
+    echo "Python interpreter not found. Please install Python 3 before continuing." >&2
+    return 1
+  fi
+
+  log_section "Creating Python virtual environment (.venv) with ${python_bin}"
+  "${python_bin}" -m venv .venv
+}
+
+activate_venv() {
+  if [ -n "${VIRTUAL_ENV-}" ]; then
+    echo "Using active virtual environment at: ${VIRTUAL_ENV}"
+    return 0
+  fi
+
+  if [ -f ".venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    . ".venv/bin/activate"
+    echo "Activated virtual environment using .venv/bin/activate"
+    return 0
+  fi
+
+  if [ -f ".venv/Scripts/activate" ]; then
+    # shellcheck disable=SC1091
+    . ".venv/Scripts/activate"
+    echo "Activated virtual environment using .venv/Scripts/activate"
+    return 0
+  fi
+
+  echo "Unable to auto-activate .venv. Activate manually (e.g., 'source .venv/bin/activate' or '.\\.venv\\Scripts\\Activate.ps1')."
+  return 1
+}
+
+venv_python_path() {
+  if [ -n "${VIRTUAL_ENV-}" ]; then
+    if [ -x "${VIRTUAL_ENV}/bin/python" ]; then
+      echo "${VIRTUAL_ENV}/bin/python"
+      return 0
+    fi
+    if [ -x "${VIRTUAL_ENV}/Scripts/python.exe" ]; then
+      echo "${VIRTUAL_ENV}/Scripts/python.exe"
+      return 0
+    fi
+    if [ -x "${VIRTUAL_ENV}/Scripts/python" ]; then
+      echo "${VIRTUAL_ENV}/Scripts/python"
+      return 0
+    fi
+  fi
+
+  if [ -x ".venv/bin/python" ]; then
+    echo ".venv/bin/python"
+    return 0
+  fi
+  if [ -x ".venv/Scripts/python.exe" ]; then
+    echo ".venv/Scripts/python.exe"
+    return 0
+  fi
+  if [ -x ".venv/Scripts/python" ]; then
+    echo ".venv/Scripts/python"
+    return 0
+  fi
+
+  return 1
+}
+
+install_python_requirements() {
+  local venv_py="$1"
+  shift
+  local requirement
+  for requirement in "$@"; do
+    if [ -f "$requirement" ]; then
+      log_section "Installing Python dependencies from $requirement"
+      "$venv_py" -m pip install -r "$requirement"
+    else
+      echo "Skipping missing requirements file: $requirement"
+    fi
+  done
+}
+
+setup_pip() {
+  ensure_venv
+
+  if activate_venv; then
+    :
+  else
+    echo "Continuing without interactive activation; using virtualenv python directly."
+  fi
+
+  local venv_python
+  if ! venv_python="$(venv_python_path)"; then
+    echo "Unable to locate Python executable inside .venv. Please verify the environment." >&2
+    return 1
+  fi
+
+  log_section "Upgrading pip inside the virtual environment"
+  "$venv_python" -m pip install --upgrade pip
+
+  install_python_requirements "$venv_python" \
+    "call/requirements.txt" \
+    "voice/requirements.txt" \
+    "server/mcp/requirements.txt"
+}
+
+install_uv_linux() {
+  if command_exists uv; then
+    return 0
+  fi
+
+  if command_exists snap; then
+    log_section "Installing astral-uv via snap (requires sudo)"
+    if sudo snap install astral-uv --classic; then
+      if command_exists uv; then
+        return 0
+      fi
+    else
+      echo "snap installation failed. Please install uv manually: https://docs.astral.sh/uv/getting-started/installation/" >&2
+    fi
+  else
+    echo "'snap' is not available. Install uv manually: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  fi
+
+  return 1
+}
+
+install_uv_windows() {
+  if command_exists uv; then
+    return 0
+  fi
+
+  if command_exists powershell.exe; then
+    log_section "Installing astral-uv via PowerShell bootstrapper"
+    local ps_command
+    ps_command="Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; irm https://astral.sh/uv/install.ps1 | iex"
+    if powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ps_command"; then
+      if command_exists uv; then
+        return 0
+      fi
+    else
+      echo "PowerShell installer for uv failed. You may need to rerun manually." >&2
+    fi
+  else
+    echo "PowerShell not found; skipping PowerShell-based uv installation." >&2
+  fi
+
+  if command_exists winget; then
+    log_section "Ensuring astral-uv via winget"
+    if winget install --id astral-sh.uv -e --source winget; then
+      if command_exists uv; then
+        return 0
+      fi
+    else
+      echo "winget installation of uv did not complete successfully. Try running manually." >&2
+    fi
+  else
+    echo "'winget' command not found. Install uv manually if needed." >&2
+  fi
+
+  return 1
+}
+
+ensure_uv() {
+  if command_exists uv; then
+    echo "uv is already installed."
+    return 0
+  fi
+
+  local uname_s
+  uname_s="$(uname -s)"
+  case "$uname_s" in
+    Linux*) install_uv_linux ;;
+    MINGW*|MSYS*|CYGWIN*) install_uv_windows ;;
+    *)
+      echo "Unsupported platform (${uname_s}). Install uv manually: https://docs.astral.sh/uv/getting-started/installation/" >&2
+      return 1
+      ;;
+  esac
+
+  if command_exists uv; then
+    echo "uv installation confirmed."
+    return 0
+  fi
+
+  echo "uv was not detected after installation attempts. Please install it manually." >&2
+  return 1
+}
+
+install_mcp_node_servers() {
+  if command_exists nvm && command_exists npm; then
+    log_section "Installing MCP JavaScript servers via npm"
+    npm install @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem
+  else
+    echo "nvm and/or npm not detected."
+    echo "Install nvm from https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe (Windows)"
+    echo "or follow https://github.com/nvm-sh/nvm for Linux/macOS, then install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp."
+  fi
+}
+
+setup_mcp() {
+  if ! ensure_uv; then
+    echo "Proceeding without uv; install it manually if required." >&2
+  fi
+  install_mcp_node_servers
+}
+
+DO_PIP=false
+DO_MCP=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pip)
+      DO_PIP=true
+      ;;
+    --mcp)
+      DO_MCP=true
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
+
 # Determine base directory (support Git Bash/WSL paths)
 BASE_DIR="/home/strato-space"
 if [ ! -d "$BASE_DIR" ]; then
@@ -68,3 +333,24 @@ repo https://github.com/strato-space/voice
 # repo https://github.com/strato-space/mcp-google-sheets
 # repo https://github.com/strato-space/mcp-telegram
 # repo https://github.com/strato-space/ai
+
+if [ "$DO_PIP" = true ]; then
+  log_section "Running --pip workflow"
+  if setup_pip; then
+    echo "Python dependencies installed successfully."
+  else
+    echo "Python dependency setup encountered issues; review the logs above." >&2
+  fi
+fi
+
+if [ "$DO_MCP" = true ]; then
+  log_section "Running --mcp workflow"
+  if setup_mcp; then
+    echo "MCP tooling steps completed."
+  else
+    echo "MCP tooling encountered issues; review the logs above." >&2
+  fi
+  echo "If nvm is not installed on Windows, download the installer from:"
+  echo "  https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe"
+  echo "After installing nvm, install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp as needed."
+fi

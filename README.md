@@ -67,6 +67,8 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
   - `model`: the selected model id (e.g., `gpt-5`, `gpt-4.1`).
   - `model-params`: generic settings applicable across models.
   - `model-params-<model>`: model-specific settings. This is the recommended, canonical form.
+- Runtime precedence: when a prompt, agent, and project each declare a `model`, the runtime now applies `prompt > agent > project > $LLM_MODEL` (environment default). Tests assert this ordering to prevent regressions.
+- Runtime helpers: the runtime now exposes `_send_welcome_banner()` and `_embed_files_in_user_input()` so the Telegram banner logic and JSON file embedding can be unit-tested. `test_runtime_helpers.py` covers both the units and how `build_and_run_agent()` wires them up.
 
 - Excluded (do not use in new cards)
   - `model_params`, `modelParams` (generic) and `model_params_<model>`, `modelParams<model>` (model-suffixed) are not part of the documented schema and must be avoided. Use the hyphenated forms `model-params` and `model-params-<model>` instead.
@@ -97,7 +99,9 @@ model-params-gpt-4.1:
 - New command: `/reload` — rescans configured repositories and rebuilds the SQLite repo index.
 - `/prompts`, `/prompts_ready`, and `/prompts_draft` are powered by the repo index with flexible filters and `state` support.
   - Filters: `--project`, `--agent`, `--prompt`, `--target`, `--state ready|draft`, key=value forms, and `@Agent` shorthand. All filters are ANDed.
-- The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
+  - The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
+- Agents-as-tools instrumentation: when a project card exposes helper agents or prompts, the runtime wraps each `FunctionTool` invocation. Every call emits `[tool-call]` debug logs and, when Telegram routing is active, a start/completion banner is posted best-effort to the configured chat. Disable by pointing the session at `selected_chat_id=None` or running with `CALL_DEBUG` unset.
+  - Welcome banner logic moved to `_send_welcome_banner()` for reuse.
 
 ### Telegram parsing and behavior (Updated)
 
