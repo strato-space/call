@@ -2347,6 +2347,12 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                                         pass
                                     return result
 
+                                # Replace the handler so the wrapper is actually used
+                                try:
+                                    tool.on_invoke_tool = _wrapped_on_invoke
+                                except Exception:
+                                    pass
+
                         except Exception:
                             pass
 
