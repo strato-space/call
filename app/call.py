@@ -1183,9 +1183,7 @@ def compose_welcome_html(
             # Clamp to safe length
             if len(pretty) > 3600:
                 pretty = pretty[:3597] + "..."
-            # Escape for HTML inside code block and add Telegram-supported language tag
-            import html as _html
-            pretty_preview = f"<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
+            pretty_preview = f"<pre><code class=\"language-json\">{pretty}</code></pre>"
     except Exception:
         pretty_preview = None
     if not pretty_preview:
@@ -2271,7 +2269,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                         sub_agent = get_or_create_agent(
                             name=(sub_cfg.name or sub_name),
                             instructions=(sub_cfg.instructions or ""),
-                            model=cfg.model,
+                            model=sub_cfg.model,
                             model_settings=_model_settings_from_attributes(sub_cfg),
                             tools=base_tools_snapshot,
                             mcp_servers=mcp_servers,

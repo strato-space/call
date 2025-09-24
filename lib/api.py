@@ -1057,13 +1057,32 @@ def build_runnable_instructions_config(
         goal=(str(goal_val) if goal_val else None),
         base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else None),
         instructions=str(instr or ""),
-        model=(str(ag_attrs.get("model")) if isinstance(ag_attrs, dict) and ag_attrs.get("model") else None),
+        model=None,
         attributes=attributes if isinstance(attributes, dict) else {},
         target=(target or None),
         input=(input or None),
     )
 
-    # Default model if still absent
+    def _model_from(attrs: Dict[str, Any] | None) -> str | None:
+        if not isinstance(attrs, dict):
+            return None
+        try:
+            if attrs.get("model"):
+                return str(attrs.get("model"))
+        except Exception:
+            pass
+        try:
+            for k, v in attrs.items():
+                if isinstance(k, str) and k.startswith("model-") and not k.startswith("model-params"):
+                    return str(v)
+        except Exception:
+            pass
+        return None
+
+    # Determine model precedence: prompt attrs > agent attrs > project attrs
+    cfg.model = _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs)
+
+    # Fall back to environment default
     if not cfg.model:
         try:
             cfg.model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
