@@ -677,6 +677,96 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     return tool
 
 
+async def _send_welcome_banner(
+    *,
+    cfg,
+    user_input: str,
+    mcp_servers: list[Any],
+    selected_chat_id: int | None,
+    selected_thread_id: int | None,
+) -> str | None:
+    """Compose and send the Telegram welcome banner for the current agent run."""
+    if selected_chat_id is None:
+        return None
+
+    try:
+        welcome_html = compose_welcome_html(
+            agent_name=(getattr(cfg, "name", "") or ""),
+            agent_yaml_path=(getattr(cfg, "agent_yaml_path", None) or None),
+            user_input=user_input,
+            mcp_servers_started=mcp_servers,
+            vs_list=((getattr(cfg, "attributes", {}) or {}).get("vs")),
+            model=(getattr(cfg, "model", None) or None),
+        )
+        debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
+
+        await send_telegram_welcome_message(
+            text=welcome_html,
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+        )
+        return welcome_html
+    except Exception as exc:
+        try:
+            err_text = format_exception_text(exc)
+            debug_print("[app]", "[WARN] welcome message send failed:\n" + err_text)
+        except Exception:
+            pass
+        return None
+
+
+async def _embed_files_in_user_input(
+    raw: str,
+    *,
+    client_factory: Callable[[], Any] | None = None,
+) -> str:
+    """Embed base64 file contents into a JSON user_input payload when available."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw
+
+    ctx = data.get("context")
+    if not isinstance(ctx, list):
+        return raw
+
+    factory = client_factory or (lambda: httpx.AsyncClient(timeout=15.0, follow_redirects=True))
+    found = False
+    try:
+        client_ctx = factory()
+        async with client_ctx as client:
+            for item in ctx:
+                try:
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("type")) != "file":
+                        continue
+                    url = str(item.get("url") or "").strip()
+                    if not url:
+                        continue
+                    if isinstance(item.get("base64"), str) and item["base64"]:
+                        continue
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        b64 = base64.b64encode(resp.content).decode("ascii")
+                        item["base64"] = b64
+                        found = True
+                except Exception:
+                    continue
+    except Exception:
+        return raw
+
+    if not found:
+        return raw
+
+    try:
+        output = json.dumps(data, ensure_ascii=False)
+        debug_print("[app]", "[PAYLOAD] embedded base64 for files")
+        return output
+    except Exception:
+        return raw
+
+
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
     value = os.environ.get(var, default)
@@ -2487,80 +2577,17 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
 
         # Send welcome message with agent link and run context (after config is ready)
-        if selected_chat_id is not None:
-            try:
-                welcome_html = compose_welcome_html(
-                    agent_name=(cfg.name or ''),
-                    agent_yaml_path=(cfg.agent_yaml_path or None),
-                    user_input=user_input,
-                    mcp_servers_started=mcp_servers,
-                    vs_list=((cfg.attributes or {}).get('vs')),
-                    model=(cfg.model or None),
-                )
-                # Debug log the welcome HTML only when CALL_DEBUG is enabled
-                debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
-
-                await send_telegram_welcome_message(
-                    text=welcome_html,
-                    chat_id=selected_chat_id,
-                    message_thread_id=selected_thread_id,
-                )
-            except Exception as e:
-                # Do not block run on welcome banner failures, but log the exception in debug mode
-                try:
-                    err_text = format_exception_text(e)
-                    debug_print("[app]", "[WARN] welcome message send failed:\n" + err_text)
-                except Exception:
-                    pass
-
-        # Enrich JSON user_input: if it contains context items of type 'file',
-        # try to download by URL and attach a 'base64' field next to the URL.
-        # Errors are swallowed; original input is kept on failure.
-        async def _embed_files_in_user_input_if_any(raw: str) -> str:
-            try:
-                import json as _json
-                import base64 as _b64
-                data = _json.loads(raw)
-                ctx = data.get("context")
-                if not isinstance(ctx, list):
-                    return raw
-                # Only process first-level items with type 'file'
-                found = False
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                    for it in ctx:
-                        try:
-                            if not isinstance(it, dict):
-                                continue
-                            if str(it.get("type")) != "file":
-                                continue
-                            url = str(it.get("url") or "").strip()
-                            if not url:
-                                continue
-                            # Skip if already present
-                            if isinstance(it.get("base64"), str) and it["base64"]:
-                                continue
-                            resp = await client.get(url)
-                            if resp.status_code == 200:
-                                b64 = _b64.b64encode(resp.content).decode("ascii")
-                                it["base64"] = b64
-                                found = True
-                        except Exception:
-                            # best-effort per item
-                            continue
-                if found:
-                    try:
-                        out = _json.dumps(data, ensure_ascii=False)
-                        debug_print("[app]", "[PAYLOAD] embedded base64 for files")
-                        return out
-                    except Exception:
-                        return raw
-                return raw
-            except Exception:
-                return raw
+        welcome_html = await _send_welcome_banner(
+            cfg=cfg,
+            user_input=user_input,
+            mcp_servers=mcp_servers,
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+        )
 
         try:
             if isinstance(user_input, str) and user_input.strip().startswith(('{','[')):
-                user_input = await _embed_files_in_user_input_if_any(user_input)
+                user_input = await _embed_files_in_user_input(user_input)
         except Exception:
             pass
 
