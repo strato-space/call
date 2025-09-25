@@ -17,6 +17,7 @@
   - `{ project?: string, agent?: string, prompt?: string, target?: string, context?: any, echo?: boolean, session_id?: string }`
   - Exactly one of `project|agent|prompt|target` must be provided.
   - The full payload JSON is used as the input string for the agent pipeline.
+
 ## Overview
 
 A minimal, extensible subsystem for invoking AI agents and prompt pipelines by name and routing inputs/outputs across your project ecosystem.
@@ -189,6 +190,89 @@ python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target
 
 # exec using wildcards (auto-resolved into context items)
 python -m call.cli.main exec --target AgentFab --parse-input "@50-* @3-*" --echo
+
+# exec with default target resolution
+python -m call.cli.main exec --target Vasil3
+```
+
+### Call Actions API (curl examples)
+
+- **List prompts (HTTPS via nginx)**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/prompts" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    | jq
+  ```
+
+- **List prompts filtered by project**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/prompts?project=AgentFab" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    | jq
+  ```
+
+- **`GET /prompts` parameters**
+
+  - `project`: optional exact match (supports empty string for all)
+  - `agent`: optional exact match (supports empty string for all)
+  - `prompt`: optional identifier or name (supports `*` wildcard)
+  - `state`: optional `ready`, `draft`, or empty for both
+
+- **Selection tip**
+
+  When you are unsure whether an identifier refers to a project, agent, or prompt, send it via the `target` parameter. The API resolves the name against all supported scopes, so a single call works even if the type is unknown.
+
+- **Execute an agent with JSON payload**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/exec" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    -H "Content-Type: application/json" \
+    --data '{
+      "target": "Vasil3"
+      }'
+  ```
+
+- **Exec payload with mixed context sources**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/exec" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    -H "Content-Type: application/json" \
+    --data '{
+      "prompt": "49-BusinessAnalyticAgent",
+      "context": [
+        {
+          "type": "text",
+          "text": "Заголовок с ключевым предложением. Краткое описание преимуществ сотрудничества. Призыв к действию с кнопкой \"Стать агентом\" / \"Seja um agente\" / \"Become an agent\".",
+          "source": {
+            "type": "file",
+            "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-",
+            "name": "11.09.24_Мобильная касса Лендинг #2.docx"
+          }
+        },
+        {
+          "type": "text",
+          "text": "В чем разница между облачной платной версией и нашей? Облачная платная версия позволяет регистрировать цепочки прямо на сайте LongChain и работать с ними. Наша версия из коробки такого не позволяет.",
+          "source": {
+            "type": "session",
+            "_id": "68afe646ef46aed531a8ecc5",
+            "name": "2025-08-28 08:16 OpenCanvas hacks; diff; cloud vs local; integration with langgraph 2"
+          }
+        },
+        {
+          "type": "session",
+          "_id": "68c7ab4cab67ffbd365062f1"
+        },
+        {
+          "type": "file",
+          "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-"
+        }
+      ]
+    }'
+
 ```
 
 ### Parsed vs raw input (New)
@@ -219,6 +303,7 @@ python -m call.cli.main exec --target AgentFab --parse-input "@50-* @3-*" --echo
     - `payload`: the JSON payload that would be sent to the agent.
     - `resolved`: a small snapshot of the selection (project/agent/prompt/type/path/url) computed from the current filters/target.
   - Examples:
+  
     ```powershell
     # Raw input, print payload only (no execution)
     python -m call.cli.main call --target AgentFab --input "as is text" --echo
@@ -301,13 +386,17 @@ python -m call.cli.main exec --target AgentFab --parse-input "@50-* @3-*" --echo
   - CLI and Telegram bot call `configure_logging()` once at startup (DEBUG when `CALL_DEBUG=1`, else INFO).
   - Library usage assumes logging is already configured by the host application.
   - Set `CALL_LOG_JSON=1` to emit JSON logs from the stdlib logger (stderr). Example:
+
     ```powershell
     $env:CALL_DEBUG=1; $env:CALL_LOG_JSON=1; python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
+
   - CLI also supports `--json-logs` to force JSON output regardless of env:
+
     ```powershell
     python -m call.cli.main --json-logs call --project UxFab --agent DialogPostAnalysis --print-instructions
     ```
+
   - Set `CALL_LOG_FILE=logs/app.log` to write logs to a file in addition to stderr. The directory will be created if needed.
 
 - Notes:
@@ -401,6 +490,7 @@ Also available (async) — supports empty agent name:
 - If `name` is provided and not found: returns a 404-style error envelope.
 
 Notes:
+
 - If you need an error-envelope style response, wrap the call and convert exceptions into a `{ ok:false, ... }` JSON at your boundary (e.g., HTTP layer).
 
 ### Integration note (Voice decoupling)
@@ -525,6 +615,12 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
+### Google service account key
+
+- Actions/CLI flows that call Google APIs expect the service account JSON at `call/wallet/service-account-key.json`.
+- The file holds the full Google Cloud credential (`type: service_account`), so treat it as sensitive secret material.
+
+
 #### Checking exit codes (Windows)
 
 ```powershell
@@ -601,21 +697,25 @@ cmd /c "python -m call.cli.main exec --agent DialogPostAnalysis & echo %ERRORLEV
 Use these tips to inspect logs locally or in CI.
 
 - PowerShell: tail and filter by module prefix
+
   ```powershell
   Get-Content -Path .\logs\app.log -Wait | Select-String -Pattern "\[app\]"
   ```
 
 - Bash/Cygwin: follow logs and filter JSON by level with jq
+
   ```bash
   tail -F logs/app.log | jq -r 'select(.level=="INFO") | .message'
   ```
 
 - Extract bot updates from JSON logs
+
   ```bash
   tail -F logs/bot.log | jq -r 'select(.logger=="call.bot") | .message'
   ```
 
 - Convert JSON logs to a simple table (time, level, message)
+
   ```bash
   jq -r '[.time, .level, .message] | @tsv' < logs/app.log
   ```
@@ -627,16 +727,17 @@ Call integrates with and executes artifacts produced by:
 - Agent Fab — a factory of early analytical agents; cards live in the Agent repo under `agent/AgentFab`.
 - Prompt Repository — canonical storage of prompts under flat folders: `prompt/ready/`, `prompt/draft/`.
 - RAG and MCP servers — optional data access and tool affordances:
-  - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice []   
+  - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice [voicebot backed lib, mcp, actions, cli interfaces]
 - Voice Bot, AI News Aggregator, Telegram, Google Sheets/Pages — integration touchpoints.
 
 -- Repos list:
-  - agent - agent repository (projects, agents index);
-  - prompt - prompt repository (draft/ready);
-  - call - this repo;
-  - server mcp's starter, nginx cofings 
-  - rms sample custromer's of project repo, 
-  - voice - voicebot backed lib, mcp, actions, cli interfaces   
+
+- agent - agent repository (projects, agents index);
+- prompt - prompt repository (draft/ready);
+- call - this repo;
+- server mcp's starter, nginx cofings 
+- rms sample custromer's of project repo, 
+- voice - voicebot backed lib, mcp, actions, cli interfaces
 
 ### Repo sync helper (repos.sh)
 
@@ -824,11 +925,12 @@ There is no fallback to `TELEGRAM_TOKEN` and no suffix guessing during token loo
 
 Start the bot with a specific identity:
 
-```
+```bash
 python -m call.telegram_bot.bot --bot-name StratoSpaceAiBot
 ```
 
 Notes:
+
 - Only the dot notation `TELEGRAM_TOKEN.Name` is supported for named bots.
 
 ### Telegram formatting and routing (Updated Sep 19, 2025)
@@ -955,6 +1057,7 @@ pytest -q call/app/tests/test_send_digest_notification.py
 ## Developer Setup
 
 Prerequisites:
+
 - Python 3.11+ (Phase I) or Node.js 20+ (Phase II)
 - Git, GitHub CLI (`gh`) for repo ops
 
