@@ -705,6 +705,24 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
         pass
     return tool
 
+async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None = None, message_thread_id: int | None = None):
+    # Send initial message and store its ID
+    global telegram_last_message
+    # Choose chat: prefer explicit override; else use selected_* initialized from .env and possibly overridden by agent
+    if chat_id is None:
+        chat_id = selected_chat_id or TELEGRAM_CHAT_ID
+    # Ensure bot exists before sending welcome
+    await init_bot()
+    # Send clean welcome banner without any progress bar
+    telegram_last_message = await safe_send_message(
+        chat_id=chat_id or telegram_last_message.chat_id,
+        text=text,
+        message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None)),
+        parse_mode=ParseMode.HTML,
+    )
+    debug_print("[app]",
+        f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
+
 
 async def _send_welcome_banner(
     *,
@@ -2707,21 +2725,3 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         yield agent, cfg, session
         
 
-
-async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None = None, message_thread_id: int | None = None):
-    # Send initial message and store its ID
-    global telegram_last_message
-    # Choose chat: prefer explicit override; else use selected_* initialized from .env and possibly overridden by agent
-    if chat_id is None:
-        chat_id = selected_chat_id or TELEGRAM_CHAT_ID
-    # Ensure bot exists before sending welcome
-    await init_bot()
-    # Send clean welcome banner without any progress bar
-    telegram_last_message = await safe_send_message(
-        chat_id=chat_id or telegram_last_message.chat_id,
-        text=text,
-        message_thread_id=(message_thread_id if message_thread_id is not None else (selected_thread_id or TELEGRAM_THREAD_ID or None)),
-        parse_mode=ParseMode.HTML,
-    )
-    debug_print("[app]",
-        f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
