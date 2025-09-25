@@ -25,6 +25,21 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 > Recent changes: see `CHANGELOG.md`.
 
+### Workspace sync script (`tools/repos.sh`)
+
+Use `call/tools/repos.sh` to clone or fast-forward the core Strato repositories from the monorepo root. Without flags it iterates through the standard list (`call`, `agent`, `prompt`, `server`, `rms`, `voice`), cloning any missing checkout or issuing a `git pull --ff-only` when the repository already exists.
+
+```bash
+./tools/repos.sh --help
+```
+
+Flags:
+
+- `--pip` — ensures `.venv` exists, activates it when possible, upgrades `pip`, and installs Python requirements from `call/requirements.txt`, `voice/requirements.txt`, and `server/mcp/requirements.txt` using the virtual-environment interpreter.
+- `--mcp` — makes sure [`uv`](https://docs.astral.sh/uv/getting-started/installation/) is installed (via `snap` on Linux or PowerShell/winget on Windows when available) and then installs the JavaScript MCP servers `@modelcontextprotocol/server-sequential-thinking` and `@modelcontextprotocol/server-filesystem` with `npm` (requires `nvm`/`npm` to be present).
+
+The script auto-detects the workspace root (defaults to `/home/strato-space`), applies Git LF/CRLF settings when launched from Windows shells, and accepts `-h/--help` for the built-in usage summary shown above.
+
 ### Repo Index (New)
 
 - Call now maintains a single-source-of-truth SQLite index `call/repo.db` for projects, agents, and prompts.
@@ -171,6 +186,9 @@ python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
 
 # exec with multiple selectors (falls back to explicit call path)
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target 33-Questioning --echo
+
+# exec using wildcards (auto-resolved into context items)
+python -m call.cli.main exec --target AgentFab --parse-input "@50-* @3-*" --echo
 ```
 
 ### Parsed vs raw input (New)
