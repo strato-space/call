@@ -26,4 +26,5 @@ pydantic-settings[dotenv]>=2.5.2,<3
 fastapi
 uvicorn
 pytest
+pytest-asyncio
 trio

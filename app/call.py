@@ -112,6 +112,8 @@ from openai import OpenAI
 from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
+from call.lib.api import build_runnable_instructions_config
+
 # Import agent utilities (internal copy)
 try:
     from .utils.agent_utils import extract_agent_attributes, get_agent_instructions
@@ -337,7 +339,7 @@ async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, pa
     - On 'message to edit not found', sends a new message instead.
     - Returns Message on success; None when falling back silently fails.
     """
-    await init_bot()
+    await _init_bot_safe()
     # Prepare body conservatively; let caller pre-sanitize if needed
     prepared = text or ""
     async def _op():
@@ -418,13 +420,15 @@ async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict 
     cfg_yaml: dict | None = None
     servers: list[Any] = []
     try:
-        cfg_path = os.environ.get("CALL_MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
+        # Only new env names are supported now
+        cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
         path = Path(cfg_path)
         if path.exists():
             cfg_yaml = _load_yaml(path)
-            enabled = str(os.environ.get("CALL_ENABLE_MCP", "")).strip().lower() in {"1", "true", "yes", "on"}
+            enabled_flag = os.environ.get("ENABLE_MCP", "")
+            enabled = str(enabled_flag).strip().lower() in {"1", "true", "yes", "on"}
             try:
-                debug_print("[mcp]", f"CALL_ENABLE_MCP={enabled} config_path={cfg_path}")
+                debug_print("[mcp]", f"ENABLE_MCP={enabled} config_path={cfg_path}")
             except Exception:
                 pass
             if enabled:
@@ -463,13 +467,36 @@ async def _base_tools_for_cfg(cfg) -> list[Any]:
     return tools
 
 
-def _collect_tool_entries(cfg) -> list[tuple[str, str]]:
-    """Extract agent/prompt entries that should be exposed as tools."""
+async def _git_pull_prompt_repo() -> None:
+    """Ensure prompt repo is up-to-date before running the agent."""
+    try:
+        prompt_repo = discover_prompt_repo()
+
+        from asyncio.subprocess import PIPE
+
+        async def _run_git(cmd: list[str]) -> tuple[int, bytes, bytes]:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(prompt_repo),
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+            out, err = await proc.communicate()
+            return proc.returncode, out, err
+
+        rc, _, _ = await _run_git(["git", "pull", "--rebase"])
+        if rc != 0:
+            await _run_git(["git", "pull"])
+    except Exception:
+        pass
+
+
+def _collect_tools(cfg) -> list[tuple[str, str]]:
+    """Collect agent/prompt entries that should be exposed as tools."""
     entries: list[tuple[str, str]] = []
     attrs = getattr(cfg, "attributes", {}) if hasattr(cfg, "attributes") else {}
     if not isinstance(attrs, dict):
         return entries
-
     ag_map = attrs.get("agents")
     if isinstance(ag_map, dict):
         for name, desc in ag_map.items():
@@ -592,7 +619,7 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
         pass
 
 
-def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot: list[Any], mcp_servers: list[Any], build_cfg):
+def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot: list[Any], mcp_servers: list[Any]):
     """Create a sub-agent tool and return it (or None on failure)."""
     try:
         debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
@@ -601,7 +628,9 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
 
     project_scope = None if (str(getattr(cfg, "name", "")).strip() == "AgentFab") else (cfg.project or None)
     try:
-        sub_cfg, sub_err = build_cfg(
+        # Resolve at call-time so tests can monkeypatch call.lib.api.build_runnable_instructions_config
+        from call.lib import api as _api
+        sub_cfg, sub_err = _api.build_runnable_instructions_config(
             project=project_scope,
             agent=None,
             prompt=None,
@@ -765,6 +794,74 @@ async def _embed_files_in_user_input(
         return output
     except Exception:
         return raw
+
+
+async def _init_bot_safe(*, project_name: str | None = None) -> None:
+    """Call init_bot safely whether it's async or sync; swallow errors."""
+    try:
+        res = init_bot(project_name=project_name)
+        import inspect as _inspect
+        if _inspect.isawaitable(res):
+            await res
+    except Exception:
+        pass
+
+def _create_session_if_any(selected_chat_id: int | None, selected_thread_id: int | None) -> SQLiteSession | None:
+    """Create a SQLiteSession when Telegram routing is enabled; otherwise return None."""
+    if selected_chat_id is None:
+        return None
+
+    if selected_thread_id is not None:
+        session_id = f"{selected_chat_id}:{selected_thread_id}"
+    else:
+        session_id = f"{selected_chat_id}"
+
+    db_path = os.getenv("CALL_DB", "call/call.db")
+    try:
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    session = SQLiteSession(session_id, db_path)
+    debug_print(f"[INFO] Session id: {session_id} @ {db_path}")
+    return session
+
+
+async def _notify_digest_if_applicable(
+    *,
+    cfg,
+    user_input: str,
+    initial_input: str,
+    step1_output: str | None,
+    selected_chat_id: int | None,
+    selected_thread_id: int | None,
+) -> None:
+    """Send digest notification and post-run git push when the run succeeded."""
+    is_error_output = isinstance(step1_output, str) and step1_output.strip().lower().startswith("error:")
+    if is_error_output or selected_chat_id is None:
+        return
+
+    use_chat_id = selected_chat_id
+    use_thread_id = selected_thread_id
+    try:
+        await send_digest_notification(
+            agent_name=(cfg.name or ''),
+            agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
+            input_text=initial_input,
+            text=(step1_output or ""),
+            chat_id=use_chat_id,
+            message_thread_id=use_thread_id,
+            image_path=None,
+        )
+    except Exception:
+        pass
+
+    try:
+        await post_run_git_push(agent_name=(cfg.name or ''), user_input=user_input)
+    except Exception:
+        pass
 
 
 def ensure_env(var: str, default: str = None) -> str:
@@ -1125,7 +1222,7 @@ async def send_digest_notification(
 
 
 async def post_run_git_push(agent_name: str, user_input: str) -> None:
-    """Commit and push changes in the prompt repo after the run.
+    """Commit and push changes in the prompt repos after the run.
 
     - Uses normalized agent_name resolved in the pipeline
     - Uses user_input as-is (preserve newlines)
@@ -2465,36 +2562,30 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
         tools = await _base_tools_for_cfg(cfg)
 
+        await _git_pull_prompt_repo()
+
         # Debug dump (helper)
-        try:
-            debug_dump_cfg_preview(cfg)
-        except Exception:
-            pass
+        debug_dump_cfg_preview(cfg)
 
         # Agents-as-Tools: if the project card exposes 'agents' or 'prompts',
         # create sub-agents as tools so the main agent can call them.
-        try:
-            from call.lib.api import build_runnable_instructions_config as _build_cfg
-        except Exception:
-            _build_cfg = None  # graceful
-
-        try:
-            entries = _collect_tool_entries(cfg)
-            if _build_cfg and entries:
-                base_tools_snapshot = list(tools)
-                for sub_name, sub_desc in entries:
-                    tool = _build_agent_tool(
-                        cfg=cfg,
-                        sub_name=sub_name,
-                        sub_desc=sub_desc,
-                        base_tools_snapshot=base_tools_snapshot,
-                        mcp_servers=mcp_servers,
-                        build_cfg=_build_cfg,
-                    )
-                    if tool:
-                        tools.append(tool)
-        except Exception:
-            pass
+        # Build helper tools declared in the agent card (sub-agents/prompts) so the
+        # main agent can call them within the same turn. Each helper starts from a
+        # snapshot of the already-prepared base tools to avoid mutating the live list
+        # during construction.
+        tools2append = _collect_tools(cfg)
+        if tools2append:
+            base_tools_snapshot = list(tools)
+            for sub_name, sub_desc in tools2append:
+                tool = _build_agent_tool(
+                    cfg=cfg,
+                    sub_name=sub_name,
+                    sub_desc=sub_desc,
+                    base_tools_snapshot=base_tools_snapshot,
+                    mcp_servers=mcp_servers,
+                )
+                if tool:
+                    tools.append(tool)
 
         agent = Agent(
             name=f"{cfg.name}",
@@ -2509,10 +2600,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             _ = await srv.list_tools(run_context, agent)
 
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
-        try:
-            await init_bot(project_name=(cfg.project or None))
-        except Exception:
-            pass
+        await _init_bot_safe(project_name=(cfg.project or None))
         
         merged_output = _merge_outputs(
             (_load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
@@ -2553,25 +2641,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             selected_thread_id = TELEGRAM_THREAD_ID
 
         # Now that selected_chat_id is finalized, create or skip SQLite session
-        if (selected_chat_id is not None):
-            # Deterministic and unique per dialog thread — chat[:thread] only
-            if selected_thread_id is not None:
-                session_id = f"{selected_chat_id}:{selected_thread_id}"
-            else:
-                session_id = f"{selected_chat_id}"
-
-            db_path = os.getenv("CALL_DB", "call/call.db")
-            try:
-                db_dir = os.path.dirname(db_path)
-                if db_dir:
-                    os.makedirs(db_dir, exist_ok=True)
-            except Exception:
-                pass
-
-            session = SQLiteSession(session_id, db_path)
-            debug_print(f"[INFO] Session id: {session_id} @ {db_path}")
-        else:
-            session = None
+        session = _create_session_if_any(selected_chat_id, selected_thread_id)
 
         debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
         debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
@@ -2585,12 +2655,9 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             selected_thread_id=selected_thread_id,
         )
 
-        try:
-            if isinstance(user_input, str) and user_input.strip().startswith(('{','[')):
-                user_input = await _embed_files_in_user_input(user_input)
-        except Exception:
-            pass
-
+        if isinstance(user_input, str) and user_input.strip().startswith(('{','[')):
+            user_input = await _embed_files_in_user_input(user_input)
+        
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
         try:
@@ -2622,28 +2689,14 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             step1_output = f"Error: {short_msg}"
 
         # Notify digest (no image) and push
-        # Only notify/push when we have a non-error output
-        is_error_output = isinstance(step1_output, str) and step1_output.strip().lower().startswith("error:")
-        if not is_error_output and (selected_chat_id is not None):
-            try:
-                # Capture targets locally to avoid races with global changes
-                use_chat_id = selected_chat_id
-                use_thread_id = selected_thread_id
-                await send_digest_notification(
-                    agent_name=(cfg.name or ''),
-                    agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
-                    input_text=initial_input,
-                    text=(step1_output or ""),
-                    chat_id=use_chat_id,
-                    message_thread_id=use_thread_id,
-                    image_path=None,
-                )
-            except Exception:
-                pass
-            try:
-                await post_run_git_push(agent_name=(cfg.name or ''), user_input=user_input)
-            except Exception:
-                pass
+        await _notify_digest_if_applicable(
+            cfg=cfg,
+            user_input=user_input,
+            initial_input=initial_input,
+            step1_output=step1_output,
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+        )
 
         # Expose final_output to callers via cfg
         try:
@@ -2653,15 +2706,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
         yield agent, cfg, session
         
-
-async def main(agent_path: str = None, user_input: str = "", agent_name: str = "", project_name: str = "", prompt_name: str = "", merge: bool = False):
-    """Legacy entrypoint: delegate to lib.api.call for simplicity."""
-    try:
-        from call.lib import api as _api
-        await _api.call_async(project=(project_name or None), agent=(agent_name or None), prompt=(prompt_name or None), input=(user_input or ""), merge=bool(merge))
-    except Exception:
-        pass
-
 
 async def republish_results() -> str:
     # loaf from file logs/x.html
@@ -2685,84 +2729,3 @@ async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None =
     )
     debug_print("[app]",
         f"Last message set. ID: {telegram_last_message.message_id}, Chat ID: {telegram_last_message.chat_id}, Thread ID: {telegram_last_message.message_thread_id}")
-
-
-if __name__ == "__main__":
-    # Entrypoint policy:
-    # - If --cli flag is present: delegate to call.cli.main AFTER removing the flag
-    # - Otherwise, run local async main() with legacy args: <AgentName> [<input>]
-    import sys
-    import asyncio as _asyncio
-
-    args = sys.argv[1:]
-
-    # Fast-path: --echo prints parsed legacy args as JSON and exits
-    if "--echo" in args:
-        import json as _json
-        # Remove known flags but DO NOT change order of the remaining args
-        known_flags = {"--echo", "--cli"}
-        args_wo_flags = [a for a in args if a not in known_flags]
-        agent_name_echo = args_wo_flags[0] if args_wo_flags else ""
-        user_input_echo = " ".join(args_wo_flags[1:]) if len(args_wo_flags) > 1 else ""
-        # Try to discover the agent YAML path
-        try:
-            agent_yaml_path = discover_agent_yaml(agent_name_echo) if agent_name_echo else None
-            agent_yaml_str = str(agent_yaml_path) if agent_yaml_path else None
-        except Exception:
-            agent_yaml_str = None
-        payload = {
-            "AgentName": agent_name_echo,
-            "Input": user_input_echo,
-            "ArgsNoFlags": args_wo_flags,
-            "AllArgs": args,
-            "AgentPath": agent_yaml_str,
-            "Note": "Echo mode – no run performed"
-        }
-        print(_json.dumps(payload, ensure_ascii=False))
-        sys.exit(0)
-
-    if "--cli" in args:
-        # Strip the flag and forward to CLI
-        args_wo = [a for a in args if a != "--cli"]
-        from call.cli.main import main as cli_main
-        sys.argv = [sys.argv[0]] + args_wo
-        sys.exit(cli_main())
-
-    # No --cli: run our own async main()
-    # Use argparse to support optional named args and legacy positionals.
-    # Forms supported:
-    #   1) python -m call.app.call <AgentName> [<input>]
-    #   2) python -m call.app.call --name <AgentName> [<input...>]
-    #   3) python -m call.app.call --input <input...>         (no agent)
-    #   4) python -m call.app.call -- <input...>              (no agent)
-    parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument('--name', dest='name', default="", help='Agent name (optional)')
-    parser.add_argument('--project', dest='project', default="", help='Project name (optional, restrict discovery to this project)')
-    # Capture the rest of the command line after --input verbatim
-    parser.add_argument('--input', dest='input_words', nargs=argparse.REMAINDER, help='Input text (optional, multi-word)')
-    # Legacy positionals: agent and optional input (quoted or space-separated)
-    parser.add_argument('positional', nargs='*')
-
-    ns = parser.parse_args(args)
-
-    agent_name = str(ns.name or "")
-    project_name = str(ns.project or "")
-    user_input = ""
-
-    if ns.input_words is not None:
-        # Everything after --input is input
-        user_input = " ".join(ns.input_words).strip()
-    elif ns.positional:
-        # If agent name already provided via --name, treat all positionals as input
-        if agent_name:
-            user_input = " ".join(ns.positional).strip()
-        else:
-            agent_name = ns.positional[0]
-            user_input = " ".join(ns.positional[1:]).strip()
-    # Debug print: show agent name parsed from arguments (empty string if absent)
-    debug_print(f"call AgentName=\"{agent_name}\"")
-    debug_print(f"call input=\"{user_input}\"")
-    if project_name:
-        debug_print(f"call project=\"{project_name}\"")
-
-    _asyncio.run(main(agent_name=agent_name, user_input=user_input, project_name=project_name))
