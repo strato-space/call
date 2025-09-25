@@ -2707,10 +2707,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         yield agent, cfg, session
         
 
-async def republish_results() -> str:
-    # loaf from file logs/x.html
-    output = open("logs/2025-07-12/ai_news_report.html", encoding="utf-8").read()
-    return await publish_results(content=output)
 
 async def send_telegram_welcome_message(text: str = '', *, chat_id: int | None = None, message_thread_id: int | None = None):
     # Send initial message and store its ID
