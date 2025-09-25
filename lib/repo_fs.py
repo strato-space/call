@@ -29,7 +29,7 @@ def _load_repos_from_env() -> List[str]:
     toks = [t.strip().lower() for t in raw.replace(";", ",").split(",") if t.strip()]
     return [t for t in toks if t in {"agent", "prompt"}]
 
-
+# todo - add othes repos of any structurue 0 not jusy agent and prompt 
 def _validate_env_repos(repos: List[str]) -> None:
     tokens = [str(r).strip().lower() for r in repos if str(r).strip()]
     missing: set[str] = set()
