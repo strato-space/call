@@ -453,7 +453,7 @@ def main() -> int:
             if args.repos:
                 raw = str(args.repos)
                 repos = [t.strip() for t in raw.replace(';', ',').split(',') if t.strip()]
-            res = call_api.reload(repos=repos)
+            res = call_api.reload(repos=repos, full_form=bool(getattr(args, "full_form", False)))
             _emit_output(res, args.format or 'json')
             return 0 if (isinstance(res, dict) and res.get('ok')) else 1
         except Exception as e:
@@ -463,6 +463,7 @@ def main() -> int:
     p_reload = sub.add_parser("reload", help="Scan repositories and rebuild repo.db")
     p_reload.add_argument("--repos", default="", help="Comma- or semicolon-separated list (agent,prompt)")
     p_reload.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
+    p_reload.add_argument("--full-form", action="store_true", help="Emit detailed per-directory output (default off)")
     p_reload.set_defaults(func=cmd_reload)
     # Backward-compatible alias
     p_scan = sub.add_parser("scan", help="Alias of reload (will be removed)")

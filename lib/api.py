@@ -428,13 +428,13 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     return ((main_text or ''), None)
 
 
-def reload(*, repos: Optional[List[str]] = None) -> Dict[str, Any]:
+def reload(*, repos: Optional[List[str]] = None, full_form: bool = True) -> Dict[str, Any]:
     """Filesystem scan and DB refresh (uniform name).
 
     Delegates to repo_fs.reload() (or scan()) and returns its dict result.
     """
     try:
-        return repo_fs.reload(repos)
+        return repo_fs.reload(repos, full_form=full_form)
     except Exception as e:
         return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
 

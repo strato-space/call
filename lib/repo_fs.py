@@ -30,6 +30,33 @@ def _load_repos_from_env() -> List[str]:
     return [t for t in toks if t in {"agent", "prompt"}]
 
 
+def _validate_env_repos(repos: List[str]) -> None:
+    tokens = [str(r).strip().lower() for r in repos if str(r).strip()]
+    missing: set[str] = set()
+    for token in tokens:
+        try:
+            if token == "agent":
+                discover_agent_repo()
+            elif token == "prompt":
+                discover_prompt_repo()
+            else:
+                # Unknown tokens are ignored silently (custom repos)
+                continue
+        except Exception:
+            missing.add(token)
+    if missing:
+        message = (
+            "Configured 'repos' entries not found: "
+            + ", ".join(sorted(missing))
+            + ". Ensure call/tools/repos.sh cloned them or update .env"
+        )
+        try:
+            debug_print("[repo.fs]", message)
+        except Exception:
+            pass
+        raise FileNotFoundError(message)
+
+
 def _upsert_row(
     cur,
     *,
@@ -590,14 +617,19 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
     return scanned, directories
 
 
-def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
+def reload(repos: Optional[List[str]] = None, *, full_form: bool = True) -> Dict[str, object]:
     """Scan configured repos and update the repo.db index. (Filesystem only)"""
     conn = repo_db._ensure_db()
     cur = conn.cursor()
 
-    repos = (repos or []) or _load_repos_from_env()
+    if repos:
+        repos = [str(r).strip().lower() for r in repos if str(r).strip()]
+    if not repos:
+        repos = _load_repos_from_env()
     if not repos:
         repos = ["agent", "prompt"]
+
+    _validate_env_repos(repos)
 
     scanned = 0
     repos_out: list[dict] = []
@@ -606,20 +638,25 @@ def reload(repos: Optional[List[str]] = None) -> Dict[str, object]:
             if r == "agent":
                 s_count, dirs = _scan_agent_repo(cur)
                 scanned += s_count
-                # Try to include repo root for convenience
-                try:
-                    arepo = discover_agent_repo()
-                    repos_out.append({"name": "agent", "root": str(arepo), "directories": dirs})
-                except Exception:
-                    repos_out.append({"name": "agent", "directories": dirs})
+                if full_form:
+                    try:
+                        arepo = discover_agent_repo()
+                        repos_out.append({"name": "agent", "root": str(arepo), "directories": dirs})
+                    except Exception:
+                        repos_out.append({"name": "agent", "directories": dirs})
+                else:
+                    repos_out.append({"name": "agent"})
             elif r == "prompt":
                 s_count, dirs = _scan_prompt_repo(cur)
                 scanned += s_count
-                try:
-                    prepo = discover_prompt_repo()
-                    repos_out.append({"name": "prompt", "root": str(prepo), "directories": dirs})
-                except Exception:
-                    repos_out.append({"name": "prompt", "directories": dirs})
+                if full_form:
+                    try:
+                        prepo = discover_prompt_repo()
+                        repos_out.append({"name": "prompt", "root": str(prepo), "directories": dirs})
+                    except Exception:
+                        repos_out.append({"name": "prompt", "directories": dirs})
+                else:
+                    repos_out.append({"name": "prompt"})
         # Prune stale prompt rows (file deleted or moved)
         try:
             cur.execute("SELECT target, path, prompt FROM repo")
