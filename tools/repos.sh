@@ -225,13 +225,37 @@ ensure_uv() {
 }
 
 install_mcp_node_servers() {
-  if command_exists nvm && command_exists npm; then
-    log_section "Installing MCP JavaScript servers via npm"
-    npm install @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem
+  local -a npm_cmd=()
+
+  if command_exists npm; then
+    npm_cmd=(npm)
   else
-    echo "nvm and/or npm not detected."
-    echo "Install nvm from https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe (Windows)"
-    echo "or follow https://github.com/nvm-sh/nvm for Linux/macOS, then install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp."
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        if command_exists nvm && [ -n "${NVM_SYMLINK-}" ]; then
+          local npm_cmd_path
+          npm_cmd_path="${NVM_SYMLINK}\\npm.cmd"
+          if [ -f "$npm_cmd_path" ]; then
+            npm_cmd=(cmd.exe /c "$npm_cmd_path")
+          fi
+        fi
+        ;;
+    esac
+  fi
+
+  if [ ${#npm_cmd[@]} -gt 0 ]; then
+    log_section "Installing MCP JavaScript servers via npm"
+    "${npm_cmd[@]}" install @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem
+    return 0
+  fi
+
+  if command_exists nvm; then
+    echo "Detected nvm but npm (Node.js) is not available in the current shell."
+    echo "Install and activate a Node.js version (e.g., 'nvm install --lts' followed by 'nvm use --lts'), then rerun with --mcp."
+  else
+    echo "npm was not detected. Install Node.js or nvm to proceed."
+    echo "For nvm on Windows: https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe"
+    echo "For nvm on Linux/macOS: https://github.com/nvm-sh/nvm"
   fi
 }
 
@@ -350,7 +374,9 @@ if [ "$DO_MCP" = true ]; then
   else
     echo "MCP tooling encountered issues; review the logs above." >&2
   fi
-  echo "If nvm is not installed on Windows, download the installer from:"
-  echo "  https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe"
-  echo "After installing nvm, install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp as needed."
+  if ! command_exists nvm; then
+    echo "If nvm is not installed on Windows, download the installer from:"
+    echo "  https://github.com/coreybutler/nvm-windows/releases/download/1.2.2/nvm-setup.exe"
+    echo "After installing nvm, install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp as needed."
+  fi
 fi
