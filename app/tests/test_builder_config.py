@@ -22,9 +22,9 @@ def test_builder_minimal_fields_ok(project, agent, prompt):
     assert err is None
     assert cfg is not None
     # Required minimal fields
-    assert isinstance(cfg.name, str) and cfg.name
+    assert isinstance(cfg.id, str) and cfg.id
     assert isinstance(cfg.project, str) and cfg.project in (project,)
-    assert cfg.agent_yaml_path is None or os.path.exists(cfg.agent_yaml_path)
+    assert cfg.path is None or isinstance(cfg.path, str)
     # base_dir should be a directory when yaml path is resolved
     if cfg.base_dir:
         assert os.path.isdir(cfg.base_dir)
@@ -33,7 +33,155 @@ def test_builder_minimal_fields_ok(project, agent, prompt):
 def test_builder_prompt_override_set():
     cfg, err = build_runnable_instructions_config(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning", merge=True)
     assert err is None
-    assert cfg and cfg.prompt_override == "33-Questioning"
+    assert cfg and cfg.prompt == "33-Questioning"
+
+
+def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
+    from call.lib import api as api_module
+
+    project_dir = tmp_path / "agent" / "ProjX"
+    agent_dir = project_dir / "AgentY"
+    prompt_ready = tmp_path / "prompt" / "ready"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    prompt_ready.mkdir(parents=True, exist_ok=True)
+
+    project_md = project_dir / "project.md"
+    agent_md = agent_dir / "agent.md"
+    prompt_md = prompt_ready / "PromptZ.md"
+
+    project_md.write_text(
+        textwrap.dedent(
+            """
+            <!-- METADATA:START -->
+            ```yaml
+            goal: Project goal
+            role: project role
+            vs:
+              - vs_project
+            mcp:
+              - id: project-mcp
+            ```
+            <!-- METADATA:END -->
+
+            <!-- PROMPT:START -->
+            Project instructions
+            <!-- PROMPT:END -->
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    agent_md.write_text(
+        textwrap.dedent(
+            """
+            <!-- METADATA:START -->
+            ```yaml
+            goal: Agent goal
+            role: agent role
+            vs:
+              - vs_agent
+            mcp:
+              - id: agent-mcp
+            ```
+            <!-- METADATA:END -->
+
+            <!-- PROMPT:START -->
+            Agent instructions
+            <!-- PROMPT:END -->
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    prompt_md.write_text(
+        textwrap.dedent(
+            """
+            <!-- METADATA:START -->
+            ```yaml
+            goal: Prompt goal
+            role: prompt role
+            agent: AgentY
+            vs:
+              - vs_prompt
+            mcp:
+              - id: prompt-mcp
+            ```
+            <!-- METADATA:END -->
+
+            <!-- PROMPT:START -->
+            Prompt instructions
+            <!-- PROMPT:END -->
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_resolve_agent(*, project=None, agent=None, prompt=None, target=None):
+        return {
+            "ok": True,
+            "resolved": {
+                "project": project or "ProjX",
+                "name": agent or "AgentY",
+                "path": str(agent_md),
+            },
+        }
+
+    monkeypatch.setattr(api_module, "resolve_agent", fake_resolve_agent, raising=True)
+
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_projects",
+        lambda **_: [{"project": "ProjX", "path": str(project_md)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_agents",
+        lambda **kw: [{"project": "ProjX", "agent": "AgentY", "path": str(agent_md)}] if kw.get("agent") in (None, "AgentY") else [],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_prompts",
+        lambda **kw: [{"project": "ProjX", "agent": "AgentY", "path": str(prompt_md)}] if kw.get("prompt") in (None, "PromptZ") else [],
+        raising=True,
+    )
+
+    cfg, err = build_runnable_instructions_config(
+        project="ProjX",
+        agent="AgentY",
+        prompt="PromptZ",
+        merge=False,
+    )
+
+    assert err is None
+    assert cfg is not None
+
+    assert cfg.project == "ProjX"
+    assert cfg.agent == "AgentY"
+    assert cfg.prompt == "PromptZ"
+
+    assert cfg.role == "prompt role"
+    assert cfg.vs_list == ["vs_prompt"]
+    assert cfg.mcp == [{"id": "prompt-mcp"}]
+
+    assert cfg.project_cfg is not None
+    assert cfg.project_cfg.type == "project"
+    assert cfg.project_cfg.role == "project role"
+    assert cfg.project_cfg.vs_list == ["vs_project"]
+
+    assert cfg.agent_cfg is not None
+    assert cfg.agent_cfg.type == "agent"
+    assert cfg.agent_cfg.role == "agent role"
+    assert cfg.agent_cfg.vs_list == ["vs_agent"]
+
+    assert cfg.instructions.strip().startswith("Prompt instructions")
+    assert cfg.agent_cfg.instructions.strip().startswith("Agent instructions")
+    assert cfg.project_cfg.instructions.strip().startswith("Project instructions")
 
 
 def test_builder_no_data_found_error():
@@ -139,3 +287,54 @@ def test_builder_model_falls_back_to_env(monkeypatch, tmp_path):
     assert err is None
     assert cfg is not None
     assert cfg.model == "gpt-4o-mini"
+
+
+def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
+    agent_path = tmp_path / "agent.md"
+    agent_path.write_text(
+        textwrap.dedent(
+            """
+            <!--   METADATA : START   -->
+            ```yaml
+            model: gpt-5
+            ```
+            <!-- METADATA:END -->
+
+            <!-- PROMPT: START -->
+            ВАЖНО: сделай что-то
+            <!-- PROMPT: END -->
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_projects",
+        lambda **_: [],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_agents",
+        lambda **_: [{"project": "FanFab", "agent": "Vasil3", "path": str(agent_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_prompts",
+        lambda **_: [],
+        raising=True,
+    )
+
+    cfg, err = build_runnable_instructions_config(
+        project="FanFab",
+        agent="Vasil3",
+        merge=False,
+    )
+
+    assert err is None
+    assert cfg is not None
+    assert "ВАЖНО" in cfg.instructions
+    assert cfg.instructions.strip().startswith("ВАЖНО")

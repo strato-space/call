@@ -278,12 +278,17 @@ def cmd_call(args: argparse.Namespace) -> int:
                             merge=bool(getattr(args, "merge", False)),
                         )
                         if not err and cfg:
+                            agent_val = getattr(cfg, 'agent', None)
+                            if not agent_val:
+                                agent_val = None
+                            elif getattr(cfg, 'type', None) == "project":
+                                agent_val = None
                             resolved = {
-                                "project": getattr(cfg, 'project', None),
-                                # Agent is null when the selection is a project
-                                "agent": (None if (getattr(cfg, 'type', None) == 'project') else getattr(cfg, 'name', None)),
-                                "prompt": getattr(cfg, 'prompt_override', None),
+                                "id": getattr(cfg, 'id', None),
                                 "type": getattr(cfg, 'type', None),
+                                "project": getattr(cfg, 'project', None),
+                                "agent": agent_val,
+                                "prompt": getattr(cfg, 'prompt', None),
                                 "path": getattr(cfg, 'path', None),
                                 "url": getattr(cfg, 'url', None),
                             }

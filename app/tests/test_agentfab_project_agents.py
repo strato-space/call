@@ -2,7 +2,7 @@ import io
 import os
 from pathlib import Path
 
-from call.app.call import _parse_md_metadata_and_prompt
+from call.lib.utils import parse_metadata_and_prompt
 
 
 def test_agentfab_project_agents_keys_present():
@@ -11,7 +11,7 @@ def test_agentfab_project_agents_keys_present():
     proj_md = root / "prompt" / "AgentFab" / "project.md"
     assert proj_md.exists(), f"project.md not found at {proj_md}"
     text = proj_md.read_text(encoding="utf-8")
-    meta, _ = _parse_md_metadata_and_prompt(text)
+    meta = parse_metadata_and_prompt(text)
     assert isinstance(meta, dict), "METADATA must be a YAML mapping"
     agents = meta.get("agents")
     assert isinstance(agents, dict), "METADATA.agents must be a mapping"

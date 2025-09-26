@@ -37,12 +37,12 @@ def test_build_cfg_agents_via_target_fanfab():
     # Vasil3 in FanFab
     cfg, err = api.build_runnable_instructions_config(project="FanFab", agent=None, prompt=None, target="Vasil3", input="hi", merge=False)
     assert err is None and cfg is not None
-    assert cfg.type == "agent" and cfg.name == "Vasil3"
+    assert cfg.type == "agent" and cfg.id == "Vasil3"
     assert isinstance(cfg.path, str) and "/Vasil3/agent.md" in cfg.path
     # AiNewsAggr in FanFab
     cfg, err = api.build_runnable_instructions_config(project="FanFab", agent=None, prompt=None, target="AiNewsAggr", input="hi", merge=False)
     assert err is None and cfg is not None
-    assert cfg.type == "agent" and cfg.name == "AiNewsAggr"
+    assert cfg.type == "agent" and cfg.id == "AiNewsAggr"
     assert isinstance(cfg.path, str) and "/AiNewsAggr/agent.md" in cfg.path
 
 
@@ -51,15 +51,15 @@ def test_build_cfg_prompts_via_target():
     # 11-ExtractUserPain under UxFab
     cfg, err = api.build_runnable_instructions_config(project="UxFab", agent=None, prompt=None, target="11-ExtractUserPain", input="hi", merge=False)
     assert err is None and cfg is not None
-    assert cfg.type == "prompt" and cfg.name == "11-ExtractUserPain"
+    assert cfg.type == "prompt" and cfg.id == "11-ExtractUserPain"
     assert isinstance(cfg.path, str) and cfg.path.endswith("prompt/draft/11-ExtractUserPain.md")
     # 10-SelfReflection under AgentFab
     cfg, err = api.build_runnable_instructions_config(project="AgentFab", agent=None, prompt=None, target="10-SelfReflection", input="hi", merge=False)
     assert err is None and cfg is not None
-    assert cfg.type == "prompt" and cfg.name == "10-SelfReflection"
+    assert cfg.type == "prompt" and cfg.id == "10-SelfReflection"
     assert isinstance(cfg.path, str) and cfg.path.endswith("prompt/draft/10-SelfReflection.md")
     # 50-DiscoveryAgent under AgentFab
     cfg, err = api.build_runnable_instructions_config(project="AgentFab", agent=None, prompt=None, target="50-DiscoveryAgent", input="hi", merge=False)
     assert err is None and cfg is not None
-    assert cfg.type == "prompt" and cfg.name == "50-DiscoveryAgent"
+    assert cfg.type == "prompt" and cfg.id == "50-DiscoveryAgent"
     assert isinstance(cfg.path, str) and cfg.path.endswith("prompt/draft/50-Discoveryagent.md")

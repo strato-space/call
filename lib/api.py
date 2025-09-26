@@ -347,67 +347,60 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     # Optional download
     if download and ctx_items:
         try:
-            import mimetypes as _mimes, base64 as _b64
+            import mimetypes as _mimes
+            import base64 as _b64
             from pathlib import Path as _Path
             try:
                 import httpx as _httpx
             except Exception:
                 _httpx = None
-            def _is_text(mime: str | None, p: str) -> bool:
+
+            def _is_text(mime: str | None, name: str) -> bool:
                 if not mime:
-                    pl = p.lower()
-                    return pl.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
-                return mime.startswith('text/') or mime in ('application/json','application/yaml','application/x-yaml')
+                    lower = name.lower()
+                    return lower.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
+                return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
+
             for it in ctx_items:
                 try:
                     if not isinstance(it, dict):
                         continue
-                    if (it.get('content') or it.get('base64')):
+                    if it.get('content') or it.get('base64'):
                         continue
-                    url = str(it.get('url') or '').strip()
-                    pth = str(it.get('path') or '').strip()
-                    if url and _httpx:
+                    url_val = str(it.get('url') or '').strip()
+                    path_val = str(it.get('path') or '').strip()
+
+                    if url_val and _httpx:
                         try:
-                            guess, _ = _mimes.guess_type(url)
-                            with _httpx.Client(timeout=15.0, follow_redirects=True) as c:
-                                resp = c.get(url)
-                                if resp.status_code == 200:
-                                    data = resp.content
-                                    # Record content type from server when available
-                                    try:
-                                        ct = resp.headers.get('content-type')
-                                        if ct:
-                                            it['content_type'] = ct
-                                    except Exception:
-                                        pass
-                                    if _is_text(guess, url):
-                                        try:
-                                            it['content'] = data.decode('utf-8')
-                                        except Exception:
-                                            it['base64'] = _b64.b64encode(data).decode('ascii')
-                                    else:
-                                        it['base64'] = _b64.b64encode(data).decode('ascii')
+                            guess, _ = _mimes.guess_type(url_val)
+                            with _httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                                resp = client.get(url_val)
+                                data = resp.content or b""
+                            if _is_text(guess, url_val):
+                                it['content'] = data.decode('utf-8', 'replace')
+                            else:
+                                it['base64'] = _b64.b64encode(data).decode('ascii')
                         except Exception:
-                            pass
-                    elif pth:
+                            continue
+                        else:
+                            continue
+
+                    if path_val:
                         try:
-                            p = _Path(pth)
-                            if p.exists():
-                                guess, _ = _mimes.guess_type(p.name)
-                                if guess:
-                                    try:
-                                        it['content_type'] = guess
-                                    except Exception:
-                                        pass
-                                if _is_text(guess, p.name):
-                                    try:
-                                        it['content'] = p.read_text(encoding='utf-8')
-                                    except Exception:
-                                        it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
-                                else:
-                                    it['base64'] = _b64.b64encode(p.read_bytes()).decode('ascii')
+                            p = _Path(path_val)
+                            if not p.exists():
+                                continue
+                            guess, _ = _mimes.guess_type(p.name)
+                            data = p.read_bytes()
+                            if _is_text(guess, p.name):
+                                try:
+                                    it['content'] = data.decode('utf-8')
+                                except Exception:
+                                    it['content'] = data.decode('utf-8', 'replace')
+                            else:
+                                it['base64'] = _b64.b64encode(data).decode('ascii')
                         except Exception:
-                            pass
+                            continue
                 except Exception:
                     continue
         except Exception:
@@ -441,32 +434,40 @@ def reload(*, repos: Optional[List[str]] = None, full_form: bool = True) -> Dict
 
 @dataclass
 class RunnableConfig:
-    """Minimal ready-to-run config consumed by app.build_and_run_agent.
+    """Minimal ready-to-run config consumed by app.build_and_run_agent."""
 
-    KISS: keep only fields that are actually used at runtime.
-    """
-    name: str = ""
-    project: Optional[str] = None
-    prompt_override: Optional[str] = None
-    merge: bool = False
-    # Deprecated: absolute path to agent.yaml/agent.md for backward compatibility
-    agent_yaml_path: Optional[str] = None
-    # New path semantics: repo-relative path (e.g., 'agent/FanFab/Vasil3/agent.md', 'prompt/ready/...')
-    path: Optional[str] = None
-    # Public URL to view the card (constructed from .env GITHUB_REMOTE_ORGANIZATION_URL and GITHUB_BRANCH)
-    url: Optional[str] = None
-    # Kind of runnable: 'project' | 'agent' | 'prompt'
-    type: Optional[str] = None
-    # Optional goal/purpose from METADATA
-    goal: Optional[str] = None
-    base_dir: Optional[str] = None
-    instructions: str = ""
+    # Primary identifiers and descriptive metadata
+    id: str = ""
+    type: str = ""  # 'project' | 'agent' | 'prompt'
+    path: str = ""  # Repo-relative card path when available
+    url: str = ""   # Public URL (e.g., GitHub blob) for the selected card
+    goal: str = ""
+    role: str = ""
+
+    # Hierarchy identifiers resolved from metadata (prefer *_id values)
+    project: str = ""
+    agent: str = ""
+    prompt: str = ""
+
+    # Convenience selectors mirroring the original user request
+    target: str = ""
+    input: str = ""
+
+    # Text payloads
+    prompt_text: str = ""  # Raw prompt body extracted from the primary card prior to merges
+    instructions: str = ""  # Final instructions dispatched to the runtime after merges/overlays
+
+    # Runtime configuration and attributes
     model: str = "gpt-5"
-    # Attributes from cards (unresolved). app layer may derive vs_list from here.
     attributes: Dict[str, Any] = field(default_factory=dict)
-    # Convenience: carry original selection for downstream consumers
-    target: Optional[str] = None
-    input: Optional[str] = None
+    vs_list: List[str] = field(default_factory=list)
+    mcp: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Additional execution context
+    merge: bool = False
+    base_dir: str = ""
+    project_cfg: Optional["RunnableConfig"] = None
+    agent_cfg: Optional["RunnableConfig"] = None
 
 
 def build_runnable_instructions_config(
@@ -485,45 +486,22 @@ def build_runnable_instructions_config(
       - err is an error dict (same shape as _error_payload) when selection fails
 
     Behavior:
-      - Uses resolve_agent(project, agent, prompt) to pick a single agent
-      - Fills name, project, prompt_override, merge, agent_yaml_path, base_dir
-      - Best-effort parse of agent.yaml to populate attributes/instructions/model/vs_list if present
+      - Uses resolve_agent(project, agent, prompt) to pick a single agent/prompt
+      - Fills id, project, agent, prompt, path, base_dir, instructions, attributes, vs_list, mcp
+      - Best-effort parse of agent.md/prompt.md to populate attributes/instructions/model/vs_list if present
     """
     # Local helpers (avoid importing app layer):
     import os as _os
     from pathlib import Path as _Path
     import yaml as _yaml
 
+    from call.lib.utils import parse_metadata_and_prompt
+
     def _read(p):
         try:
             return _Path(p).read_text(encoding="utf-8")
         except Exception:
             return ""
-
-    def _parse_md(md_text: str) -> tuple[Dict[str, Any], str]:
-        meta: Dict[str, Any] = {}
-        body: str = md_text or ""
-        try:
-            start_tag = "<!-- METADATA:START -->"
-            if start_tag in md_text:
-                y0 = md_text.index(start_tag)
-                y1 = md_text.index("```yaml", y0) + len("```yaml")
-                y2 = md_text.index("```", y1)
-                meta = _yaml.safe_load(md_text[y1:y2]) or {}
-                if not isinstance(meta, dict):
-                    meta = {}
-        except Exception:
-            meta = {}
-        try:
-            p0_tag = "<!-- PROMPT:START -->"
-            p1_tag = "<!-- PROMPT:END -->"
-            if p0_tag in md_text and p1_tag in md_text:
-                p0 = md_text.index(p0_tag) + len(p0_tag)
-                p1 = md_text.index(p1_tag, p0)
-                body = md_text[p0:p1].strip()
-        except Exception:
-            body = (md_text or "").strip()
-        return meta, body
 
     def _load_card(path: _Path | None) -> tuple[Dict[str, Any], str, str]:
         """MD-only loader: returns (metadata_dict, body_text, raw_text) for Markdown cards.
@@ -535,11 +513,67 @@ def build_runnable_instructions_config(
         text = _read(path)
         if not text:
             return {}, "", ""
-        if str(path).lower().endswith(('.md', '.markdown')):
-            meta, body = _parse_md(text)
-            return meta if isinstance(meta, dict) else {}, body, text
+        suffix = str(path).lower()
+        if suffix.endswith(('.md', '.markdown')):
+            try:
+                parsed = parse_metadata_and_prompt(text, path=str(path))
+            except ValueError:
+                try:
+                    import logging as _logging
+                    _logging.getLogger("call.api").exception("Failed to parse metadata for card %s", path)
+                except Exception:
+                    pass
+                return {}, "", text
+            body = str((parsed or {}).get("prompt") or "")
+            meta = dict(parsed or {})
+            meta.pop("prompt", None)
+            return meta, body, text
         # Non-MD: caller will error out if strict
-        return {}, "", ""
+        if suffix.endswith(('.yaml', '.yml')):
+            import yaml as _yaml
+            data = _yaml.safe_load(text) or {}
+            if isinstance(data, dict):
+                return data, "", text
+            raise ValueError(f"Card YAML did not parse into a mapping ({path})")
+        raise ValueError(f"Unsupported card format ({path})")
+
+    def _listify(value: Any) -> List[Any]:
+        if isinstance(value, _bi.list):
+            return [v for v in value if v is not None]
+        if value is None:
+            return []
+        return [value]
+
+    def _norm_list(value: Any) -> List[str]:
+        out = []
+        for v in _listify(value):
+            if v is None:
+                continue
+            if isinstance(v, _bi.str):
+                val = v.strip()
+                if val:
+                    out.append(val)
+            else:
+                out.append(str(v))
+        return out
+
+    def _normalize_id(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            val = str(value).strip()
+        except Exception:
+            return None
+        return val or None
+
+    def _copy_attrs(src: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not isinstance(src, dict):
+            return {}
+        result = dict(src)
+        result.pop("prompt", None)
+        return result
+
+    resolved_env: Dict[str, Any] | None = None
 
     # 0) Target interpretation (prompt > agent > project) and wildcard prompt resolution
     try:
@@ -599,17 +633,25 @@ def build_runnable_instructions_config(
     # Special case: blank selection (no project/agent/prompt/target) — build empty cfg
     if not (str(project or "").strip() or str(agent or "").strip() or str(prompt or "").strip() or str(target or "").strip()):
         return RunnableConfig(
-            name="",
-            project=(project or None),
-            prompt_override=None,
-            merge=bool(merge),
-            agent_yaml_path=None,
-            base_dir=None,
+            id=None,
+            type=None,
+            path=None,
+            url=None,
+            goal=None,
+            role=None,
+            project=None,
+            agent=None,
+            prompt=None,
+            target=None,
+            input=(input or None),
+            prompt_text=None,
             instructions="",
             model=str(_os.environ.get("LLM_MODEL", "gpt-5")),
             attributes={},
-            target=None,
-            input=(input or None),
+            vs_list=[],
+            mcp=[],
+            merge=bool(merge),
+            base_dir=None,
         ), None
 
     # Resolve selection to determine agent path and effective project/name
@@ -742,6 +784,7 @@ def build_runnable_instructions_config(
         else:
             # env ok
             resolved = env.get("resolved") or {}
+            resolved_env = resolved
             name = str(resolved.get("name") or "")
             proj = resolved.get("project") or project
             path = resolved.get("path")
@@ -856,10 +899,14 @@ def build_runnable_instructions_config(
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
 
     # Parse cards
-    proj_attrs, proj_instr, proj_raw = _load_card(proj_yaml)
-    ag_attrs, ag_instr, ag_raw = _load_card(path_p)
+    proj_attrs_raw, proj_instr, proj_raw = _load_card(proj_yaml)
+    ag_attrs_raw, ag_instr, ag_raw = _load_card(path_p)
     _pr_src = (pr_path_override if pr_path_override is not None else (_Path(pr_path) if pr_path else None))
-    pr_attrs, pr_instr, pr_raw = _load_card(_pr_src)
+    pr_attrs_raw, pr_instr, pr_raw = _load_card(_pr_src)
+
+    proj_attrs = _copy_attrs(proj_attrs_raw)
+    ag_attrs = _copy_attrs(ag_attrs_raw)
+    pr_attrs = _copy_attrs(pr_attrs_raw)
 
     # Strict validation: cards must be Markdown; prompt MD must contain METADATA
     def _is_md(p: _Path | None) -> bool:
@@ -928,6 +975,87 @@ def build_runnable_instructions_config(
     except Exception:
         pass
 
+    # Precedence for metadata extraction: prompt > agent > project
+    def _get(meta: Dict[str, Any] | None, key: str):
+        return meta.get(key) if isinstance(meta, dict) else None
+
+    role_val = _get(pr_attrs, "role") or _get(ag_attrs, "role") or _get(proj_attrs, "role")
+    vs_val = _get(pr_attrs, "vs") or _get(ag_attrs, "vs") or _get(proj_attrs, "vs")
+    mcp_val = _get(pr_attrs, "mcp") or _get(ag_attrs, "mcp") or _get(proj_attrs, "mcp")
+
+    vs_list = _norm_list(vs_val)
+    mcp_list = _listify(mcp_val)
+
+    def _model_from(attrs: Dict[str, Any] | None) -> str | None:
+        if not isinstance(attrs, dict):
+            return None
+        try:
+            if attrs.get("model"):
+                return str(attrs.get("model"))
+        except Exception:
+            pass
+        try:
+            for k, v in attrs.items():
+                if isinstance(k, str) and k.startswith("model-") and not k.startswith("model-params"):
+                    return str(v)
+        except Exception:
+            pass
+        return None
+
+    def _sub_cfg(
+        *,
+        kind: str,
+        attrs: Dict[str, Any],
+        body: str,
+        raw_path: _Path | None,
+        rel_path: Optional[str],
+        url_val: Optional[str],
+        project_id: Optional[str],
+        agent_id: Optional[str],
+        prompt_id: Optional[str],
+    ) -> RunnableConfig:
+        base_dir_val = None
+        if raw_path is not None:
+            try:
+                base_dir_val = str(raw_path.parent)
+            except Exception:
+                base_dir_val = None
+        cfg_id = _normalize_id(attrs.get("id"))
+        if cfg_id is None:
+            if kind == "prompt":
+                cfg_id = prompt_id
+            elif kind == "agent":
+                cfg_id = agent_id
+            else:
+                cfg_id = project_id
+        prompt_text = str(body or "") or ""
+        if not prompt_text.strip():
+            prompt_text = ""
+        attr_copy = _copy_attrs(attrs)
+        if raw_path is not None:
+            attr_copy.setdefault("_source_path", str(raw_path))
+        return RunnableConfig(
+            id=cfg_id,
+            type=kind,
+            path=(str(rel_path) if rel_path else None),
+            url=(str(url_val) if url_val else None),
+            goal=str(attrs.get("goal")) if attrs.get("goal") is not None else None,
+            role=str(attrs.get("role")) if attrs.get("role") is not None else None,
+            project=project_id,
+            agent=agent_id if kind != "project" else None,
+            prompt=prompt_id if kind == "prompt" else None,
+            target=None,
+            input=None,
+            prompt_text=(prompt_text or None),
+            instructions=str(body or ""),
+            model=_model_from(attrs) or "gpt-5",
+            attributes=attr_copy,
+            vs_list=_norm_list(attrs.get("vs")),
+            mcp=_listify(attrs.get("mcp")),
+            merge=False,
+            base_dir=base_dir_val,
+        )
+
     # Determine runnable kind and primary absolute path
     selected_kind: str | None = None
     selected_abs: _Path | None = None
@@ -941,6 +1069,14 @@ def build_runnable_instructions_config(
         selected_kind = "project"
         selected_abs = _Path(proj_yaml)
 
+    # Compute selected_agent based on selection (do not infer prompt->agent)
+    selected_agent: Optional[str] = None
+    if selected_kind == "agent":
+        selected_agent = str(name or agent or "") or None
+    elif selected_kind == "prompt":
+        selected_agent = str(agent or "") or None
+    else:
+        selected_agent = None
     # Align display name with the selected kind
     try:
         if selected_kind == "prompt" and isinstance(prompt, str) and prompt.strip():
@@ -1045,39 +1181,124 @@ def build_runnable_instructions_config(
     except Exception:
         pass
 
+    project_id = _normalize_id((_get(proj_attrs, "id") or proj))
+    if project_id is None:
+        project_id = _normalize_id(proj)
+
+    agent_id = _normalize_id((_get(ag_attrs, "id") or agent or (resolved_env.get("name") if isinstance(resolved_env, dict) else None)))
+
+    prompt_id = _normalize_id((_get(pr_attrs, "id") or prompt))
+    target_id = _normalize_id(target) if isinstance(target, str) else None
+    # Fallback: when selecting a prompt via target (prompt may be None), derive from file stem
+    try:
+        if (not prompt_id) and target_id:
+            prompt_id = target_id
+        if (not prompt_id) and (_pr_src is not None):
+            prompt_id = _normalize_id(_Path(_pr_src).stem)
+        if (not prompt_id) and (selected_kind == "prompt") and (selected_abs is not None):
+            prompt_id = _normalize_id(selected_abs.stem)
+        if prompt_id and "-" in prompt_id:
+            prompt_id = prompt_id
+    except Exception:
+        pass
+
+    selected_id: Optional[str]
+    if selected_kind == "prompt":
+        if target_id and target_id != prompt_id and (not prompt_id or ("-" in target_id and "-" not in str(prompt_id))):
+            prompt_id = target_id
+            selected_id = prompt_id
+        else:
+            selected_id = prompt_id
+    elif selected_kind == "agent":
+        selected_id = agent_id or project_id
+    elif selected_kind == "project":
+        selected_id = project_id
+    else:
+        selected_id = project_id or agent_id or prompt_id
+
+    prompt_text_val: Optional[str]
+    if selected_kind == "prompt":
+        prompt_text_val = pr_instr or ""
+    elif selected_kind == "agent":
+        prompt_text_val = ag_instr or ""
+    elif selected_kind == "project":
+        prompt_text_val = proj_instr or ""
+    else:
+        prompt_text_val = pr_instr or ag_instr or proj_instr or ""
+    if prompt_text_val:
+        prompt_text_val = prompt_text_val if prompt_text_val.strip() else ""
+    else:
+        prompt_text_val = None
+
+    project_cfg: Optional[RunnableConfig] = None
+    agent_cfg: Optional[RunnableConfig] = None
+
+    if selected_kind in {"agent", "prompt"} and (proj_attrs or proj_instr):
+        project_cfg = _sub_cfg(
+            kind="project",
+            attrs=proj_attrs,
+            body=proj_instr,
+            raw_path=proj_yaml,
+            rel_path=None,
+            url_val=None,
+            project_id=project_id,
+            agent_id=None,
+            prompt_id=None,
+        )
+
+    if selected_kind == "prompt" and (ag_attrs or ag_instr):
+        agent_cfg = _sub_cfg(
+            kind="agent",
+            attrs=ag_attrs,
+            body=ag_instr,
+            raw_path=path_p,
+            rel_path=None,
+            url_val=None,
+            project_id=project_id,
+            agent_id=agent_id,
+            prompt_id=prompt_id,
+        )
+
+    source_path_str = str(selected_abs) if selected_abs else None
+    if source_path_str and isinstance(attributes, dict):
+        attributes.setdefault("_source_path", source_path_str)
+
     cfg = RunnableConfig(
-        name=name,
-        project=proj,
-        prompt_override=(prompt or None),
-        merge=bool(merge),
-        agent_yaml_path=(str(selected_abs) if selected_abs else None),
-        path=(str(rel_path_val) if rel_path_val else None),
-        url=(str(url_val) if url_val else None),
-        type=(selected_kind or None),
-        goal=(str(goal_val) if goal_val else None),
-        base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else None),
+        id=(selected_id or ""),
+        type=(selected_kind or ""),
+        path=(str(rel_path_val) if rel_path_val else (selected_abs.as_posix() if selected_abs else "")),
+        url=(str(url_val) if url_val else ""),
+        goal=(str(goal_val) if goal_val else ""),
+        role=(str(role_val) if role_val is not None else ""),
+        project=(project_id or ""),
+        agent=(selected_agent or ""),
+        prompt=(prompt_id or ""),
+        target=(target or ""),
+        input=(input or ""),
+        prompt_text=(prompt_text_val or ""),
         instructions=str(instr or ""),
-        model=None,
+        model=( _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs) or ""),
         attributes=attributes if isinstance(attributes, dict) else {},
-        target=(target or None),
-        input=(input or None),
+        vs_list=vs_list,
+        mcp=mcp_list,
+        merge=bool(merge),
+        base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else ""),
+        project_cfg=project_cfg,
+        agent_cfg=agent_cfg,
     )
 
-    def _model_from(attrs: Dict[str, Any] | None) -> str | None:
-        if not isinstance(attrs, dict):
-            return None
-        try:
-            if attrs.get("model"):
-                return str(attrs.get("model"))
-        except Exception:
-            pass
-        try:
-            for k, v in attrs.items():
-                if isinstance(k, str) and k.startswith("model-") and not k.startswith("model-params"):
-                    return str(v)
-        except Exception:
-            pass
-        return None
+    # Back-compat: ensure .name exists for tests expecting it
+    try:
+        display = None
+        if isinstance(name, str) and name:
+            display = name
+        elif isinstance(selected_id, str) and selected_id:
+            display = selected_id
+        else:
+            display = (cfg.agent or cfg.prompt or cfg.project or "")
+        setattr(cfg, "name", display or "")
+    except Exception:
+        pass
 
     # Determine model precedence: prompt attrs > agent attrs > project attrs
     cfg.model = _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs)
@@ -1293,18 +1514,17 @@ async def call_async(
         pass
 
     # Proceed with cfg-driven run; build 'resolved' from cfg
-    chosen_name = cfg.name if cfg else ""
-    chosen_project = (cfg.project if cfg else None) or (project or "")
-    # Back-compat: absolute path (if any) for agent echo
-    try:
-        yaml_path = getattr(cfg, "agent_yaml_path", None)
-    except Exception:
-        yaml_path = None
-    # Resolved descriptor for response/echo
+    chosen_id = (getattr(cfg, "id", None) if cfg else None) or ""
+    chosen_project = (getattr(cfg, "project", None) if cfg else None) or (project or "")
+    # Resolved descriptor for response/echo (new schema)
     resolved = {
         "project": chosen_project,
-        "name": chosen_name,
-        # New semantics: path is repo-relative (e.g., 'agent/Proj/Agent/agent.md' or 'prompt/ready/...')
+        # Back-compat alias for tests expecting 'name'
+        "name": ((getattr(cfg, "agent", None) if cfg else None) or (agent or None) or (getattr(cfg, "id", None) if cfg else None)),
+        "id": (getattr(cfg, "id", None) if cfg else None),
+        "agent": (getattr(cfg, "agent", None) if cfg else None),
+        "prompt": (getattr(cfg, "prompt", None) if cfg else None),
+        # path is repo-relative (e.g., 'agent/Proj/Agent/agent.md' or 'prompt/ready/...')
         "path": (getattr(cfg, "path", None) if cfg else None),
         # Optional helpful fields
         "url": (getattr(cfg, "url", None) if cfg else None),
@@ -1313,6 +1533,12 @@ async def call_async(
         "aliases": [],
         "prompts": [],
     }
+    # For project selections, resolved.agent should be null
+    try:
+        if str(resolved.get("type") or "").lower() == "project":
+            resolved["agent"] = None
+    except Exception:
+        pass
 
     # Align with app/main: set effective targets according to session rules
     # Priority:
@@ -1379,9 +1605,8 @@ async def call_async(
             # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
             # when a monkeypatched test function expects (name, samples_dir, ...).
             cm = app_call.build_and_run_agent
-            _cfg_obj = (cfg if cfg is not None else RunnableConfig(name=(chosen_name or ""), project=(project or None), instructions="", input=(input or None), target=(target or None)))
             try:
-                async with cm(cfg=_cfg_obj, user_input=((_cfg_obj.input or input) or "")) as (agent_obj, _cfg, _session):
+                async with cm(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
                     final_output = getattr(_cfg, "_last_final_output", None)
                     try:
                         actual_sid = getattr(_session, "id", None)
@@ -1390,12 +1615,12 @@ async def call_async(
             except TypeError:
                 # Legacy compatibility: (name, samples_dir, user_input, prompt_override, project_name, merge)
                 async with cm(
-                    (_cfg_obj.name if isinstance(_cfg_obj.name, str) else (chosen_name or "")),
+                    ((getattr(cfg, "agent", None) if cfg else None) or (agent or "") or (chosen_id or "")),
                     None,
                     user_input=(input or ""),
-                    prompt_override=(_cfg_obj.prompt_override or (prompt or None)),
-                    project_name=(_cfg_obj.project or (project or None)),
-                    merge=bool(_cfg_obj.merge),
+                    prompt_override=((getattr(cfg, "prompt", None) if cfg else None) or (prompt or None)),
+                    project_name=((getattr(cfg, "project", None) if cfg else None) or (project or None)),
+                    merge=bool((getattr(cfg, "merge", None) if cfg else False)),
                 ) as (agent_obj, _cfg, _session):
                     final_output = getattr(_cfg, "_last_final_output", None)
                     try:
@@ -1427,7 +1652,7 @@ async def call_async(
                         details = _json.loads(msg[brace:])
                 except Exception:
                     details = None
-            return _error_payload(agent=(chosen_name or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details, session_id=(session_id or None))
+            return _error_payload(agent=(chosen_id or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details, session_id=(session_id or None))
     finally:
         if dump_task is not None:
             try:
@@ -1480,8 +1705,8 @@ async def call_async(
 
     return {
         "ok": True,
-        "agent": (chosen_name if isinstance(chosen_name, str) else ""),
-        "agent_path": (str(yaml_path) if yaml_path else None),
+        "agent": (chosen_id if isinstance(chosen_id, str) else ""),
+        "agent_path": (getattr(cfg, "path", None) if cfg else None),
         "final_output": final_output,
         # echo flag included for callers that want to inspect behavior upstream
         "echo": bool(echo),
@@ -1721,7 +1946,7 @@ def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Opt
             "prompt": None,
             "target": None,
             "input": inp,
-            "echo": bool(payload.get("echo", True)),
+            "echo": bool(payload.get("echo", False)),
         }
         # Assign only the provided selector
         if str(f_project or "").strip():

@@ -48,4 +48,3 @@ repo.db
 # If repo's are extracted in call folder for chatgpt.com/codex
 agent
 prompt
-.env

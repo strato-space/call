@@ -24,10 +24,11 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
         })
 
     cfg = SimpleNamespace(
-        name="FooAgent",
-        agent_yaml_path="/tmp/foo.md",
-        attributes={},
+        id="FooAgent",
+        path="prompt/ready/FooAgent.md",
+        attributes={"_source_path": "/tmp/foo.md"},
         model="gpt-4.1-mini",
+        vs_list=["vs_abc"],
     )
 
     monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
@@ -46,6 +47,7 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
     assert sent_payload == {"text": "<b>HTML</b>", "chat_id": 123, "thread_id": 456}
     assert captured_compose["mcp_servers_started"] == ["srv-A"]
     assert captured_compose["user_input"] == "hello"
+    assert captured_compose["source_path"] == "/tmp/foo.md"
 
 
 @pytest.mark.asyncio
@@ -59,7 +61,7 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
     async def fake_send(**kwargs):  # pragma: no cover - should not be called
         calls.append("send")
 
-    cfg = SimpleNamespace(name="Foo", agent_yaml_path=None, attributes={}, model=None)
+    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, vs_list=None)
 
     monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
     monkeypatch.setattr(app_call, "send_telegram_welcome_message", fake_send, raising=False)
@@ -175,12 +177,14 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
     monkeypatch.setattr(app_call, "SQLiteSession", DummySession, raising=False)
 
     cfg = SimpleNamespace(
-        name="FooAgent",
+        id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
-        attributes={},
-        agent_yaml_path="/tmp/foo.md",
+        attributes={"_source_path": "/tmp/foo.md"},
+        path="prompt/ready/FooAgent.md",
         project="Proj",
+        vs_list=[],
+        merge=False,
     )
 
     app_call.selected_chat_id = 111
@@ -247,12 +251,14 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
     monkeypatch.setattr(app_call, "SQLiteSession", DummySession, raising=False)
 
     cfg = SimpleNamespace(
-        name="FooAgent",
+        id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
-        attributes={},
-        agent_yaml_path="/tmp/foo.md",
+        attributes={"_source_path": "/tmp/foo.md"},
+        path="prompt/ready/FooAgent.md",
         project="Proj",
+        vs_list=[],
+        merge=False,
     )
 
     app_call.selected_chat_id = 111

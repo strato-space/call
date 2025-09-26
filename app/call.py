@@ -1,86 +1,43 @@
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any
 
-@dataclass
-class AgentConfig:
-    """Lightweight config used by the runtime to run an Agent.
+from call.lib.utils import parse_metadata_and_prompt
 
-    Note: This mirrors the minimal fields the pipeline relies on and intentionally
-    avoids coupling to external DTOs. It is sufficient for building the Agent instance.
-    """
-    name: str = ""
-    instructions: str = ""
-    model: str | None = None
-    model_settings: Any | None = None
-    vs_list: list[str] | None = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    agent_yaml_path: Path | None = None
-    base_dir: Path | None = None
-    _last_final_output: Any | None = None
-
-
-def _parse_md_metadata_and_prompt(md_text: str) -> tuple[Dict[str, Any], str]:
-    """Extract metadata YAML (between <!-- METADATA:START --> fenced ```yaml ... ```)
-    and prompt body (prefer content between <!-- PROMPT:START --> and <!-- PROMPT:END -->).
-    Falls back to the whole MD text as prompt instructions when tags are absent.
-    """
-    meta: Dict[str, Any] = {}
-    body: str = md_text or ""
-    try:
-        start_tag = "<!-- METADATA:START -->"
-        if start_tag in md_text:
-            y0 = md_text.index(start_tag)
-            y1 = md_text.index("```yaml", y0) + len("```yaml")
-            y2 = md_text.index("```", y1)
-            import yaml as _yaml
-            meta = _yaml.safe_load(md_text[y1:y2]) or {}
-            if not isinstance(meta, dict):
-                meta = {}
-    except Exception:
-        meta = {}
-    try:
-        p0_tag = "<!-- PROMPT:START -->"
-        p1_tag = "<!-- PROMPT:END -->"
-        if p0_tag in md_text and p1_tag in md_text:
-            p0 = md_text.index(p0_tag) + len(p0_tag)
-            p1 = md_text.index(p1_tag, p0)
-            body = md_text[p0:p1].strip()
-    except Exception:
-        body = (md_text or "").strip()
-    return meta, body
-
-
+# Local YAML loader used across the app runtime (simple safe_load)
 def _load_yaml(path: Path) -> Dict[str, Any]:
     try:
         import yaml as _yaml
         return _yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    except Exception:
+    except Exception as e:
+        try:
+            import logging as _log
+            _log.exception("_load_yaml: failed to read %s", path)
+        except Exception:
+            pass
         return {}
 
 
-def _load_card(path: Path) -> tuple[Dict[str, Any], str, str]:
-    """Load a YAML or MD card.
-    Returns (attributes_dict, instructions_text, raw_dump_for_embed)
-    """
+def _load_card_metadata(path: Path) -> Dict[str, Any]:
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        card_path = Path(path)
+        text = card_path.read_text(encoding="utf-8")
+        suffix = card_path.suffix.lower()
+        if suffix in {".yaml", ".yml"}:
+            import yaml as _yaml
+            data = _yaml.safe_load(text) or {}
+            return data if isinstance(data, dict) else {}
+        # Default to Markdown parser (handles METADATA/PROMPT blocks)
+        meta = parse_metadata_and_prompt(text, path=str(card_path))
+        return meta if isinstance(meta, dict) else {}
+    except ValueError:
+        raise
     except Exception:
-        return {}, "", ""
-    if path.suffix.lower() in {".md", ".markdown"}:
-        meta, body = _parse_md_metadata_and_prompt(text)
-        raw_dump = text
-        return meta, body, raw_dump
-    # YAML
-    data = _load_yaml(path)
-    raw_dump = ""
-    try:
-        import yaml as _yaml
-        raw_dump = _yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
-    except Exception:
-        raw_dump = text
-    instructions = str(data.get("instructions") or data.get("goal") or "")
-    return (data if isinstance(data, dict) else {}), instructions, raw_dump
+        try:
+            import logging as _log
+            _log.exception("_load_card_metadata: failed to read %s", path)
+        except Exception:
+            pass
+        return {}
 
 # Thin wrapper to expose discovery to tests: call.app.call.discover_agent_yaml
 def discover_agent_yaml(agent_name: str, project: str | None = None):
@@ -608,7 +565,7 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                 pass
 
         try:
-            debug_print("[tool-call]", f"{getattr(sub_cfg, 'name', '') or sub_name}", "✓ completed")
+            debug_print("[tool-call]", f"{getattr(sub_cfg, 'id', '') or sub_name}", "✓ completed")
         except Exception:
             pass
         return result
@@ -626,7 +583,7 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     except Exception:
         pass
 
-    project_scope = None if (str(getattr(cfg, "name", "")).strip() == "AgentFab") else (cfg.project or None)
+    project_scope = None if (str(getattr(cfg, "id", "")).strip() == "AgentFab") else (getattr(cfg, "project", None) or None)
     try:
         # Resolve at call-time so tests can monkeypatch call.lib.api.build_runnable_instructions_config
         from call.lib import api as _api
@@ -640,7 +597,6 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
         )
     except Exception as exc:
         sub_cfg, sub_err = None, exc
-
     if sub_err or not sub_cfg:
         try:
             desc = getattr(sub_err, "description", None)
@@ -652,8 +608,8 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
         return None
 
     try:
-        if (str(getattr(sub_cfg, "name", "")).strip() or "") == (str(getattr(cfg, "name", "")).strip() or ""):
-            debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({cfg.name})")
+        if getattr(sub_cfg, "id", None) and getattr(cfg, "id", None) and (str(getattr(sub_cfg, "id", "")).strip() == str(getattr(cfg, "id", "")).strip()):
+            debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({getattr(cfg, 'id', '')})")
             return None
     except Exception:
         pass
@@ -661,7 +617,7 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     try:
         debug_print(
             "[tools]",
-            f"Sub-cfg built: name={getattr(sub_cfg, 'name', None)} prompt={getattr(sub_cfg, 'prompt_override', None)} instr_len={len(getattr(sub_cfg, 'instructions', '') or '')}",
+            f"Sub-cfg built: id={getattr(sub_cfg, 'id', None)} prompt={getattr(sub_cfg, 'prompt', None)} instr_len={len(getattr(sub_cfg, 'instructions', '') or '')}",
         )
     except Exception:
         pass
@@ -669,7 +625,7 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     try:
         attrs_yaml = _attrs_to_yaml_text(getattr(sub_cfg, "attributes", None))
         if attrs_yaml:
-            debug_print("[tools]", f"Sub-cfg attributes (YAML) for {getattr(sub_cfg, 'name', None) or sub_name}:\n" + attrs_yaml)
+            debug_print("[tools]", f"Sub-cfg attributes (YAML) for {getattr(sub_cfg, 'id', None) or sub_name}:\n" + attrs_yaml)
     except Exception:
         pass
 
@@ -682,12 +638,12 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
             prev = (getattr(sub_cfg, "instructions", "") or "")
             if len(prev) > 2048:
                 prev = prev[:2045] + "..."
-            debug_print("[tools]", f"Sub-cfg instructions preview for {getattr(sub_cfg, 'name', None) or sub_name}:\n" + prev)
+            debug_print("[tools]", f"Sub-cfg instructions preview for {getattr(sub_cfg, 'id', None) or sub_name}:\n" + prev)
         except Exception:
             pass
 
     sub_agent = get_or_create_agent(
-        name=(getattr(sub_cfg, "name", None) or sub_name),
+        name=(getattr(sub_cfg, "id", None) or sub_name),
         instructions=(getattr(sub_cfg, "instructions", "") or ""),
         model=getattr(sub_cfg, "model", None),
         model_settings=_model_settings_from_attributes(sub_cfg),
@@ -700,7 +656,7 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     )
     _wrap_function_tool(tool, sub_cfg=sub_cfg, sub_name=sub_name, cfg=cfg)
     try:
-        debug_print("[tools]", f"Tool added: {sub_name} (resolved={getattr(sub_cfg, 'name', None) or '?'})")
+        debug_print("[tools]", f"Tool added: {sub_name} (resolved={getattr(sub_cfg, 'id', None) or '?'})")
     except Exception:
         pass
     return tool
@@ -738,11 +694,11 @@ async def _send_welcome_banner(
 
     try:
         welcome_html = compose_welcome_html(
-            agent_name=(getattr(cfg, "name", "") or ""),
-            agent_yaml_path=(getattr(cfg, "agent_yaml_path", None) or None),
+            agent_name=(cfg.id or ""),
+            source_path=(((cfg.attributes or {}).get("_source_path") if isinstance(getattr(cfg, "attributes", None), dict) else None) or (cfg.path or None)),
             user_input=user_input,
             mcp_servers_started=mcp_servers,
-            vs_list=((getattr(cfg, "attributes", {}) or {}).get("vs")),
+            vs_list=(cfg.vs_list or []),
             model=(getattr(cfg, "model", None) or None),
         )
         debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
@@ -865,8 +821,8 @@ async def _notify_digest_if_applicable(
     use_thread_id = selected_thread_id
     try:
         await send_digest_notification(
-            agent_name=(cfg.name or ''),
-            agent_path=(str(cfg.agent_yaml_path) if cfg.agent_yaml_path else None),
+            agent_name=(cfg.id or ''),
+            agent_path=((cfg.path or None) or ((cfg.attributes or {}).get("_source_path") if isinstance(getattr(cfg, "attributes", None), dict) else None)),
             input_text=initial_input,
             text=(step1_output or ""),
             chat_id=use_chat_id,
@@ -877,7 +833,7 @@ async def _notify_digest_if_applicable(
         pass
 
     try:
-        await post_run_git_push(agent_name=(cfg.name or ''), user_input=user_input)
+        await post_run_git_push(agent_name=(getattr(cfg, "id", "") or ''), user_input=user_input)
     except Exception:
         pass
 
@@ -1184,7 +1140,7 @@ async def send_digest_notification(
                 except Exception:
                     resolved_yaml = None
         if resolved_yaml:
-            agent_cfg = _load_yaml(resolved_yaml) or {}
+            agent_cfg = _load_card_metadata(resolved_yaml) or {}
             btns = agent_cfg.get("buttons")
             if isinstance(btns, list) and btns:
                 row = []
@@ -1620,7 +1576,7 @@ def github_blob_url(local_path: str | Path) -> str | None:
 def compose_welcome_html(
     *,
     agent_name: str,
-    agent_yaml_path: str | Path | None,
+    source_path: str | Path | None,
     user_input: str,
     mcp_servers_started: list[Any] | None,
     vs_list: list[str] | None,
@@ -1635,7 +1591,7 @@ def compose_welcome_html(
       <code>vs: [...]</code>
     """
     title = (agent_name or "Agent").strip() or "Agent"
-    gh_url = github_blob_url(agent_yaml_path) if agent_yaml_path else None
+    gh_url = github_blob_url(source_path) if source_path else None
     header = f"🔌 <b><a href='{gh_url}'>{title}</a></b>" if gh_url else f"🔌 <b>{title}</b>"
 
     preview = (user_input or "").strip()
@@ -2060,58 +2016,6 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
         # Non-fatal: fallback to directory scan later
         return {}
     return mapping
-
-
-def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
-    """Scan a directory for subfolders with agent.yaml.
-
-    Returns mapping: AgentName -> (agent_yaml_path, aliases[])
-    """
-    result: dict[str, tuple[Path, list[str]]] = {}
-    if not base_dir.exists():
-        return result
-    for child in base_dir.iterdir():
-        if not child.is_dir():
-            continue
-        ay = child / 'agent.yaml'
-        if ay.exists():
-            try:
-                y = load_yaml(ay) or {}
-                name = str(y.get('id') or y.get('name') or child.name)
-                aliases = []
-                raw_aliases = y.get('aliases') or []
-                if isinstance(raw_aliases, list):
-                    aliases = [str(a) for a in raw_aliases if str(a).strip()]
-                result[name] = (ay, aliases)
-            except Exception:
-                result[child.name] = (ay, [])
-    return result
-
-# legacy _ensure_indices removed; centralized in call.lib.discovery._ensure_indices
-
-"""Centralized discovery is provided by call.lib.discovery.discover_agent_yaml; use the top-of-file wrapper."""
-
-
-def _resolve_output_file_path(agent_yaml_path: Path | None, file_name: str) -> Path:
-    """Resolve an output file path for an agent.
-
-    Preference:
-    - <agent_dir>/memories/<file_name> if 'memories/' exists
-    - else <agent_dir>/memory/<file_name> if 'memory/' exists
-    - else <agent_dir>/<file_name>
-    """
-    base_dir = (agent_yaml_path.parent if agent_yaml_path else Path('.')).resolve()
-    cand1 = base_dir / 'memories'
-    cand2 = base_dir / 'memory'
-    if cand1.exists() and cand1.is_dir():
-        return (cand1 / file_name).resolve()
-    if cand2.exists() and cand2.is_dir():
-        return (cand2 / file_name).resolve()
-    return (base_dir / file_name).resolve()
-
-
-# image generation tool factory removed
-
 
 def load_yaml(path: Path) -> dict:
     """Simple YAML loader."""
@@ -2574,7 +2478,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - model: str | None
       - attributes: dict | None (may contain 'vs')
       - path: str | None (repo-relative path like 'agent/Proj/Agent/agent.md'; optional)
-        Note: absolute 'agent_yaml_path' is deprecated and not used by this runtime.
     """
     async with AsyncExitStack() as astack:
         mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
@@ -2606,7 +2509,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                     tools.append(tool)
 
         agent = Agent(
-            name=f"{cfg.name}",
+            name=(getattr(cfg, "id", None) or getattr(cfg, "agent", None) or getattr(cfg, "prompt", None) or "Agent"),
             instructions=(cfg.instructions or ""),
             model=cfg.model,
             model_settings=_model_settings_from_attributes(cfg),
@@ -2620,10 +2523,22 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
         await _init_bot_safe(project_name=(cfg.project or None))
         
-        merged_output = _merge_outputs(
-            (_load_yaml(cfg.agent_yaml_path).get("output") if cfg.agent_yaml_path else None),
-            None,
-        )
+        # Read optional output targets from card source path when available
+        try:
+            _src = None
+            attrs = getattr(cfg, "attributes", {}) or {}
+            if isinstance(attrs, dict) and attrs.get("_source_path"):
+                _src = attrs.get("_source_path")
+            elif getattr(cfg, "path", None):
+                _src = getattr(cfg, "path")
+            output_yaml = None
+            if _src:
+                p = Path(str(_src))
+                if p.exists():
+                    output_yaml = (_load_card_metadata(p).get("output") or None)
+            merged_output = _merge_outputs(output_yaml, None)
+        except Exception:
+            merged_output = {}
         m_chat, m_thread = _extract_tg_targets(merged_output)
         prompt_chat_id = m_chat
         prompt_thread_id = m_thread
@@ -2661,7 +2576,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # Now that selected_chat_id is finalized, create or skip SQLite session
         session = _create_session_if_any(selected_chat_id, selected_thread_id)
 
-        debug_print(f"[INFO] Agent yaml: {cfg.agent_yaml_path}")
+        debug_print(f"[INFO] Agent path: {getattr(cfg, 'path', None)}")
         debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
 
         # Send welcome message with agent link and run context (after config is ready)

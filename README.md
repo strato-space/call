@@ -17,6 +17,7 @@
   - `{ project?: string, agent?: string, prompt?: string, target?: string, context?: any, echo?: boolean, session_id?: string }`
   - Exactly one of `project|agent|prompt|target` must be provided.
   - The full payload JSON is used as the input string for the agent pipeline.
+  - `echo` defaults to `false`. When omitted the runtime now returns the final text only; set `echo=true` explicitly to receive the full envelope.
 
 ## Overview
 
@@ -75,6 +76,7 @@ The script auto-detects the workspace root (defaults to `/home/strato-space`), a
 ### Prompt format (MD-only)
 
 - Prompts and cards are Markdown-only. Each file follows the Strato Prompt Framework with a `METADATA` fenced YAML block and an optional `PROMPT` block.
+- The parser now tolerates cards that contain only a fenced `METADATA` block or are pure YAML files: in those cases the remaining body becomes the prompt text. Malformed YAML still raises a `BAD_CARD_FORMAT` error, and `_load_card()` logs the failure through the `call.api` logger.
 - The index logs warnings for `.md` prompts missing valid `METADATA`. In strict paths (e.g., CLI `--print-instructions`), malformed or missing `METADATA` surfaces a 400 error.
 
 #### Model settings in METADATA (Updated)
@@ -163,6 +165,7 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
   - `--input` passes raw text; `--parse-input` uses the shared Telegram parser to build a JSON payload (tokens such as `@3-OnlineChunkSummarization` may resolve into `context`).
   - `--print-instructions` prints the merged instructions for the selection and exits (no execution).
   - `--echo` prints the payload preview and resolved selection snapshot.
+  - Project-only selections now report `"agent": null` in the `resolved` payload for clarity.
   - `--format json|yaml|text` controls output format for previews and listings.
 
 - exec (payload-based)
