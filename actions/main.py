@@ -15,6 +15,7 @@ from call.lib.api import list as api_list
 from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import reload as api_reload
+from call.lib.logging import configure_logging
 
 # Backward-compatible aliases for unit tests
 call_lib = api_call
@@ -25,6 +26,9 @@ interpret_exec_payload = api_interpret_exec_payload
 def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
     return api_list_prompts(project=project, agent=agent, prompt=prompt, state=state, target=target)
 
+
+# Configure logging once so CALL_DEBUG and related envs take effect under Uvicorn
+configure_logging()
 
 app = FastAPI(title="Call Actions API", version="1.0.0")
 
@@ -132,7 +136,7 @@ class ExecPayload(BaseModel):
     prompt: Optional[str] = None
     target: Optional[str] = None
     context: Optional[Any] = None
-    echo: Optional[bool] = True
+    echo: Optional[bool] = False
     session_id: Optional[str] = None
 
 
@@ -144,15 +148,8 @@ class ExecPayload(BaseModel):
 )
 def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
-    kwargs, err = interpret_exec_payload({
-        "project": payload.project,
-        "agent": payload.agent,
-        "prompt": payload.prompt,
-        "target": payload.target,
-        "context": payload.context,
-        "echo": payload.echo,
-        "session_id": payload.session_id,
-    })
+    payload_dict = payload.model_dump(exclude_unset=True)
+    kwargs, err = interpret_exec_payload(payload_dict)
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
     res = call_lib(**kwargs)

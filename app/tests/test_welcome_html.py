@@ -11,7 +11,7 @@ def test_compose_welcome_html_includes_model_and_preview(monkeypatch):
 
     html = compose_welcome_html(
         agent_name="FooAgent",
-        agent_yaml_path=None,
+        source_path=None,
         user_input="hello world",
         mcp_servers_started=[],
         vs_list=["vs_abc"],

@@ -83,11 +83,13 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     monkeypatch.setattr(app_call, "get_or_create_agent", fake_get_or_create_agent, raising=False)
 
     sub_cfg = SimpleNamespace(
-        name="HelperAgent",
+        id="HelperAgent",
+        prompt="HelperPrompt",
         instructions="",
         model="gpt-4.1-mini",
         attributes={},
-        prompt_override=None,
+        vs_list=[],
+        mcp=[],
         merge=False,
     )
 
@@ -98,13 +100,14 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     )
 
     cfg = SimpleNamespace(
-        name="AgentFab",
+        id="AgentFab",
         project="AgentFab",
         instructions="",
         model="gpt-4.1-mini",
         attributes={"agents": {"HelperAgent": "desc"}},
-        agent_yaml_path=None,
-        path=None,
+        path="agent/AgentFab/agent.md",
+        vs_list=[],
+        mcp=[],
         merge=False,
     )
 

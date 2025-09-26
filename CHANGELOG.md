@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-26
+
+- **Parser:** `parse_metadata_and_prompt()` now loads pure YAML cards and Markdown files with only a `METADATA` block, falling back to the remaining body as the prompt text. Malformed YAML raises a `BAD_CARD_FORMAT` envelope and `_load_card()` logs the failure through the `call.api` logger so callers receive structured errors instead of stack traces. (`call/lib/utils.py`, `call/lib/api.py`)
+- **Prompt IDs:** `build_runnable_instructions_config()` preserves prompt IDs that come from `target` selectors (e.g., `50-DiscoveryAgent`) and keeps project-level selections from rewriting the identifier. (`call/lib/api.py`, tests)
+- **CLI echo defaults:** `/call` echo responses now default to `false`; project-only `--resolved` snapshots report `"agent": null` for clarity. (`call/cli/main.py`)
+- **Logging:** Added debug logging when metadata parsing fails so API callers can correlate BAD_CARD_FORMAT responses with server-side errors. (`call/lib/api.py`)
+- **Tests:** Added `call/lib/tests/test_parse_metadata.py` to cover Markdown, YAML-only, and malformed card cases. Updated builder/CLI tests to assert prompt ID and echo behavior. (`call/lib/tests/test_parse_metadata.py`, `call/app/tests/test_builder_config.py`, `call/app/tests/test_cli_prompts_and_exec.py`, `call/app/tests/test_target_resolution_via_target.py`)
+
 ## 2025-09-19
+
 - Refactor (API): Introduced `RunnableConfig` DTO and `build_runnable_instructions_config(project, agent, prompt, merge=False)` that returns a ready-to-run config with string `instructions`, `model`, `attributes`, `agent_yaml_path`, and `base_dir`. Defaults are dot-safe so callers can use direct attribute access (e.g., `cfg.name`).
 - Change (Builder): When `merge=False` and a prompt is selected, CLI print-instructions previews now include the prompt body plus an `<agent>...</agent>` block. With `merge=True`, the preview includes `<agent>` and `<project>` blocks.
 - Change (CLI): `--print-instructions` honors the `--merge` flag (default off). After building the config, the CLI validates once and prints a normalized snapshot to debug logs (gated by `CALL_DEBUG`).
@@ -20,6 +29,7 @@ All notable changes to this project will be documented in this file.
  - Change (App): `build_and_run_agent()` now uses `agents.run.DEFAULT_MAX_TURNS` for `Runner.run(..., max_turns=...)`. At import, Call sets `DEFAULT_MAX_TURNS` from the `AGENTS_DEFAULT_MAX_TURNS` env (default 150). Set `AGENTS_DEFAULT_MAX_TURNS=300` in `.env` for longer runs.
 
 ## 2025-09-17
+
 - Change: enforce strict case-sensitive agent and prompt names across discovery, API, CLI, and Telegram bot (KISS). Removed `to_pascal_case` normalization and any case-insensitive fallbacks. Files updated: `call/lib/discovery.py`, `call/app/call.py`, `call/telegram_bot/bot.py`.
 - Feat (CLI): added `prompts` subcommand to list prompts in flat form (table or JSON) with fields `prompt_id`, `name`, `agent`, `project`, `state`, `url`, `path`. File: `call/cli/main.py`.
 - Feat (CLI): added `exec` subcommand to execute with structured context items via repeated `--content-item` flags (text, URL, or JSON). Extracts Google Docs file id when present. Supports `--output-type` and `--print-instructions`. File: `call/cli/main.py`.
@@ -38,6 +48,7 @@ All notable changes to this project will be documented in this file.
 - Docs: updated `call/README.md` to reflect KISS case-sensitive policy, new CLI subcommands, `--print-instructions`, Windows-safe printing, error envelopes and exit codes; added `prompt/README.md`; inserted a KISS quickstart section at the top of `agent/README.md`. Removed references to `CALL_SILENT`; use `CALL_DEBUG` for diagnostics.
 
 ## 2025-09-15
+
 - Fix: eliminate `NameError` by removing last usage of legacy `_discover_agent_yaml_compat`; app now calls the unified `discover_agent_yaml(agent, project)` wrapper that delegates to `call.lib.discovery.discover_agent_yaml`. (file: `call/app/call.py`)
 - Refactor: complete discovery consolidation in app layer — removed duplicate internal discovery and legacy `_ensure_indices` path from `call/app/call.py`; kept a single thin wrapper to the library. (files: `call/app/call.py`)
 - Fix/UX: Telegram welcome banner spacing — ensured a blank line between user input preview and attributes (`mcp`, `vs`, `model`) and a blank line after the header. (file: `call/app/call.py`)
@@ -47,6 +58,7 @@ All notable changes to this project will be documented in this file.
 - Refactor: centralized projects index loader — added `call.lib.discovery.load_projects_index()` (strict schema), refactored `call.lib.api.list()` to call it directly, removed local wrappers. (files: `call/lib/discovery.py`, `call/lib/api.py`, tests)
 
 ## 2025-09-14
+
 - Feat: Introduced `call/repos.sh` script for managing local clones of primary repositories.
 - Feat: Added `repo(url, [dir])` helper that clones when missing and performs `git -C dir pull --ff-only` when the repository exists.
 - Change: `ensure_repo` renamed to `repo`; kept a backward-compatible alias `ensure_repo()` that delegates to `repo`.
@@ -76,6 +88,7 @@ All notable changes to this project will be documented in this file.
 - Tests: added selection and prompt-override tests; updated discovery tests for projects-aware indices
 
 ## 2025-09-13
+
 - Feat: project_name-only token routing. Added `get_project_token(project_name)` and made `init_bot(project_name=...)` mandatory. Removed fallbacks and any env mutation of `TELEGRAM_TOKEN`.
 - Change: case-sensitive agent names (KISS). Removed `to_pascal_case` normalization from bot/CLI/API; names are used exactly as provided.
 - Change: Telegram bot no longer validates agent existence; validation/discovery happens centrally in `call.lib.api.call_async()` which returns structured errors for unknown agents.
@@ -84,6 +97,7 @@ All notable changes to this project will be documented in this file.
 - Config: updated `.env` guidance to use `TELEGRAM_TOKEN.<ProjectName>` keys (e.g., `TELEGRAM_TOKEN.StratoSpaceAi`, `TELEGRAM_TOKEN.AgentFab`).
 
 ## 2025-09-12
+
 - Fix: Telegram chat routing — preserve caller-provided `chat_id`/`thread_id` passed via `call.lib.api.call(...)`. The pipeline no longer overwrites targets with Agent YAML or `.env` defaults; explicit values are propagated through final notifications to avoid global-state races. (files: `call/app/call.py`, `call/lib/api.py`)
 - Refactor: Centralize Telegram HTML prep per Bot API — introduce `sanitize_telegram_html()`, `truncate_telegram_html_safe()`, and `prepare_telegram_html()` in `call/app/utils/html_sanitizer.py`. Route `telegram_prepare_html()` and HTML truncation through the centralized implementation. (files: `call/app/utils/html_sanitizer.py`, `call/app/utils/telegram_text.py`)
 - Change: Use only the documented HTML tags/attrs for Telegram: `a`, `b/strong`, `i/em`, `u/ins`, `s/strike/del`, `code`, `pre`, `blockquote`, `tg-spoiler`, `tg-emoji`; preserve `a[href]`, `blockquote[expandable]`, `tg-emoji[emoji-id]`, and `code[class~=language-*]`. Normalize `h1–h6` to `<b>…</b>` + newline; replace `<hr>` with two newlines; flatten lists to text. (file: `call/app/utils/html_sanitizer.py`)
@@ -93,11 +107,13 @@ All notable changes to this project will be documented in this file.
  - Tests: Add `test_send_digest_notification.py` covering empty-text fallback, long-text publish link, and `{{digest_url}}` macro in buttons. (file: `call/app/tests/test_send_digest_notification.py`)
 
 ## 2025-09-07
+
 - Change: Voice now uses the Call library directly (no subprocess). `voice/src/lib/core.py` calls `call.lib.api.call(...)` and forwards the `echo` flag. When `echo=True`, Voice returns the full dict; otherwise it returns plain text.
 - Feature: Add `echo: bool` to `call.lib.api.call()` and `call_async()`; include `echo` in the success payload.
 - Change: Centralize Telegram/HTML sanitization and text preparation via `call/app/utils/` (html_sanitizer, telegram_text, telegraph_utils). Snapshot `call/app/call.78e8440.py` updated to use these utilities.
 - Fix: Snapshot script-mode fallback for utils/Telegraph imports to avoid relative-import errors when running `python call/app/call.78e8440.py` directly.
 
 ## 2025-09-02
+
 - Fix: eliminate runpy warning by lazy-importing `call.app.call` inside entrypoints (`call/app/__init__.py`).
 - Change: `post_run_git_push()` now checks for changes first (`git status --porcelain -uno`) and returns silently if none; no stdout logging from this helper (`call/app/call.py`).

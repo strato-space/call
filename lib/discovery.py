@@ -158,7 +158,7 @@ def _load_agents_index(index_path: Path, base_dir: Path) -> dict[str, Path]:
 def _scan_agents_dir(base_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     """Scan a project directory for subfolders with agent.yaml.
 
-    Returns mapping: AgentName -> (agent_yaml_path, aliases[])
+    Returns mapping: AgentName -> (card_path, aliases[])
     """
     result: dict[str, tuple[Path, list[str]]] = {}
     if not base_dir.exists():
