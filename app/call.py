@@ -487,7 +487,6 @@ def _canonical_and_sanitized_user_input(user_input: Any) -> tuple[str, str]:
 
         if isinstance(parsed, dict):
             parsed = dict(parsed)
-            parsed.pop("input", None)
             parsed.pop("target", None)
             try:
                 sanitized = json.dumps(parsed, ensure_ascii=False)
@@ -2569,12 +2568,13 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         debug_print("[call]", "user_input (raw):", user_input)
 
         canonical_input, sanitized_input = _canonical_and_sanitized_user_input(user_input)
+
         user_input = sanitized_input
 
         debug_print("[call]", "canonical_input:", canonical_input)
         debug_print("[call]", "user_input (sanitized):", user_input)
 
-        context = {"canonical_input": canonical_input}
+        context = {"canonical_input": sanitized_input}
         debug_print("[call]", "context 0:", context)
 
         agent = Agent(
