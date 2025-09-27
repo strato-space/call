@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 import os
 import sqlite3
 import asyncio
-from call.lib import repo as repo
-from call.lib import repo as call_repo
+from pathlib import Path as _Path
+from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
 from call.lib.logging import debug_print
 import builtins as _bi
@@ -47,13 +47,74 @@ def normalize_selector(val: Optional[str]) -> Optional[str]:
         s = s[:-3]
     return s
 
+
+def _maybe_inline_context_content(items: list[dict]) -> None:
+    try:
+        import mimetypes as _mimes
+        import base64 as _b64
+        try:
+            import httpx as _httpx
+        except Exception:
+            _httpx = None
+
+        def _is_text(mime: str | None, name: str) -> bool:
+            if not mime:
+                lower = name.lower()
+                return lower.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
+            return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
+
+        for it in items:
+            try:
+                if not isinstance(it, dict):
+                    continue
+                if it.get('content') or it.get('base64'):
+                    continue
+                url_val = str(it.get('url') or '').strip()
+                path_val = str(it.get('path') or '').strip()
+
+                if url_val and _httpx:
+                    try:
+                        guess, _ = _mimes.guess_type(url_val)
+                        with _httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                            resp = client.get(url_val)
+                            data = resp.content or b""
+                        if _is_text(guess, url_val):
+                            it['content'] = data.decode('utf-8', 'replace')
+                        else:
+                            it['base64'] = _b64.b64encode(data).decode('ascii')
+                    except Exception:
+                        continue
+                    else:
+                        continue
+
+                if path_val:
+                    try:
+                        p = _Path(path_val)
+                        if not p.exists():
+                            continue
+                        guess, _ = _mimes.guess_type(p.name)
+                        data = p.read_bytes()
+                        if _is_text(guess, p.name):
+                            try:
+                                it['content'] = data.decode('utf-8')
+                            except Exception:
+                                it['content'] = data.decode('utf-8', 'replace')
+                        else:
+                            it['base64'] = _b64.b64encode(data).decode('ascii')
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+    except Exception:
+        return
+
 def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
     """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
 
     Delegates to repo_db.list_prompts() via compatibility alias 'repo'.
     Do not swallow exceptions; let callers see failures.
     """
-    return repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
+    return call_repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
 
 def interpret_target(
     *,
@@ -302,67 +363,49 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     refs: list[dict] = []
     seen_refs: set[tuple[str, str, str]] = set()
 
-    def _append_rows(rows: list[dict], *, name_key: str, default_type: str, fallback_token: str) -> None:
+    def _append_rows(rows: list[dict], field: str, default_type: str, fallback: str) -> None:
         if not rows:
             return
-        from pathlib import Path as _Path
-
         for row in rows:
-            try:
-                rpath = str(row.get('rel_path') or row.get('path') or '').strip()
-                if not rpath:
-                    continue
-                p = _Path(rpath)
-                name_val = str(row.get(name_key) or '').strip() or (p.stem or fallback_token)
-                path_val = str(p).replace('\\', '/')
-                row_type = str(row.get('type') or '').strip().lower() or default_type
-                ref = {"type": row_type, "name": name_val, "path": path_val, "mutable": True}
-                url_val = str(row.get('url') or '').strip()
-                if url_val:
-                    ref["url"] = url_val
-                key = (ref["type"], ref["name"], ref["path"])
-                if key in seen_refs:
-                    continue
-                seen_refs.add(key)
-                refs.append(ref)
-            except Exception:
+            rpath = str(row.get("rel_path") or row.get("path") or "").strip()
+            ref = {
+                "type": row.get("type"),
+                "path": rpath,
+                "mutable": True,
+            }
+            for key in ("target", "project", "agent", "prompt", "state", "goal", "engine", "orchestration"):
+                if key in row and row.get(key) not in (None, ""):
+                    if key == "target":
+                        ref["id"] = row[key]
+                    else:
+                        ref[key] = row[key]
+            url_val = str(row.get("url") or "").strip()
+            if url_val:
+                ref["url"] = url_val
+            key_id = (ref["type"], ref["id"], ref["path"])
+            if key_id in seen_refs:
                 continue
+            seen_refs.add(key_id)
+            refs.append(ref)
 
     for tok in tokens:
-        # Projects (wildcard-aware)
         try:
             proj_rows = call_repo.find_projects(project=tok, target=None)
         except Exception:
             proj_rows = []
-        _append_rows(proj_rows, name_key="project", default_type="project", fallback_token=tok)
+        _append_rows(proj_rows, "project", "project", tok)
 
-        # Agents (wildcard-aware)
         try:
             agent_rows = call_repo.find_agents(project=None, agent=tok, target=None)
         except Exception:
             agent_rows = []
-        _append_rows(agent_rows, name_key="agent", default_type="agent", fallback_token=tok)
+        _append_rows(agent_rows, "agent", "agent", tok)
 
-        # Prompts (handle wildcard manually for compatibility)
-        prompt_rows: list[dict]
-        if ('*' in tok):
-            try:
-                import re as _re2
-                rx = _re2.compile('^' + _re2.escape(tok).replace('\\*', '.*') + '$', _re2.IGNORECASE)
-                try:
-                    items = list_prompts(project=None, agent=None, prompt=None, state=None, target=None)
-                except Exception:
-                    items = []
-                prompt_rows = [x for x in (items or []) if rx.match(str(x.get('prompt') or ''))]
-            except Exception:
-                prompt_rows = []
-        else:
-            try:
-                prompt_rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
-            except Exception:
-                prompt_rows = []
-
-        _append_rows(prompt_rows, name_key="prompt", default_type="prompt", fallback_token=tok)
+        try:
+            prompt_rows = call_repo.find_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
+        except Exception:
+            prompt_rows = []
+        _append_rows(prompt_rows, "prompt", "prompt", tok)
 
     if refs:
         try:
@@ -372,65 +415,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
 
     # Optional download
     if download and ctx_items:
-        try:
-            import mimetypes as _mimes
-            import base64 as _b64
-            from pathlib import Path as _Path
-            try:
-                import httpx as _httpx
-            except Exception:
-                _httpx = None
-
-            def _is_text(mime: str | None, name: str) -> bool:
-                if not mime:
-                    lower = name.lower()
-                    return lower.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
-                return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
-
-            for it in ctx_items:
-                try:
-                    if not isinstance(it, dict):
-                        continue
-                    if it.get('content') or it.get('base64'):
-                        continue
-                    url_val = str(it.get('url') or '').strip()
-                    path_val = str(it.get('path') or '').strip()
-
-                    if url_val and _httpx:
-                        try:
-                            guess, _ = _mimes.guess_type(url_val)
-                            with _httpx.Client(timeout=15.0, follow_redirects=True) as client:
-                                resp = client.get(url_val)
-                                data = resp.content or b""
-                            if _is_text(guess, url_val):
-                                it['content'] = data.decode('utf-8', 'replace')
-                            else:
-                                it['base64'] = _b64.b64encode(data).decode('ascii')
-                        except Exception:
-                            continue
-                        else:
-                            continue
-
-                    if path_val:
-                        try:
-                            p = _Path(path_val)
-                            if not p.exists():
-                                continue
-                            guess, _ = _mimes.guess_type(p.name)
-                            data = p.read_bytes()
-                            if _is_text(guess, p.name):
-                                try:
-                                    it['content'] = data.decode('utf-8')
-                                except Exception:
-                                    it['content'] = data.decode('utf-8', 'replace')
-                            else:
-                                it['base64'] = _b64.b64encode(data).decode('ascii')
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        _maybe_inline_context_content(ctx_items)
 
     ordered: dict = {}
     if payload.get('target'):

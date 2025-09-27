@@ -36,7 +36,7 @@ def test_db_only_discover_agent_yaml_direct_names(monkeypatch):
 
 def test_discover_agent_yaml_stratoslav_direct_only(monkeypatch):
     m = _mod()
-    repo_mod = importlib.import_module('call.lib.repo')
+    repo_mod = importlib.import_module('call.lib.repo_db')
     # Only exact direct name works (no aliases)
     monkeypatch.setattr(repo_mod, 'find_agents', lambda **kw: [
         {"project": "AgentFab", "agent": "Stratoslav", "path": str(Path(m.discover_prompt_repo()) / "AgentFab" / "Stratoslav" / "agent.yaml")}

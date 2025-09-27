@@ -32,7 +32,7 @@ def test_build_input_payload_uses_db_prompt_name(monkeypatch):
     ctx = obj.get("context") or []
     assert isinstance(ctx, list) and len(ctx) == 1
     item = ctx[0]
-    assert item["name"] == "50-DiscoveryAgent"
+    assert item["id"] == "50-DiscoveryAgent"
     assert item["path"].endswith("prompt/draft/50-Discoveryagent.md")
 
 
