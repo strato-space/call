@@ -13,7 +13,7 @@ from .deps import bearer_guard
 from call.lib.api import call as api_call
 from call.lib.api import list as api_list
 from call.lib.api import list_prompts as api_list_prompts
-from call.lib.api import interpret_exec_payload as api_interpret_exec_payload
+from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
 
 # Expose thin wrappers for test monkeypatching (delegate to API)

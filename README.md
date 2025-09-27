@@ -369,7 +369,7 @@ python -m call.cli.main exec --target Vasil3
 
 - Import conventions in examples:
   - `from call.lib import api as call_api`
-  - `from call.lib import repo as call_repo`
+  - `from call.lib import repo_db as call_repo`
   - `from call.lib.logging import configure_logging as call_logging`
 
 - Exit codes: `0` on success (`ok:true`), `1` on error envelopes (`ok:false`).

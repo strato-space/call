@@ -33,7 +33,7 @@ def test_build_input_payload_wildcard_single(monkeypatch):
     assert isinstance(ctx, list) and len(ctx) == 1
     ref = ctx[0]
     assert ref["type"] == "prompt"
-    assert ref["name"] == "31-OnlineQuestionsBabook"
+    assert ref["id"] == "31-OnlineQuestionsBabook"
     assert ref["path"].replace("\\", "/") == "prompt/draft/31-OnlineQuestionsBabook.md"
     assert ref.get("mutable") is True
 
@@ -58,8 +58,8 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     ctx = obj.get("context")
     # Expect two refs, stable order by first match order in items
     assert isinstance(ctx, list) and len(ctx) == 2
-    names = [r["name"] for r in ctx]
-    assert names == ["31-OnlineQuestionsBabook", "32-InterviewSummary"]
+    ids = [r["id"] for r in ctx]
+    assert ids == ["31-OnlineQuestionsBabook", "32-InterviewSummary"]
     paths = [r["path"].replace("\\", "/") for r in ctx]
     assert paths == ["prompt/draft/31-OnlineQuestionsBabook.md", "prompt/draft/32-InterviewSummary.md"]
     types = [r["type"] for r in ctx]
@@ -99,7 +99,7 @@ def test_build_input_payload_deduplicate_refs(monkeypatch):
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
-    assert ctx[0]["name"] == "31-OnlineQuestionsBabook"
+    assert ctx[0]["id"] == "31-OnlineQuestionsBabook"
 
 
 def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
@@ -120,7 +120,7 @@ def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
-    assert ctx[0]["name"] == "32-InterviewSummary"
+    assert ctx[0]["id"] == "32-InterviewSummary"
 
 
 def test_cli_prompt_wildcard_context(monkeypatch):
@@ -159,8 +159,8 @@ def test_cli_prompt_wildcard_context(monkeypatch):
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 2
-    names = [c["name"] for c in ctx]
-    assert names == ["33-extensions", "33-Questioning"]
+    ids = [c["id"] for c in ctx]
+    assert ids == ["33-extensions", "33-Questioning"]
     urls = [c.get("url") for c in ctx]
     assert urls == [
         "https://github.com/strato-space/prompt/blob/master/ready/33-extensions.md",
@@ -194,7 +194,7 @@ def test_cli_agent_exact_context(monkeypatch):
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
     ref = ctx[0]
-    assert ref["name"] == "DiscoveryAgent"
+    assert ref["id"] == "DiscoveryAgent"
     assert ref["type"] == "agent"
     assert ref["path"].replace("\\", "/") == "prompt/AgentFab/DiscoveryAgent/agent.md"
     assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md")
@@ -207,7 +207,6 @@ def test_cli_project_exact_context(monkeypatch):
         return [
             {
                 "project": "AgentFab",
-                "path": "prompt/AgentFab/project.md",
                 "rel_path": "prompt/AgentFab/project.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md",
                 "type": "project",
@@ -223,7 +222,7 @@ def test_cli_project_exact_context(monkeypatch):
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
     ref = ctx[0]
-    assert ref["name"] == "AgentFab"
+    assert ref["id"] == "AgentFab"
     assert ref["type"] == "project"
     assert ref["path"].replace("\\", "/") == "prompt/AgentFab/project.md"
     assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/project.md")
