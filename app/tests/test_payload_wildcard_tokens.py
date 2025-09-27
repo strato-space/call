@@ -152,8 +152,8 @@ def test_cli_prompt_wildcard_context(monkeypatch):
         return items
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
-    monkeypatch.setattr(call_api.repo_db, "find_projects", lambda **_: [], raising=False)
-    monkeypatch.setattr(call_api.repo_db, "find_agents", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api.call_repo, "find_projects", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api.call_repo, "find_agents", lambda **_: [], raising=False)
 
     payload_json, _ = call_api.build_input_payload(target=None, main_text="@33-*")
     obj = json.loads(payload_json)
@@ -182,11 +182,12 @@ def test_cli_agent_exact_context(monkeypatch):
                 "rel_path": "prompt/AgentFab/DiscoveryAgent/agent.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md",
                 "type": "agent",
+                "target": "DiscoveryAgent",
             }
         ]
 
-    monkeypatch.setattr(call_api.repo_db, "find_agents", fake_find_agents, raising=True)
-    monkeypatch.setattr(call_api.repo_db, "find_projects", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api.call_repo, "find_agents", fake_find_agents, raising=True)
+    monkeypatch.setattr(call_api.call_repo, "find_projects", lambda **_: [], raising=False)
     monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
 
     payload_json, _ = call_api.build_input_payload(target=None, main_text="@DiscoveryAgent")
@@ -210,11 +211,12 @@ def test_cli_project_exact_context(monkeypatch):
                 "rel_path": "prompt/AgentFab/project.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md",
                 "type": "project",
+                "target": "AgentFab",
             }
         ]
 
-    monkeypatch.setattr(call_api.repo_db, "find_projects", fake_find_projects, raising=True)
-    monkeypatch.setattr(call_api.repo_db, "find_agents", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api.call_repo, "find_projects", fake_find_projects, raising=True)
+    monkeypatch.setattr(call_api.call_repo, "find_agents", lambda **_: [], raising=False)
     monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
 
     payload_json, _ = call_api.build_input_payload(target=None, main_text="@AgentFab")
