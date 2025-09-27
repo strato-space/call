@@ -1826,13 +1826,13 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
     return {"ok": True, "cleared": cleared}
 
 
-def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, object], Optional[Dict[str, object]]]:
     """Validate and normalize a single exec payload into kwargs for call().
 
     Rules:
     - Exactly one of project|agent|prompt|target must be present (truthy string).
     - Always use the full payload JSON as the input string.
-    - session_id and echo are passed through when present.
+
     Returns (kwargs, err) where kwargs can be passed to call(**kwargs) and err is an error envelope on validation error.
     """
     try:
@@ -1889,5 +1889,3 @@ def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Opt
             "code": "BAD_REQUEST",
         }
 
-# Public alias for clarity in import sites (Actions/MCP)
-api_interpret_exec_payload = interpret_exec_payload
