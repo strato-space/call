@@ -26,7 +26,7 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
     cfg = SimpleNamespace(
         id="FooAgent",
         path="prompt/ready/FooAgent.md",
-        attributes={"_source_path": "/tmp/foo.md"},
+        attributes={},
         model="gpt-4.1-mini",
         vs_list=["vs_abc"],
     )
@@ -47,7 +47,7 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
     assert sent_payload == {"text": "<b>HTML</b>", "chat_id": 123, "thread_id": 456}
     assert captured_compose["mcp_servers_started"] == ["srv-A"]
     assert captured_compose["user_input"] == "hello"
-    assert captured_compose["source_path"] == "/tmp/foo.md"
+    assert captured_compose["source_path"] == "prompt/ready/FooAgent.md"
 
 
 @pytest.mark.asyncio
@@ -180,11 +180,10 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
         id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
-        attributes={"_source_path": "/tmp/foo.md"},
+        attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",
         vs_list=[],
-        merge=False,
     )
 
     app_call.selected_chat_id = 111
@@ -254,11 +253,10 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
         id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
-        attributes={"_source_path": "/tmp/foo.md"},
+        attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",
         vs_list=[],
-        merge=False,
     )
 
     app_call.selected_chat_id = 111

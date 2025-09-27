@@ -52,7 +52,7 @@ def test_resolve_prompt_db_only(monkeypatch, tmp_path):
     assert Path(resolved).resolve() == pfile.resolve()
 
 
-def test_build_agent_config_merge_prompt_md(monkeypatch):
+def test_build_agent_config_prompt_md(monkeypatch):
     # Prepare required env for imports
     monkeypatch.setenv("TELEGRAM_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAPH_TOKEN", "dummy")
@@ -65,7 +65,6 @@ def test_build_agent_config_merge_prompt_md(monkeypatch):
         project="UxFab",
         agent="DialogPostAnalysis",
         prompt="33-Questioning",
-        merge=True,
     )
     assert err is None
     assert isinstance(cfg.instructions, str) and len(cfg.instructions) > 0

@@ -45,7 +45,7 @@ def test_session_id_in_success_response(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None, merge=True):
+    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None):
         # Simulate a created session id (agentless format chat[:thread])
         return _CM("-100123:10")
 
@@ -84,7 +84,7 @@ def test_session_id_override_parsed_and_used(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None, merge=True):
+    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None):
         return _CM(cli_agent_name)
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True)
@@ -114,7 +114,7 @@ def test_no_session_without_routing(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None, merge=True):
+    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None):
         return _CM()
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True)

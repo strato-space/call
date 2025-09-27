@@ -1,7 +1,4 @@
 import asyncio
-from pathlib import Path
-import tempfile
-import textwrap
 
 import pytest
 
@@ -98,31 +95,56 @@ def test_send_digest_notification_buttons_macro(monkeypatch):
     monkeypatch.setattr("call.app.call.publish_results", fake_publish_results)
     monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
 
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
-        agent_yaml = td_path / "agent.yaml"
-        agent_yaml.write_text(textwrap.dedent(
-            """
-            id: Test
-            name: Test
-            buttons:
-              - label: Open
-                url: "{{digest_url}}"
-            """
-        ), encoding="utf-8")
+    long_text = "y" * 5000
 
-        long_text = "y" * 5000
-        async def _run():
-            return await send_digest_notification(
-                text=long_text,
-                input_text="inp",
-                agent_name="Test",
-                agent_path=str(agent_yaml),
-                chat_id=123,
-            )
-        _ = asyncio.run(_run())
+    async def _run():
+        return await send_digest_notification(
+            text=long_text,
+            input_text="inp",
+            agent_name="Test",
+            buttons=[{"label": "Open", "url": "{{digest_url}}"}],
+            chat_id=123,
+        )
 
-        rm = captured["reply_markup"]
-        assert isinstance(rm, InlineKeyboardMarkup)
-        btn = rm.inline_keyboard[0][0]
-        assert published["url"] == btn.url
+    _ = asyncio.run(_run())
+
+    rm = captured["reply_markup"]
+    assert isinstance(rm, InlineKeyboardMarkup)
+    btn = rm.inline_keyboard[0][0]
+    assert published["url"] == btn.url
+
+
+def test_send_digest_notification_multiple_buttons(monkeypatch):
+    from telegram import InlineKeyboardMarkup
+
+    captured = {"reply_markup": None}
+
+    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+        captured["reply_markup"] = reply_markup
+        return DummyMsg()
+
+    monkeypatch.setattr("call.app.call.publish_results", lambda *a, **k: "https://example.com/digest")
+    monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
+
+    buttons = [
+        {"label": "Docs", "url": "https://example.com/docs"},
+        {"label": "Open", "url": "{{digest_url}}"},
+    ]
+
+    async def _run():
+        return await send_digest_notification(
+            text="z" * 5000,
+            agent_name="Test",
+            buttons=buttons,
+            chat_id=999,
+        )
+
+    _ = asyncio.run(_run())
+
+    rm = captured["reply_markup"]
+    assert isinstance(rm, InlineKeyboardMarkup)
+    rendered = rm.inline_keyboard[0]
+    assert rendered[0].text == "Docs"
+    assert rendered[0].url == "https://example.com/docs"
+    assert rendered[1].text == "Open"
+    assert rendered[1].url == "https://example.com/digest"

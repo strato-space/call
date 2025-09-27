@@ -7,7 +7,6 @@ __all__ = [
     "sanitize_telegram_html",
     "truncate_telegram_html_safe",
     "prepare_telegram_html",
-    "clean_html_for_telegram",
     "clean_html_for_telegraph",
     "minify_html_func",
 ]
@@ -195,13 +194,6 @@ def sanitize_telegram_html(html_content: str) -> str:
     cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
 
     return cleaned.strip()
-
-
-def clean_html_for_telegram(html_content: str) -> str:
-    """Backward-compatible alias for sanitize_telegram_html."""
-    return sanitize_telegram_html(html_content)
-
-
 def truncate_telegram_html_safe(html: str, max_len: int) -> str:
     """Truncate a sanitized Telegram HTML string to <= max_len while preserving validity.
 

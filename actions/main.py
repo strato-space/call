@@ -12,15 +12,9 @@ from .deps import bearer_guard
 # Library imports (API-only)
 from call.lib.api import call as api_call
 from call.lib.api import list as api_list
-from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
-from call.lib.api import reload as api_reload
+from call.lib.api import interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
-
-# Backward-compatible aliases for unit tests
-call_lib = api_call
-list_lib = api_list
-interpret_exec_payload = api_interpret_exec_payload
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
 def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
@@ -105,7 +99,7 @@ def agents(
     agent: str = Query("", description="Filter by agent (supports * wildcard)"),
     prompt: str = Query("", description="Filter by prompt (supports * wildcard)"),
 ):
-    return list_lib(project=(project or None), agent=(agent or None), prompt=(prompt or None))
+    return api_list(project=(project or None), agent=(agent or None), prompt=(prompt or None))
 
 
 @app.get(
@@ -120,7 +114,7 @@ def call(
     echo: bool = Query(False, description="If true, return structured JSON from library"),
     session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
 ):
-    res = call_lib(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
+    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -149,10 +143,10 @@ class ExecPayload(BaseModel):
 def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
     payload_dict = payload.model_dump(exclude_unset=True)
-    kwargs, err = interpret_exec_payload(payload_dict)
+    kwargs, err = api_interpret_exec_payload(payload_dict)
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
-    res = call_lib(**kwargs)
+    res = api_call(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))

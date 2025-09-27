@@ -215,22 +215,21 @@
 ```bash
 py -m call.cli.main --
 usage: main.py [-h] [--json-logs] [--debug]
-               {agents,list,projects,call,prompts,reload,scan,exec,clear-session} ...
+               {agents,list,projects,call,prompts,reload,exec,clear-session} ...
 main.py: error: the following arguments are required: cmd
 (.venv) PS C:\home\strato-space> py -m call.cli.main --help
 usage: main.py [-h] [--json-logs] [--debug]
-               {agents,list,projects,call,prompts,reload,scan,exec,clear-session} ...
+               {agents,list,projects,call,prompts,reload,exec,clear-session} ...
 
 call — CLI for listing and invoking agents (keyword-only API)
 
 positional arguments:
-  {agents,list,projects,call,prompts,reload,scan,exec,clear-session}
+  {agents,list,projects,call,prompts,reload,exec,clear-session}
     agents (list, projects)
                         List projects and agents (hierarchical)
     call                Call an agent with input text
     prompts             List prompts (flat)
     reload              Scan repositories and rebuild repo.db
-    scan                Alias of reload (will be removed)
     exec                Execute via payload (best for content buckets)
     clear-session       Clear conversation session(s) for a chat/thread from SQLite
 

@@ -2,7 +2,7 @@ import os
 import pytest
 
 from call.app.utils.html_sanitizer import (
-    clean_html_for_telegram,
+    sanitize_telegram_html,
     clean_html_for_telegraph,
     minify_html_func,
 )
@@ -16,7 +16,7 @@ def test_clean_html_for_telegram_converts_lists_and_strips_attrs():
       <span>Keep <b>bold</b> and <i>italic</i>.</span>
     </div>
     """
-    out = clean_html_for_telegram(html)
+    out = sanitize_telegram_html(html)
     # Unsupported wrappers removed; lists converted to paragraph with bullets
     assert "<ul" not in out and "<li" not in out
     assert "• First" in out and "• Second" in out

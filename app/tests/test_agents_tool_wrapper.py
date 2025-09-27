@@ -90,7 +90,6 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         attributes={},
         vs_list=[],
         mcp=[],
-        merge=False,
     )
 
     monkeypatch.setattr(
@@ -108,7 +107,6 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         path="agent/AgentFab/agent.md",
         vs_list=[],
         mcp=[],
-        merge=False,
     )
 
     async with app_call.build_and_run_agent(cfg, user_input="hello"):

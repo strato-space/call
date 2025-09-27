@@ -18,7 +18,7 @@ from call.lib.api import build_runnable_instructions_config
     ],
 )
 def test_builder_minimal_fields_ok(project, agent, prompt):
-    cfg, err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, merge=True)
+    cfg, err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt)
     assert err is None
     assert cfg is not None
     # Required minimal fields
@@ -31,7 +31,7 @@ def test_builder_minimal_fields_ok(project, agent, prompt):
 
 
 def test_builder_prompt_override_set():
-    cfg, err = build_runnable_instructions_config(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning", merge=True)
+    cfg, err = build_runnable_instructions_config(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning")
     assert err is None
     assert cfg and cfg.prompt == "33-Questioning"
 
@@ -155,7 +155,6 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
         project="ProjX",
         agent="AgentY",
         prompt="PromptZ",
-        merge=False,
     )
 
     assert err is None
@@ -169,23 +168,12 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     assert cfg.vs_list == ["vs_prompt"]
     assert cfg.mcp == [{"id": "prompt-mcp"}]
 
-    assert cfg.project_cfg is not None
-    assert cfg.project_cfg.type == "project"
-    assert cfg.project_cfg.role == "project role"
-    assert cfg.project_cfg.vs_list == ["vs_project"]
-
-    assert cfg.agent_cfg is not None
-    assert cfg.agent_cfg.type == "agent"
-    assert cfg.agent_cfg.role == "agent role"
-    assert cfg.agent_cfg.vs_list == ["vs_agent"]
-
     assert cfg.instructions.strip().startswith("Prompt instructions")
-    assert cfg.agent_cfg.instructions.strip().startswith("Agent instructions")
-    assert cfg.project_cfg.instructions.strip().startswith("Project instructions")
+
 
 
 def test_builder_no_data_found_error():
-    cfg, err = build_runnable_instructions_config(project="UxFab", agent="NoSuchAgent", prompt=None, merge=True)
+    cfg, err = build_runnable_instructions_config(project="UxFab", agent="NoSuchAgent", prompt=None)
     assert cfg is None
     assert isinstance(err, dict)
     assert err.get("ok") is False
@@ -233,7 +221,6 @@ def test_builder_model_prefers_prompt_over_agent_and_project(monkeypatch, tmp_pa
         prompt="33-Questioning",
         target=None,
         input=None,
-        merge=False,
     )
 
     assert err is None
@@ -281,7 +268,6 @@ def test_builder_model_falls_back_to_env(monkeypatch, tmp_path):
         prompt="33-Questioning",
         target=None,
         input=None,
-        merge=False,
     )
 
     assert err is None
@@ -331,7 +317,6 @@ def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
     cfg, err = build_runnable_instructions_config(
         project="FanFab",
         agent="Vasil3",
-        merge=False,
     )
 
     assert err is None
