@@ -2571,8 +2571,10 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
         user_input = sanitized_input
 
+        initial_input = user_input if user_input not in (None, "", {}, "{}") else "go"
+
         debug_print("[call]", "canonical_input:", canonical_input)
-        debug_print("[call]", "user_input (sanitized):", user_input)
+        debug_print("[call]", "initial_input (sanitized / repaced empty to go):", initial_input)
 
         context = {"canonical_input": sanitized_input}
         debug_print("[call]", "context 0:", context)
@@ -2585,7 +2587,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             tools=tools,
             mcp_servers=mcp_servers,
         )
-        initial_input = user_input if user_input not in (None, "", {}, "{}") else "go"
+        
         run_context = RunContextWrapper(context=context)
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
