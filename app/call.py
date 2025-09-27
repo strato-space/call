@@ -2500,6 +2500,30 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         env_chat = TELEGRAM_CHAT_ID
         env_thread = (TELEGRAM_THREAD_ID or None)
 
+        prompt_chat_id = None
+        prompt_thread_id = None
+        try:
+            attrs = getattr(cfg, "attributes", {})
+            if isinstance(attrs, dict):
+                tg_cfg = attrs.get("telegram")
+                if isinstance(tg_cfg, dict):
+                    prompt_chat_id = tg_cfg.get("chat_id")
+                    prompt_thread_id = tg_cfg.get("thread_id")
+                    # Normalize string ints to int where possible
+                    try:
+                        if isinstance(prompt_chat_id, str) and prompt_chat_id.strip():
+                            prompt_chat_id = int(prompt_chat_id.strip())
+                    except Exception:
+                        pass
+                    try:
+                        if isinstance(prompt_thread_id, str) and prompt_thread_id.strip():
+                            prompt_thread_id = int(prompt_thread_id.strip())
+                    except Exception:
+                        pass
+        except Exception:
+            prompt_chat_id = None
+            prompt_thread_id = None
+
         no_session = bool(force_no_session)
         if not no_session:
             if selected_chat_id is None or selected_chat_id == env_chat:
