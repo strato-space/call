@@ -2585,7 +2585,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             tools=tools,
             mcp_servers=mcp_servers,
         )
-        initial_input = (user_input or "go")
+        initial_input = user_input if user_input not in (None, "", {}, "{}") else "go"
         run_context = RunContextWrapper(context=context)
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
