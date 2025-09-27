@@ -17,7 +17,7 @@ mcpServers:
 
   # npx -y @modelcontextprotocol/server-sequential-thinking
   seq:
-    enabled: true
+    enabled: false
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
@@ -25,7 +25,7 @@ mcpServers:
   # uv --directory /home/strato-space/telegram-mcp run main.py
   # note: the app should load /home/strato-space/call/.env itself (e.g., via python-dotenv)
   telegram-mcp:
-    enabled: true
+    enabled: false
     command: uv
     args:
       - --directory
@@ -35,7 +35,7 @@ mcpServers:
 
   # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
   voice:
-    enabled: true
+    enabled: false
     command: uv
     args:
       - --directory
@@ -49,7 +49,7 @@ mcpServers:
     # Google Sheets MCP (remote or local)
     # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
     # If you want to run a local process, provide command/args env like other *-local servers.
-    enabled: true
+    enabled: false
     command: uvx
     args:
       - --env-file

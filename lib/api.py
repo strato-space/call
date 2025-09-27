@@ -1578,7 +1578,7 @@ async def call_async(
             err_code = "UPSTREAM_CONNECT_ERROR"
             status = 502
         return _error_payload(
-            agent=(chosen_name or ""),
+            agent=(cfg.id or ""),
             input=(input or ""),
             exc=desc or msg,
             status=status,

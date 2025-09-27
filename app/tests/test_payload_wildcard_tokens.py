@@ -182,7 +182,6 @@ def test_cli_agent_exact_context(monkeypatch):
                 "rel_path": "prompt/AgentFab/DiscoveryAgent/agent.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md",
                 "type": "agent",
-                "target": "DiscoveryAgent",
             }
         ]
 
@@ -211,7 +210,6 @@ def test_cli_project_exact_context(monkeypatch):
                 "rel_path": "prompt/AgentFab/project.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md",
                 "type": "project",
-                "target": "AgentFab",
             }
         ]
 

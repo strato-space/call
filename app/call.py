@@ -466,6 +466,78 @@ def _collect_tools(cfg) -> list[tuple[str, str]]:
     return entries
 
 
+def _canonical_and_sanitized_user_input(user_input: Any) -> tuple[str, str]:
+    """Return the original (canonical) user input string and sanitized string."""
+
+    if isinstance(user_input, str):
+        canonical = user_input
+    else:
+        try:
+            canonical = json.dumps(user_input, ensure_ascii=False)
+        except Exception:
+            canonical = str(user_input)
+
+    sanitized = canonical
+
+    if isinstance(user_input, str):
+        try:
+            parsed = json.loads(user_input)
+        except Exception:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            parsed = dict(parsed)
+            parsed.pop("input", None)
+            parsed.pop("target", None)
+            try:
+                sanitized = json.dumps(parsed, ensure_ascii=False)
+            except Exception:
+                sanitized = json.dumps(parsed)
+    elif isinstance(user_input, dict):
+        parsed = dict(user_input)
+        parsed.pop("input", None)
+        parsed.pop("target", None)
+        try:
+            sanitized = json.dumps(parsed, ensure_ascii=False)
+        except Exception:
+            sanitized = json.dumps(parsed)
+
+    return canonical, sanitized
+
+
+def _merge_tool_input_into_canonical(canonical_json: str | None, input_json: str | None) -> str | None:
+    """Replace the `input` key inside canonical JSON (if dict) with the latest tool input string."""
+
+    if not canonical_json:
+        return canonical_json
+
+    try:
+        canonical_obj = json.loads(canonical_json)
+    except Exception:
+        return canonical_json
+
+    if not isinstance(canonical_obj, dict):
+        return canonical_json
+
+    if input_json:
+        try:
+            parsed_input = json.loads(input_json)
+        except Exception:
+            parsed_input = input_json
+
+        if isinstance(parsed_input, dict) and "input" in parsed_input:
+            replacement = parsed_input.get("input")
+        else:
+            replacement = parsed_input
+
+        canonical_obj["input"] = replacement
+
+    try:
+        return json.dumps(canonical_obj, ensure_ascii=False)
+    except Exception:
+        return json.dumps(canonical_obj)
+
+
 def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
     """Replace FunctionTool handler to emit debug/Telegram logs."""
     if not isinstance(tool, FunctionTool):
@@ -474,13 +546,29 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
     orig_invoke = tool.on_invoke_tool
 
     async def _wrapped_on_invoke(ctx, input: str):
-        try:
-            preview = (input or "")
-            if len(preview) > 800:
-                preview = preview[:797] + "..."
-            debug_print("[tool-call]", f"{getattr(sub_cfg, 'name', '') or sub_name}", preview)
-        except Exception:
-            pass
+        # try:
+        #     # Access canonical_input from the context directly
+        #     canonical_input = getattr(ctx, "context", {}).get("canonical_input") if hasattr(ctx, "context") else None
+        #     debug_print("[tool-call]", "ctx 1:", ctx)
+        #     debug_print("[tool-call]", "input 1:", input)
+        #     debug_print("[tool-call]", "ctx.context:", getattr(ctx, "context", None))
+        #     debug_print("[tool-call]", "canonical_input found:", canonical_input)
+
+        #     merged_canonical = _merge_tool_input_into_canonical(canonical_input, input)
+        #     if merged_canonical and merged_canonical != canonical_input:
+        #         try:
+        #             getattr(ctx, "context", {})["canonical_input"] = merged_canonical
+        #         except Exception:
+        #             pass
+        #         canonical_input = merged_canonical
+
+        #     preview_input = canonical_input if canonical_input else input
+        #     sanitized_preview_input = _canonical_and_sanitized_user_input(preview_input)[1]
+        #     input = preview_input 
+        #     debug_print("[tool-call]", "input 2:", input)
+
+        # except Exception as e:
+        #     debug_print("[tool-call]", "Error in _wrapped_on_invoke:", str(e))
 
         tg_msg = None
         try:
@@ -2477,6 +2565,18 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 if tool:
                     tools.append(tool)
 
+        debug_print("[call]", "cfg.instructions:", cfg.instructions)
+        debug_print("[call]", "user_input (raw):", user_input)
+
+        canonical_input, sanitized_input = _canonical_and_sanitized_user_input(user_input)
+        user_input = sanitized_input
+
+        debug_print("[call]", "canonical_input:", canonical_input)
+        debug_print("[call]", "user_input (sanitized):", user_input)
+
+        context = {"canonical_input": canonical_input}
+        debug_print("[call]", "context 0:", context)
+
         agent = Agent(
             name=(getattr(cfg, "id", None) or getattr(cfg, "agent", None) or getattr(cfg, "prompt", None) or "Agent"),
             instructions=(cfg.instructions or ""),
@@ -2485,7 +2585,8 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             tools=tools,
             mcp_servers=mcp_servers,
         )
-        run_context = RunContextWrapper(context=None)
+        initial_input = (user_input or "go")
+        run_context = RunContextWrapper(context=context)
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
 
@@ -2564,7 +2665,9 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             user_input = await _embed_files_in_user_input(user_input)
         
         # Run the main agent once with pure user_input string (session-enabled)
-        initial_input = (user_input or "go")
+        
+        debug_print("[call]", "user_input:", user_input)
+
         step1_output = ""
         try:
             result1 = await Runner.run(
@@ -2572,6 +2675,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 initial_input,
                 max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
                 session=session,
+                context=context,
             )
             step1_output += getattr(result1, "final_output", None)
         except Exception as e:

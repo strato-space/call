@@ -11,6 +11,7 @@ Functions:
 from __future__ import annotations
 
 import re
+import os
 import sqlite3
 from pathlib import Path
 import builtins as _builtins
