@@ -66,8 +66,9 @@ def test_reload_stores_card_text_and_skips_placeholder_prompts(tmp_path, monkeyp
     assert "Project" in records[("ProjectX", "", "")]
 
     # Agent row should contain the literal agent.md text (not a path)
-    assert ("ProjectX", "ProjectX", "") in records
-    assert "Agent card without metadata" in records[("ProjectX", "ProjectX", "")]
+    agent_key = ("ProjectX", "MainAgent", "")
+    assert agent_key in records
+    assert "Agent card without metadata" in records[agent_key]
 
     # Prompt row from ready/ should be present with its card content
     prompt_keys = [key for key in records if key[2] == "PromptReal"]
