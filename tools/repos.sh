@@ -348,6 +348,14 @@ repo https://github.com/strato-space/prompt
 repo https://github.com/strato-space/server
 repo https://github.com/strato-space/rms
 repo https://github.com/strato-space/voice
+# Ensure cache directories for SQLite DBs referenced from call/.env
+if [ -d "call" ]; then
+  CACHE_ROOT="${BASE_DIR}/.cache/call"
+  if [ ! -d "$CACHE_ROOT" ]; then
+    mkdir -p "$CACHE_ROOT"
+    echo "Created cache directory: $CACHE_ROOT"
+  fi
+fi
 # Optional repositories
 # repo https://github.com/strato-space/telegram-mcp
 # repo https://github.com/strato-space/mcp-google-sheets
