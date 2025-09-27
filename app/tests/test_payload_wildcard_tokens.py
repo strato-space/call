@@ -32,7 +32,7 @@ def test_build_input_payload_wildcard_single(monkeypatch):
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
     ref = ctx[0]
-    assert ref["type"] == "file"
+    assert ref["type"] == "prompt"
     assert ref["name"] == "31-OnlineQuestionsBabook"
     assert ref["path"].replace("\\", "/") == "prompt/draft/31-OnlineQuestionsBabook.md"
     assert ref.get("mutable") is True
@@ -62,6 +62,8 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     assert names == ["31-OnlineQuestionsBabook", "32-InterviewSummary"]
     paths = [r["path"].replace("\\", "/") for r in ctx]
     assert paths == ["prompt/draft/31-OnlineQuestionsBabook.md", "prompt/draft/32-InterviewSummary.md"]
+    types = [r["type"] for r in ctx]
+    assert types == ["prompt", "prompt"]
 
 
 def test_build_input_payload_wildcard_no_matches(monkeypatch):
@@ -92,13 +94,10 @@ def test_build_input_payload_deduplicate_refs(monkeypatch):
             return [it for it in items if it["prompt"] == prompt]
         return items
 
-    monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
-
     # Provide both exact and wildcard that resolve to the same item
     payload_json, _ = call_api.build_input_payload(target="AgentFab", main_text="31-OnlineQuestionsBabook 31-*")
     obj = json.loads(payload_json)
     ctx = obj.get("context")
-    # Expect only one entry
     assert isinstance(ctx, list) and len(ctx) == 1
     assert ctx[0]["name"] == "31-OnlineQuestionsBabook"
 
@@ -122,3 +121,109 @@ def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
     assert ctx[0]["name"] == "32-InterviewSummary"
+
+
+def test_cli_prompt_wildcard_context(monkeypatch):
+    from call.lib import api as call_api
+
+    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+        items = [
+            {
+                "project": "AgentFab",
+                "agent": "DiscoveryAgent",
+                "prompt": "33-extensions",
+                "path": "prompt/ready/33-extensions.md",
+                "rel_path": "prompt/ready/33-extensions.md",
+                "url": "https://github.com/strato-space/prompt/blob/master/ready/33-extensions.md",
+                "type": "prompt",
+            },
+            {
+                "project": "AgentFab",
+                "agent": "DiscoveryAgent",
+                "prompt": "33-Questioning",
+                "path": "prompt/draft/33-Questioning.md",
+                "rel_path": "prompt/draft/33-Questioning.md",
+                "url": "https://github.com/strato-space/prompt/blob/master/draft/33-Questioning.md",
+                "type": "prompt",
+            },
+        ]
+        if prompt:
+            return [it for it in items if it["prompt"] == prompt]
+        return items
+
+    monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
+    monkeypatch.setattr(call_api.repo, "find_projects", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api.repo, "find_agents", lambda **_: [], raising=False)
+
+    payload_json, _ = call_api.build_input_payload(target=None, main_text="@33-*")
+    obj = json.loads(payload_json)
+    ctx = obj.get("context")
+    assert isinstance(ctx, list) and len(ctx) == 2
+    names = [c["name"] for c in ctx]
+    assert names == ["33-extensions", "33-Questioning"]
+    urls = [c.get("url") for c in ctx]
+    assert urls == [
+        "https://github.com/strato-space/prompt/blob/master/ready/33-extensions.md",
+        "https://github.com/strato-space/prompt/blob/master/draft/33-Questioning.md",
+    ]
+    types = [c["type"] for c in ctx]
+    assert types == ["prompt", "prompt"]
+
+
+def test_cli_agent_exact_context(monkeypatch):
+    from call.lib import api as call_api
+
+    def fake_find_agents(*, project=None, agent=None, target=None):
+        return [
+            {
+                "project": "AgentFab",
+                "agent": "DiscoveryAgent",
+                "path": "prompt/AgentFab/DiscoveryAgent/agent.md",
+                "rel_path": "prompt/AgentFab/DiscoveryAgent/agent.md",
+                "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md",
+                "type": "agent",
+            }
+        ]
+
+    monkeypatch.setattr(call_api.repo, "find_agents", fake_find_agents, raising=True)
+    monkeypatch.setattr(call_api.repo, "find_projects", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
+
+    payload_json, _ = call_api.build_input_payload(target=None, main_text="@DiscoveryAgent")
+    obj = json.loads(payload_json)
+    ctx = obj.get("context")
+    assert isinstance(ctx, list) and len(ctx) == 1
+    ref = ctx[0]
+    assert ref["name"] == "DiscoveryAgent"
+    assert ref["type"] == "agent"
+    assert ref["path"].replace("\\", "/") == "prompt/AgentFab/DiscoveryAgent/agent.md"
+    assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md")
+
+
+def test_cli_project_exact_context(monkeypatch):
+    from call.lib import api as call_api
+
+    def fake_find_projects(*, project=None, target=None):
+        return [
+            {
+                "project": "AgentFab",
+                "path": "prompt/AgentFab/project.md",
+                "rel_path": "prompt/AgentFab/project.md",
+                "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md",
+                "type": "project",
+            }
+        ]
+
+    monkeypatch.setattr(call_api.repo, "find_projects", fake_find_projects, raising=True)
+    monkeypatch.setattr(call_api.repo, "find_agents", lambda **_: [], raising=False)
+    monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
+
+    payload_json, _ = call_api.build_input_payload(target=None, main_text="@AgentFab")
+    obj = json.loads(payload_json)
+    ctx = obj.get("context")
+    assert isinstance(ctx, list) and len(ctx) == 1
+    ref = ctx[0]
+    assert ref["name"] == "AgentFab"
+    assert ref["type"] == "project"
+    assert ref["path"].replace("\\", "/") == "prompt/AgentFab/project.md"
+    assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/project.md")
