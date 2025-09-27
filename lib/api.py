@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 import os
@@ -298,10 +300,51 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
 
     # Resolve tokens → context via repo index only (no runtime builder calls)
     refs: list[dict] = []
-    for tok in tokens:
-        rows = []
+    seen_refs: set[tuple[str, str, str]] = set()
 
-        # Support wildcard prompts like '31-*' by filtering DB prompts via regex when '*' present
+    def _append_rows(rows: list[dict], *, name_key: str, default_type: str, fallback_token: str) -> None:
+        if not rows:
+            return
+        from pathlib import Path as _Path
+
+        for row in rows:
+            try:
+                rpath = str(row.get('rel_path') or row.get('path') or '').strip()
+                if not rpath:
+                    continue
+                p = _Path(rpath)
+                name_val = str(row.get(name_key) or '').strip() or (p.stem or fallback_token)
+                path_val = str(p).replace('\\', '/')
+                row_type = str(row.get('type') or '').strip().lower() or default_type
+                ref = {"type": row_type, "name": name_val, "path": path_val, "mutable": True}
+                url_val = str(row.get('url') or '').strip()
+                if url_val:
+                    ref["url"] = url_val
+                key = (ref["type"], ref["name"], ref["path"])
+                if key in seen_refs:
+                    continue
+                seen_refs.add(key)
+                refs.append(ref)
+            except Exception:
+                continue
+
+    for tok in tokens:
+        # Projects (wildcard-aware)
+        try:
+            proj_rows = call_repo.find_projects(project=tok, target=None)
+        except Exception:
+            proj_rows = []
+        _append_rows(proj_rows, name_key="project", default_type="project", fallback_token=tok)
+
+        # Agents (wildcard-aware)
+        try:
+            agent_rows = call_repo.find_agents(project=None, agent=tok, target=None)
+        except Exception:
+            agent_rows = []
+        _append_rows(agent_rows, name_key="agent", default_type="agent", fallback_token=tok)
+
+        # Prompts (handle wildcard manually for compatibility)
+        prompt_rows: list[dict]
         if ('*' in tok):
             try:
                 import re as _re2
@@ -310,34 +353,16 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
                     items = list_prompts(project=None, agent=None, prompt=None, state=None, target=None)
                 except Exception:
                     items = []
-                rows = [x for x in (items or []) if rx.match(str(x.get('prompt') or ''))]
+                prompt_rows = [x for x in (items or []) if rx.match(str(x.get('prompt') or ''))]
             except Exception:
-                rows = []
+                prompt_rows = []
         else:
             try:
-                rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
+                prompt_rows = list_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
             except Exception:
-                rows = []
+                prompt_rows = []
 
-        if not rows:
-            continue
-        try:
-            # If multiple rows matched (rare under wildcard), pick the first for context purposes
-            row = rows[0]
-            rpath = str(row.get('rel_path') or row.get('path') or '').strip()
-            if rpath:
-                from pathlib import Path as _Path
-                p = _Path(rpath)
-                # Prefer DB prompt id for name to preserve exact casing (e.g., '50-DiscoveryAgent')
-                name_val = str(row.get('prompt') or '').strip() or (p.stem or tok)
-                # Normalize path to POSIX-style for deterministic JSON
-                path_val = str(p).replace('\\', '/')
-                ref = {"type": "file", "name": name_val, "path": path_val, "mutable": True}
-                key = (ref.get("type"), ref.get("name"), ref.get("path"), None)
-                if key not in {(r.get("type"), r.get("name"), r.get("path"), None) for r in refs}:
-                    refs.append(ref)
-        except Exception:
-            continue
+        _append_rows(prompt_rows, name_key="prompt", default_type="prompt", fallback_token=tok)
 
     if refs:
         try:
