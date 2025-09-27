@@ -1,5 +1,5 @@
 """
-DB-only repository interface backed by SQLite (call/repo.db).
+DB-only repository interface backed by SQLite (default: call/repo.db).
 
 Functions:
 - list(project?, agent?, prompt?, state?, target?) -> list[dict]
@@ -10,15 +10,15 @@ Functions:
 """
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 from pathlib import Path
 import builtins as _builtins
 from typing import Dict, List, Optional, Tuple
 
-# Location of the SQLite database. Default to call/repo.db next to this module.
-DB_PATH = str(Path(__file__).resolve().parents[1] / "repo.db")
+# Location of the SQLite database. Default to call/repo.db next to this module,
+# but can be overridden via the DB_PATH environment variable.
+DB_PATH = os.getenv("DB_PATH", "call/repo.db")
 
 
 def _ensure_db() -> sqlite3.Connection:
