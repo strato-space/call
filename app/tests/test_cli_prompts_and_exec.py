@@ -134,7 +134,7 @@ def test_cli_exec_print_instructions_dialogpostanalysis():
         "--print-instructions",
     ], env=env)
     assert code == 0, err
-    assert "DialogPostAnalysis" in out or "Формирует вопросы" in out
+    assert "# Goal" in out or "Пост-анализ" in out
 
 
 def test_cli_exec_tracing_403_error_json():
@@ -243,7 +243,7 @@ bad: [missing: bracket
         encoding="utf-8",
     )
     try:
-        _ = _run_cli(["scan", "--repos", "prompt", "--format", "json"])  # refresh index
+        _ = _run_cli(["reload", "--repos", "prompt", "--format", "json"])  # refresh index
         code, out, err = _run_cli([
             "call",
             "--project", "UxFab",
@@ -286,7 +286,7 @@ bad: [missing: bracket
     )
     try:
         # Rebuild prompt index to include the new malformed file
-        _ = _run_cli(["scan", "--repos", "prompt", "--format", "json"])  # ignore result
+        _ = _run_cli(["reload", "--repos", "prompt", "--format", "json"])  # ignore result
         code, out, err = _run_cli([
             "call",
             "--project", "UxFab",

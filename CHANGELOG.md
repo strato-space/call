@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-27
+
+- **MCP config loader:** Renamed `_load_yaml` to `_load_mcp_yaml_config()` in `call/app/call.py` to scope its usage to MCP configuration parsing and updated callers/tests accordingly.
+- **Digest buttons:** `send_digest_notification()` now accepts precomputed `buttons` metadata and renders inline buttons without reading agent files during runtime. (`call/app/call.py`)
+- **Actions API:** Removed the legacy `call_lib`, `list_lib`, and `interpret_exec_payload` aliases from `call/actions/main.py`; tests now patch the exported `api_call`/`api_list` symbols directly.
+- **CLI/runtime cleanup:** Removed the deprecated `scan` CLI alias (use `reload`) and the `clean_html_for_telegram()` wrapper; runtime now calls `sanitize_telegram_html()` directly. Updated CLI documentation and tests accordingly. (`call/cli/main.py`, `call/app/call.py`, `call/app/tests/test_cli_prompts_and_exec.py`, docs)
+- **Tooling:** Dropped the `ensure_repo()` alias from `call/tools/repos.sh`; scripts should call `repo` directly.
+- **Logging:** Disabled per-server skip spam by consolidating disabled MCP server names into a single debug line in `_build_mcp_servers_from_yaml()`. (`call/app/call.py`)
+- **Tests:** Refreshed `test_send_digest_notification.py` to pass button metadata directly and added coverage for multiple buttons; updated `test_mcp_config_yaml.py` to reflect the renamed MCP loader.
+- **Builder simplification:** Removed the legacy `merge` flag from `build_runnable_instructions_config()` and all runtime surfaces (CLI, Telegram bot, tests). Instructions now always inherit prompt → agent → project metadata without separate merge modes. (`call/lib/api.py`, `call/cli/main.py`, `call/telegram_bot/bot.py`, tests, docs)
+
 ## 2025-09-26
 
 - **Parser:** `parse_metadata_and_prompt()` now loads pure YAML cards and Markdown files with only a `METADATA` block, falling back to the remaining body as the prompt text. Malformed YAML raises a `BAD_CARD_FORMAT` envelope and `_load_card()` logs the failure through the `call.api` logger so callers receive structured errors instead of stack traces. (`call/lib/utils.py`, `call/lib/api.py`)

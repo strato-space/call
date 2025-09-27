@@ -1,40 +1,17 @@
 from pathlib import Path
 from typing import Dict, Any
 
-from call.lib.utils import parse_metadata_and_prompt
+from call.lib.api import RunnableConfig
 
-# Local YAML loader used across the app runtime (simple safe_load)
-def _load_yaml(path: Path) -> Dict[str, Any]:
+# Local YAML loader for MCP configuration (simple safe_load)
+def _load_mcp_yaml_config(path: Path) -> Dict[str, Any]:
     try:
         import yaml as _yaml
         return _yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     except Exception as e:
         try:
             import logging as _log
-            _log.exception("_load_yaml: failed to read %s", path)
-        except Exception:
-            pass
-        return {}
-
-
-def _load_card_metadata(path: Path) -> Dict[str, Any]:
-    try:
-        card_path = Path(path)
-        text = card_path.read_text(encoding="utf-8")
-        suffix = card_path.suffix.lower()
-        if suffix in {".yaml", ".yml"}:
-            import yaml as _yaml
-            data = _yaml.safe_load(text) or {}
-            return data if isinstance(data, dict) else {}
-        # Default to Markdown parser (handles METADATA/PROMPT blocks)
-        meta = parse_metadata_and_prompt(text, path=str(card_path))
-        return meta if isinstance(meta, dict) else {}
-    except ValueError:
-        raise
-    except Exception:
-        try:
-            import logging as _log
-            _log.exception("_load_card_metadata: failed to read %s", path)
+            _log.exception("_load_mcp_yaml_config: failed to read %s", path)
         except Exception:
             pass
         return {}
@@ -56,6 +33,7 @@ import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
 import re
+import shlex
 from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
 import urllib.parse
 from pathlib import Path
@@ -69,7 +47,7 @@ from openai import OpenAI
 from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
-from call.lib.api import build_runnable_instructions_config
+from call.lib import api as call_api
 
 # Import agent utilities (internal copy)
 try:
@@ -83,7 +61,7 @@ except ImportError:
 import shutil
 
 # Import HTML/Telegram text utilities from package-relative utils
-from .utils.html_sanitizer import clean_html_for_telegram, clean_html_for_telegraph, minify_html_func
+from .utils.html_sanitizer import sanitize_telegram_html, clean_html_for_telegraph, minify_html_func
 from .utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_truncate_markdown_safe,
@@ -366,8 +344,9 @@ def debug_dump_cfg_preview(cfg) -> None:
     try:
         instr = getattr(cfg, "instructions", "") or ""
         preview = instr[:4096] + ("…" if len(instr) > 4096 else "")
-        debug_print("[app]", "Agent instructions len=", str(len(instr)))
-        debug_print("[app]", "Agent instructions preview=\n" + preview)
+        
+        debug_print("[cfg]", "Agent instructions preview: |-\n" + preview)
+        debug_print("[cfg]", "Agent instructions len:", str(len(instr)))
     except Exception:
         pass
 
@@ -381,7 +360,7 @@ async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict 
         cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
         path = Path(cfg_path)
         if path.exists():
-            cfg_yaml = _load_yaml(path)
+            cfg_yaml = _load_mcp_yaml_config(path)
             enabled_flag = os.environ.get("ENABLE_MCP", "")
             enabled = str(enabled_flag).strip().lower() in {"1", "true", "yes", "on"}
             try:
@@ -507,8 +486,8 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
         try:
             if selected_chat_id is not None:
                 await init_bot()
-                title = f"🛠️ <b>{clean_html_for_telegram(getattr(sub_cfg, 'name', '') or sub_name)}</b>"
-                caller = f"<i>from</i> <b>{clean_html_for_telegram(getattr(cfg, 'name', '') or '')}</b>"
+                title = f"🛠️ <b>{sanitize_telegram_html(getattr(sub_cfg, 'name', '') or sub_name)}</b>"
+                caller = f"<i>from</i> <b>{sanitize_telegram_html(getattr(cfg, 'name', '') or '')}</b>"
                 body = ""
                 try:
                     import json as _json, html as _html
@@ -519,7 +498,7 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                         pretty = pretty[:1497] + "..."
                     body = f"\n<pre><code class=\"language-json\">{_html.escape(pretty)}</code></pre>"
                 except Exception:
-                    esc = clean_html_for_telegram(input or "")
+                    esc = sanitize_telegram_html(input or "")
                     if len(esc) > 1500:
                         esc = esc[:1497] + "..."
                     body = f"\n<code>{esc}</code>"
@@ -548,7 +527,7 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                         rtxt = rtxt[:1197] + "..."
                     rtxt = _html.escape(rtxt)
                     updated = f"{title} {caller}\n<b>✓ Completed</b>\n<pre><code>{rtxt}</code></pre>"
-                    updated = clean_html_for_telegram(updated)
+                    updated = sanitize_telegram_html(updated)
                     await safe_edit_message_text(
                         chat_id=tg_msg.chat_id,
                         message_id=tg_msg.message_id,
@@ -585,15 +564,13 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
 
     project_scope = None if (str(getattr(cfg, "id", "")).strip() == "AgentFab") else (getattr(cfg, "project", None) or None)
     try:
-        # Resolve at call-time so tests can monkeypatch call.lib.api.build_runnable_instructions_config
-        from call.lib import api as _api
-        sub_cfg, sub_err = _api.build_runnable_instructions_config(
+        # Resolve at call-time so tests can monkeypatch call_api.build_runnable_instructions_config
+        sub_cfg, sub_err = call_api.build_runnable_instructions_config(
             project=project_scope,
             agent=None,
             prompt=None,
             target=sub_name,
             input=None,
-            merge=bool(getattr(cfg, "merge", False)),
         )
     except Exception as exc:
         sub_cfg, sub_err = None, exc
@@ -805,7 +782,7 @@ def _create_session_if_any(selected_chat_id: int | None, selected_thread_id: int
 
 async def _notify_digest_if_applicable(
     *,
-    cfg,
+    cfg: RunnableConfig,
     user_input: str,
     initial_input: str,
     step1_output: str | None,
@@ -821,8 +798,9 @@ async def _notify_digest_if_applicable(
     use_thread_id = selected_thread_id
     try:
         await send_digest_notification(
-            agent_name=(cfg.id or ''),
-            agent_path=((cfg.path or None) or ((cfg.attributes or {}).get("_source_path") if isinstance(getattr(cfg, "attributes", None), dict) else None)),
+            agent_name=(cfg.id or ""),
+            agent_path=(cfg.path or None),
+            buttons=((cfg.attributes or {}).get("buttons") if isinstance(cfg.attributes, dict) else None),
             input_text=initial_input,
             text=(step1_output or ""),
             chat_id=use_chat_id,
@@ -1015,7 +993,7 @@ async def send_telegram_message(text: str, parse_mode: str = ParseMode.HTML, cha
     global telegram_last_message
     try:
         # Sanitize for Telegram HTML to avoid unsupported tags (e.g., ul/li)
-        safe_text = clean_html_for_telegram(text) if parse_mode == ParseMode.HTML else (text or "")
+        safe_text = sanitize_telegram_html(text) if parse_mode == ParseMode.HTML else (text or "")
 
         async def _op():
             return await bot.send_message(
@@ -1041,6 +1019,7 @@ async def send_digest_notification(
     message_thread_id: int | None = None,
     agent_name: str | None = None,
     agent_path: str | Path | None = None,
+    buttons: list[dict[str, Any]] | None = None,
     input_text: str | None = None,
     image_path: str | Path | None = None,
 ) -> Optional[Message]:
@@ -1059,9 +1038,9 @@ async def send_digest_notification(
       back to `selected_thread_id`.
     - agent_name: Resolved agent display name. Used for presentation (e.g., Telegraph
       title) and optional buttons macro substitutions.
-    - agent_path: Path to `agent.yaml` (string or Path). If provided and exists,
-      the function will try to read `buttons` section to build inline buttons; it
-      also allows macro expansion for `{{digest_url}}` if a Telegraph link was created.
+    - agent_path: Optional path to the originating card (used for logging/debug only).
+    - buttons: Optional list of button dicts (label/url) provided by the caller. When
+      present, these are rendered as inline buttons with macro substitution support.
     - input_text: Original user input. When we need to fall back to a banner (no text
       or after publishing), this input is echoed within a <code> block for context.
     - image_path: If provided, the function sends a photo instead of a text message.
@@ -1071,8 +1050,8 @@ async def send_digest_notification(
     - Always uses the finalized chat/thread computed from explicit arguments or
       module-level selections to avoid races.
     - Performs safe HTML preparation/truncation in downstream helpers.
-    - Builds inline buttons from `agent.yaml` if present. Macro `{{digest_url}}` is
-      replaced with the generated Telegraph URL when applicable.
+    - Builds inline buttons from the provided configuration. Macro `{{digest_url}}`
+      is replaced with the generated Telegraph URL when applicable.
 
     Returns:
     - telegram.Message on success; None on failure (with error logged to stdout).
@@ -1083,6 +1062,7 @@ async def send_digest_notification(
         f"text_len={(len(text) if isinstance(text, str) else 'None')},",
         f"chat_id={chat_id}, message_thread_id={message_thread_id},",
         f"agent_name={agent_name}, agent_path={agent_path},",
+        f"buttons_count={len(buttons) if isinstance(buttons, list) else 0},",
         f"input_len={(len(input_text) if isinstance(input_text, str) else 'None')},",
         f"image_path={image_path}"
     )
@@ -1123,42 +1103,24 @@ async def send_digest_notification(
 
     debug_print(f"send_digest_notification publish_url={local_url}")
 
-    # Try to load buttons configuration from agent.yaml and perform macro substitution
+    # Build inline buttons from provided configuration and perform macro substitution
     keyboard = None
     try:
-        resolved_yaml: Path | None = None
-        if agent_path and Path(agent_path).exists():
-            p = Path(agent_path)
-            resolved_yaml = p if p.name.lower().endswith('.yaml') else (p / 'agent.yaml')
-            if not resolved_yaml.exists():
-                resolved_yaml = None
-        if resolved_yaml is None:
-            agent_name_exact = (agent_name or "").strip() if agent_name else None
-            if agent_name_exact:
-                try:
-                    resolved_yaml = discover_agent_yaml(agent_name_exact)
-                except Exception:
-                    resolved_yaml = None
-        if resolved_yaml:
-            agent_cfg = _load_card_metadata(resolved_yaml) or {}
-            btns = agent_cfg.get("buttons")
-            if isinstance(btns, list) and btns:
-                row = []
-                for b in btns:
-                    if not isinstance(b, dict):
-                        continue
-                    label = str(b.get("label", "")).strip() or "🔗"
-                    link = str(b.get("url", "")).strip()
-                    # Macro substitutions
-                    if link:
-                        safe_url = local_url or ""
-                        link = link.replace("{{digest_url}}", safe_url)
-                    if link:
-                        row.append(InlineKeyboardButton(label, url=link))
-                if row:
-                    keyboard = [row]
+        row: list[InlineKeyboardButton] = []
+        btn_source = buttons if isinstance(buttons, list) else []
+        for b in btn_source:
+            if not isinstance(b, dict):
+                continue
+            label = str(b.get("label", "")).strip() or "🔗"
+            link = str(b.get("url", "")).strip()
+            if link:
+                safe_url = local_url or ""
+                link = link.replace("{{digest_url}}", safe_url)
+            if link:
+                row.append(InlineKeyboardButton(label, url=link))
+        if row:
+            keyboard = [row]
     except Exception:
-        # Silent fallback to static buttons below
         keyboard = None
 
     # If keyboard wasn't configured in agent.yaml, do not show any buttons
@@ -1762,7 +1724,7 @@ class MCPServerStdioHook(MCPServerStdio):
         payload = header + f"<pre><code class=\"language-text\">{escaped_body}</code></pre>"
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
         try:
-            cleaned = clean_html_for_telegram(payload)
+            cleaned = sanitize_telegram_html(payload)
             cleaned = telegram_truncate_html_safe(cleaned, 3800)
             msg = await safe_send_message(chat_id=selected_chat_id, message_thread_id=selected_thread_id, text=cleaned, parse_mode=ParseMode.HTML)
             self.__telegram_last_message = msg
@@ -1787,7 +1749,7 @@ class MCPServerStdioHook(MCPServerStdio):
             return
         # Clean and truncate
         try:
-            cleaned = clean_html_for_telegram(safe_text)
+            cleaned = sanitize_telegram_html(safe_text)
             cleaned = telegram_truncate_html_safe(cleaned, 3800)
             # Skip edit if content is unchanged (prevents BadRequest: Message is not modified)
             if self.__last_tg_text == cleaned:
@@ -2383,7 +2345,7 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
 
 
 # build_agent_config was deprecated and removed in favor of the library DTO builder:
-# call.lib.api.build_runnable_instructions_config(...)
+# call_api.build_runnable_instructions_config(...)
 
 
 async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitStack) -> list[Any]:
@@ -2414,19 +2376,20 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
                 )
             )
             try:
-                debug_print("[mcp]", f"Started MCP stdio server '{name}' with command={cmd} args={args} timeout={timeout}s")
+                parts = [str(cmd)] + [str(a) for a in (args or [])]
+                pretty_cmd = shlex.join(parts)
+                debug_print("[mcp]", f"Started MCP stdio server '{name}' with command: {pretty_cmd}")
             except Exception:
                 pass
             return server
+
+        disabled_names: list[str] = []
 
         for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
             if not isinstance(spec, dict):
                 continue
             if not spec.get("enabled", False):
-                try:
-                    debug_print("[mcp]", f"Skipping '{name}': enabled=false")
-                except Exception:
-                    pass
+                disabled_names.append(name)
                 continue
             if "command" in spec:
                 timeout = int(spec.get("timeoutSeconds", 120))
@@ -2464,6 +2427,12 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
                         debug_print("[mcp]", f"Skipping remote '{name}': no bridge for serverUrl={spec.get('serverUrl')}")
                     except Exception:
                         pass
+
+        if disabled_names:
+            try:
+                debug_print("[mcp]", "Skipping disabled servers: " + ", ".join(sorted(disabled_names)))
+            except Exception:
+                pass
     return mcp_servers_started
 
 
@@ -2523,27 +2492,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
         await _init_bot_safe(project_name=(cfg.project or None))
         
-        # Read optional output targets from card source path when available
-        try:
-            _src = None
-            attrs = getattr(cfg, "attributes", {}) or {}
-            if isinstance(attrs, dict) and attrs.get("_source_path"):
-                _src = attrs.get("_source_path")
-            elif getattr(cfg, "path", None):
-                _src = getattr(cfg, "path")
-            output_yaml = None
-            if _src:
-                p = Path(str(_src))
-                if p.exists():
-                    output_yaml = (_load_card_metadata(p).get("output") or None)
-            merged_output = _merge_outputs(output_yaml, None)
-        except Exception:
-            merged_output = {}
-        m_chat, m_thread = _extract_tg_targets(merged_output)
-        prompt_chat_id = m_chat
-        prompt_thread_id = m_thread
-
-
         # Save globally for subsequent messages
         global selected_chat_id, selected_thread_id, force_no_session
         # Respect previously selected targets (e.g., set by lib.api from Telegram update).
@@ -2593,6 +2541,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         
         # Run the main agent once with pure user_input string (session-enabled)
         initial_input = (user_input or "go")
+        step1_output = ""
         try:
             result1 = await Runner.run(
                 agent,
@@ -2600,7 +2549,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
                 max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
                 session=session,
             )
-            step1_output = getattr(result1, "final_output", None)
+            step1_output += getattr(result1, "final_output", None)
         except Exception as e:
             # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
             try:

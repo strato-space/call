@@ -20,13 +20,13 @@ def auth_headers():
 
 
 def test_call_ok(monkeypatch, client: TestClient, auth_headers):
-    def fake_call_lib(**kwargs):
+    def fake_api_call(**kwargs):
         # Expect target routed via name
         assert kwargs.get("target") == "TestAgent"
         assert kwargs.get("input") == "hi"
         return {"ok": True, "final_output": "done"}
 
-    monkeypatch.setattr(main, "call_lib", fake_call_lib, raising=True)
+    monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
 
     r = client.get("/call", params={"name": "TestAgent", "input": "hi", "echo": "1"}, headers=auth_headers)
     assert r.status_code == 200
@@ -35,7 +35,7 @@ def test_call_ok(monkeypatch, client: TestClient, auth_headers):
 
 
 def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_headers):
-    def fake_call_lib(**kwargs):
+    def fake_api_call(**kwargs):
         # Context is serialized to JSON string by the handler
         inp = kwargs.get("input") or ""
         try:
@@ -45,7 +45,7 @@ def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_header
         assert isinstance(payload, dict)
         return {"ok": True, "agent": "DialogPostAnalysis"}
 
-    monkeypatch.setattr(main, "call_lib", fake_call_lib, raising=True)
+    monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
 
     payload = {"agent": "DialogPostAnalysis", "context": {"text": "hello"}}
     r = client.post("/exec", params={"echo": "1"}, json=payload, headers=auth_headers)
@@ -55,7 +55,12 @@ def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_header
     assert data.get("agent") == "DialogPostAnalysis"
 
 
-def test_exec_post_both_agent_and_prompt_400(client: TestClient, auth_headers):
+def test_exec_post_both_agent_and_prompt_400(monkeypatch, client: TestClient, auth_headers):
+    def _fail_if_called(**kwargs):
+        raise AssertionError("api_call should not be invoked when multiple selectors are provided")
+
+    monkeypatch.setattr(main, "api_call", _fail_if_called, raising=True)
+
     payload = {"agent": "A", "prompt": "P", "context": {}}
     r = client.post("/exec", json=payload, headers=auth_headers)
     assert r.status_code == 400
@@ -75,7 +80,7 @@ def test_prompts_ok(monkeypatch, client: TestClient, auth_headers):
 
 
 def test_agents_ok(monkeypatch, client: TestClient, auth_headers):
-    monkeypatch.setattr(main, "list_lib", lambda **kwargs: [
+    monkeypatch.setattr(main, "api_list", lambda **kwargs: [
         {"name": "UxFab", "type": "project", "agents": [
             {"name": "DialogPostAnalysis", "aliases": [], "prompts": ["33-Questioning"], "path": "..."}
         ]}

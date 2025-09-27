@@ -163,7 +163,6 @@ def cmd_call(args: argparse.Namespace) -> int:
                 project=project,
                 agent=agent,
                 prompt=prompt,
-                merge=bool(getattr(args, "merge", False)),
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
@@ -275,7 +274,6 @@ def cmd_call(args: argparse.Namespace) -> int:
                             prompt=prompt,
                             target=target,
                             input=None,
-                            merge=bool(getattr(args, "merge", False)),
                         )
                         if not err and cfg:
                             agent_val = getattr(cfg, 'agent', None)
@@ -317,7 +315,6 @@ def cmd_call(args: argparse.Namespace) -> int:
             input=(payload_json if payload_dict else (raw_input or None)),
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
-            merge=bool(getattr(args, "merge", False)),
         )
         # Honor --format for output (json|yaml|text)
         _emit_output(result, getattr(args, "format", "json"))
@@ -374,8 +371,7 @@ def main() -> int:
     p_call.add_argument("--download-context", action="store_true", help="Download/inline context by url/path (content for text, base64 for binaries)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
-    p_call.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
-    p_call.add_argument("--merge", dest="merge", action="store_true", help="Enable attribute/instructions merge (off by default)")
+    p_call.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
     p_call.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
@@ -470,11 +466,6 @@ def main() -> int:
     p_reload.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_reload.add_argument("--full-form", action="store_true", help="Emit detailed per-directory output (default off)")
     p_reload.set_defaults(func=cmd_reload)
-    # Backward-compatible alias
-    p_scan = sub.add_parser("scan", help="Alias of reload (will be removed)")
-    p_scan.add_argument("--repos", default="", help="Comma- or semicolon-separated list (agent,prompt)")
-    p_scan.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
-    p_scan.set_defaults(func=cmd_reload)
 
     # exec subcommand
     def _parse_content_item(raw: str) -> dict:
@@ -571,7 +562,6 @@ def main() -> int:
                 project=(args.project or None),
                 agent=(args.agent or None),
                 prompt=(args.prompt or None),
-                merge=True,
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
@@ -599,7 +589,6 @@ def main() -> int:
                 prompt=(args.prompt or None),
                 target=(args.target or None),
                 input=None,
-                merge=True,
             )
             if err:
                 _emit_output(err, getattr(args, "format", "json"))
@@ -675,8 +664,8 @@ def main() -> int:
     p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")
     p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
-    p_exec.add_argument("--echo", action="store_true", help="Print the merged payload and exit (no execution)")
-    p_exec.add_argument("--print-instructions", action="store_true", help="Print the merged instructions for the selection and exit")
+    p_exec.add_argument("--echo", action="store_true", help="Print the payload and exit (no execution)")
+    p_exec.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
     p_exec.add_argument("--mcp-build-and-stop", dest="mcp_build_and_stop", action="store_true", help="Build runnable config, print and exit (no execution)")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)

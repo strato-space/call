@@ -56,7 +56,7 @@ The script auto-detects the workspace root (defaults to `/home/strato-space`), a
 
 - Reloading index: `from call.lib.api import reload as call_reload; call_reload()`
   - The repos to include are defined by `repos` in `.env` (comma- or semicolon-separated), for example: `repos=agent,prompt`.
-  - CLI provides `reload` to perform the same operation. A legacy alias `scan` is still available.
+  - CLI provides `reload` to perform the same operation.
 
 - Listing:
   - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
@@ -163,7 +163,7 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 - call (keyword-based)
   - Selectors are provided as flags: `--project`, `--agent`, `--prompt`, `--target`.
   - `--input` passes raw text; `--parse-input` uses the shared Telegram parser to build a JSON payload (tokens such as `@3-OnlineChunkSummarization` may resolve into `context`).
-  - `--print-instructions` prints the merged instructions for the selection and exits (no execution).
+  - `--print-instructions` prints the instructions for the selection and exits (no execution).
   - `--echo` prints the payload preview and resolved selection snapshot.
   - Project-only selections now report `"agent": null` in the `resolved` payload for clarity.
   - `--format json|yaml|text` controls output format for previews and listings.
@@ -171,7 +171,7 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 - exec (payload-based)
   - Merges selectors and content items into a single JSON payload (best for content buckets and Actions/MCP).
   - If exactly one selector among `project|agent|prompt|target` is provided, the CLI uses the single-source-of-truth validator `interpret_exec_payload()`; otherwise it falls back to a backward-compatible path and calls using explicit selectors with the full payload JSON as input.
-  - `--echo` prints the merged payload and exits (no execution).
+  - `--echo` prints the payload and exits (no execution).
   - `--format json|yaml|text` controls output format.
 
 Examples (PowerShell):
@@ -446,7 +446,7 @@ $env:CALL_DEBUG=1; python -m call.cli.main call --project UxFab --agent DialogPo
 ### Agent Loading Logic
 
 - **Zero prompts**: Uses `agent.yaml` content directly as instructions
-- **With prompts**: Uses first prompt from `prompts` list, merges with agent metadata
+- **With prompts**: Uses first prompt from `prompts` list; prompt metadata automatically overrides agent metadata
 - **Prompt loading**: Extracts first word from prompts list, tries `.md` then `.yaml` extensions
 - **Recursive file listing**: All agent directory files added to seed history as filenames list
 
@@ -571,8 +571,6 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 
   # Reload repos and rebuild index 
   python -m call.cli.main reload --repos agent,prompt --format json
-  # Legacy alias (will be removed):
-  python -m call.cli.main scan --repos agent,prompt --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.
   python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
@@ -771,8 +769,6 @@ Use the `call/repos.sh` script to keep local clones of our primary repositories 
   # From PowerShell using Git Bash
   "C:\Program Files\Git\bin\bash.exe" d:/home/strato-space/call/repos.sh
   ```
-
-The script defines a backward-compatible alias `ensure_repo()` which calls `repo "$@"`.
 
 See also the strategy doc: 
   - `org/strato/context/01. strato stategy/process-agents.md`;

@@ -341,9 +341,6 @@ repo() {
   fi
 }
 
-# Backward-compatible alias
-ensure_repo() { repo "$@"; }
-
 # Ensure core repositories
 repo https://github.com/strato-space/call
 repo https://github.com/strato-space/agent
@@ -351,7 +348,6 @@ repo https://github.com/strato-space/prompt
 repo https://github.com/strato-space/server
 repo https://github.com/strato-space/rms
 repo https://github.com/strato-space/voice
-
 # Optional repositories
 # repo https://github.com/strato-space/telegram-mcp
 # repo https://github.com/strato-space/mcp-google-sheets

@@ -16,7 +16,6 @@ def _ns(**kwargs):
         input="",
         session_id="",
         echo=False,
-        merge=False,
         print_instructions=False,
         trace=0,
         trace_file="",

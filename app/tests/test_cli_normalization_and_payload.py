@@ -68,7 +68,6 @@ def test_cli_echo_includes_resolved_when_flag(monkeypatch, capsys):
         echo=True,
         resolved=True,
         print_instructions=False,
-        merge=False,
         trace=0,
         trace_file="",
     )

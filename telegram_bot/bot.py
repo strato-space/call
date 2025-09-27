@@ -404,7 +404,7 @@ def _is_valid_target(token: str, base_project: str | None) -> bool:
     try:
         builder = getattr(_services.call_api, "build_runnable_instructions_config", None)
         if callable(builder):
-            cfg, err = builder(project=(base_project or None), agent=None, prompt=None, target=t, input=None, merge=False)
+            cfg, err = builder(project=(base_project or None), agent=None, prompt=None, target=t, input=None)
             if err is None and cfg is not None:
                 return True
     except Exception:
@@ -749,7 +749,6 @@ async def _call_task(
             echo=echo,
             chat_id=chat_id,
             thread_id=thread_id,
-            merge=False,
         )
         # ... (rest of the code remains the same)
         try:

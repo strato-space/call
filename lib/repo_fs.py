@@ -24,6 +24,19 @@ from call.lib.discovery import (
 from call.lib import repo_db
 
 
+def _read_card_text(path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as exc:
+        try:
+            debug_print("[repo.scan] read_card_text failed", str(path), str(exc))
+        except Exception:
+            pass
+        return ""
+
+
 def _load_repos_from_env() -> List[str]:
     raw = os.environ.get("repos", "")
     toks = [t.strip().lower() for t in raw.replace(";", ",").split(",") if t.strip()]
@@ -217,7 +230,7 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                 rel_path=relp,
                 url=url,
                 goal=goal,
-                card=relp,
+                card=_read_card_text(proj_md),
             )
             scanned += 1
 
@@ -230,11 +243,6 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
             eng = str(meta.get("engine") or "")
             orch = str(meta.get("orchestration") or "")
             goal = str(meta.get("goal") or meta.get("purpose") or "")
-            pv = meta.get("prompts") or []
-            if isinstance(pv, dict):
-                prompts_list = [str(k) for k in pv.keys()]
-            elif isinstance(pv, builtins.list):
-                prompts_list = [str(k) for k in pv]
             relp, url = _rel_url(f)
             _upsert_row(
                 cur,
@@ -250,33 +258,10 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                 rel_path=relp,
                 url=url,
                 goal=goal,
-                card=relp,
+                card=_read_card_text(f),
             )
             scanned += 1
             per_project_agents += 1
-            for pr_id in (prompts_list or []):
-                try:
-                    # Prompt declared in agent metadata; use agent path as placeholder
-                    _upsert_row(
-                        cur,
-                        target=pr_id,
-                        project=pname,
-                        agent=ag_name,
-                        prompt=pr_id,
-                        abs_path=str(f),
-                        state="",
-                        engine=eng,
-                        orchestration=orch,
-                        type="prompt",
-                        rel_path=relp,
-                        url=url,
-                        goal="",
-                        card="",
-                    )
-                    scanned += 1
-                except Exception:
-                    pass
-
         # Per-agent subdirs
         try:
             for child in pdir.iterdir():
@@ -287,7 +272,7 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                     if not f.exists():
                         continue
                     ag_name = _read_agent_name(f, default=child.name)
-                    eng = ""; orch = ""; prompts_list: list[str] = []
+                    eng = ""; orch = ""
                     meta = {}
                     try:
                         text = f.read_text(encoding="utf-8")
@@ -298,11 +283,6 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                         meta = _yaml.safe_load(text[y1:y2]) or {}
                         eng = str(meta.get("engine") or "")
                         orch = str(meta.get("orchestration") or "")
-                        pv = meta.get("prompts") or []
-                        if isinstance(pv, dict):
-                            prompts_list = [str(k) for k in pv.keys()]
-                        elif isinstance(pv, builtins.list):
-                            prompts_list = [str(k) for k in pv]
                     except Exception:
                         meta = {}
                     relp, url = _rel_url(f)
@@ -320,31 +300,10 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                         rel_path=relp,
                         url=url,
                         goal=str((meta.get("goal") if isinstance(meta, dict) else "") or (meta.get("purpose") if isinstance(meta, dict) else "") or ""),
-                        card=relp,
+                        card=_read_card_text(f),
                     )
                     scanned += 1
                     per_project_agents += 1
-                    for pr_id in (prompts_list or []):
-                        try:
-                            _upsert_row(
-                                cur,
-                                target=pr_id,
-                                project=pname,
-                                agent=ag_name,
-                                prompt=pr_id,
-                                abs_path=str(f),
-                                state="",
-                                engine=eng,
-                                orchestration=orch,
-                                type="prompt",
-                                rel_path=relp,
-                                url=url,
-                                goal="",
-                                card="",
-                            )
-                            scanned += 1
-                        except Exception:
-                            pass
                 except Exception:
                     continue
         except Exception:
@@ -417,7 +376,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     rel_path=relp,
                     url=url,
                     goal=goal,
-                    card=relp,
+                    card=_read_card_text(proj_md),
                 )
                 scanned += 1
                 try:
@@ -470,7 +429,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 rel_path=relp,
                 url=url,
                 goal=goal,
-                card=relp,
+                card=_read_card_text(agent_md),
             )
             scanned += 1
             try:
@@ -496,7 +455,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                         rel_path=relp,
                         url=url,
                         goal="",
-                        card="",
+                        card=_read_card_text(agent_md),
                     )
                     scanned += 1
                 except Exception:
@@ -555,7 +514,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     rel_path=relp,
                     url=url,
                     goal=(goal if 'goal' in locals() else ""),
-                    card=relp,
+                    card=_read_card_text(p),
                 )
                 scanned += 1
                 # Aggregate per-root counts (ready/draft)

@@ -19,7 +19,7 @@ class FakeCallApi:
         self.last_payload = payload
         return s, payload
 
-    async def call_async(self, *, project, agent, prompt, target, input, echo, chat_id, thread_id, merge):
+    async def call_async(self, *, project, agent, prompt, target, input, echo, chat_id, thread_id):
         # Record exactly what was passed
         self.last_call = {
             "project": project,
@@ -30,7 +30,6 @@ class FakeCallApi:
             "echo": echo,
             "chat_id": chat_id,
             "thread_id": thread_id,
-            "merge": merge,
         }
         # Return a simple error envelope so the handler replies
         return {"ok": False, "error_code": 404, "code": "NO_DATA_FOUND", "description": "not found"}

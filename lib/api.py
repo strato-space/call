@@ -6,6 +6,7 @@ import asyncio
 from call.lib import repo as repo
 from call.lib import repo as call_repo
 from call.lib import repo_fs as repo_fs
+from call.lib.logging import debug_print
 import builtins as _bi
 
 
@@ -262,7 +263,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
 
     - Ordered keys: target, replay, input, context
     - Token parsing: extracts @Tokens and plain tokens; strips .md/.markdown suffixes
-    - Resolution: attempts build_runnable_instructions_config per token; falls back to repo prompt row
+    - Resolution: attempts build_runnable_instructions_config per token
     - When download=True, inlines content for text files and base64 for binaries (by url/path)
     """
     import re as _re
@@ -464,12 +465,9 @@ class RunnableConfig:
     mcp: List[Dict[str, Any]] = field(default_factory=list)
 
     # Additional execution context
-    merge: bool = False
     base_dir: str = ""
-    project_cfg: Optional["RunnableConfig"] = None
-    agent_cfg: Optional["RunnableConfig"] = None
 
-
+# todo исключить обращение к файловой системе, использовать repo.db и радиально упростить код исключив взаимное влиние prompt / agent /project за исключением model и model-settings /  model-settings-${model}
 def build_runnable_instructions_config(
     *,
     project: Optional[str],
@@ -477,7 +475,6 @@ def build_runnable_instructions_config(
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
-    merge: bool = False,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
 
@@ -519,8 +516,7 @@ def build_runnable_instructions_config(
                 parsed = parse_metadata_and_prompt(text, path=str(path))
             except ValueError:
                 try:
-                    import logging as _logging
-                    _logging.getLogger("call.api").exception("Failed to parse metadata for card %s", path)
+                    logging.getLogger("call.api").exception("Failed to parse metadata for card %s", path)
                 except Exception:
                     pass
                 return {}, "", text
@@ -650,7 +646,6 @@ def build_runnable_instructions_config(
             attributes={},
             vs_list=[],
             mcp=[],
-            merge=bool(merge),
             base_dir=None,
         ), None
 
@@ -924,44 +919,32 @@ def build_runnable_instructions_config(
     if _pr_src and _is_md(_pr_src) and not (isinstance(pr_attrs, dict) and pr_attrs):
         return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt MD missing or invalid METADATA YAML", status=400, code="BAD_CARD_FORMAT", project=proj)
 
-    # Build instructions and attributes based on merge
+    # Build instructions and attributes (prompt > agent > project)
     attributes: Dict[str, Any] = {}
     instr: str = ""
-    if merge:
-        for src in (proj_attrs, ag_attrs, pr_attrs):
-            if isinstance(src, dict):
-                attributes.update({k: v for k, v in src.items() if k not in {"alias", "aliases"}})
-        core = pr_instr or ag_instr or proj_instr or ""
-        blocks = [core]
-        if ag_raw:
-            blocks.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
-        if proj_raw:
-            blocks.append("<project>\n" + proj_raw.strip() + "\n</project>")
-        instr = "\n\n".join([b for b in blocks if b.strip()])
-    else:
-        if pr_instr or pr_attrs or pr_raw:
-            # Prefer prompt attributes/body; include agent raw block for richer preview
-            attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
+    if pr_instr or pr_attrs or pr_raw:
+        # Prefer prompt attributes/body; include agent raw block for richer preview
+        attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
+        instr = pr_instr or ""
+        try:
+            if ag_raw and str(ag_raw).strip():
+                parts: list[str] = []
+                if instr.strip():
+                    parts.append(instr.strip())
+                parts.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
+                instr = "\n\n".join(parts)
+        except Exception:
+            # Fallback to prompt text only on any error
             instr = pr_instr or ""
-            try:
-                if ag_raw and str(ag_raw).strip():
-                    parts: list[str] = []
-                    if instr.strip():
-                        parts.append(instr.strip())
-                    parts.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
-                    instr = "\n\n".join(parts)
-            except Exception:
-                # Fallback to prompt text only on any error
-                instr = pr_instr or ""
-        elif ag_instr or ag_attrs:
-            attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
-            instr = ag_instr
-        elif proj_instr or proj_attrs:
-            attributes = proj_attrs if isinstance(proj_attrs, dict) else {}
-            instr = proj_instr
-        else:
-            attributes = {}
-            instr = ""
+    elif ag_instr or ag_attrs:
+        attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
+        instr = ag_instr
+    elif proj_instr or proj_attrs:
+        attributes = proj_attrs if isinstance(proj_attrs, dict) else {}
+        instr = proj_instr
+    else:
+        attributes = {}
+        instr = ""
 
     # Non-empty preview guarantee when agent/prompt provided
     try:
@@ -1001,60 +984,6 @@ def build_runnable_instructions_config(
         except Exception:
             pass
         return None
-
-    def _sub_cfg(
-        *,
-        kind: str,
-        attrs: Dict[str, Any],
-        body: str,
-        raw_path: _Path | None,
-        rel_path: Optional[str],
-        url_val: Optional[str],
-        project_id: Optional[str],
-        agent_id: Optional[str],
-        prompt_id: Optional[str],
-    ) -> RunnableConfig:
-        base_dir_val = None
-        if raw_path is not None:
-            try:
-                base_dir_val = str(raw_path.parent)
-            except Exception:
-                base_dir_val = None
-        cfg_id = _normalize_id(attrs.get("id"))
-        if cfg_id is None:
-            if kind == "prompt":
-                cfg_id = prompt_id
-            elif kind == "agent":
-                cfg_id = agent_id
-            else:
-                cfg_id = project_id
-        prompt_text = str(body or "") or ""
-        if not prompt_text.strip():
-            prompt_text = ""
-        attr_copy = _copy_attrs(attrs)
-        if raw_path is not None:
-            attr_copy.setdefault("_source_path", str(raw_path))
-        return RunnableConfig(
-            id=cfg_id,
-            type=kind,
-            path=(str(rel_path) if rel_path else None),
-            url=(str(url_val) if url_val else None),
-            goal=str(attrs.get("goal")) if attrs.get("goal") is not None else None,
-            role=str(attrs.get("role")) if attrs.get("role") is not None else None,
-            project=project_id,
-            agent=agent_id if kind != "project" else None,
-            prompt=prompt_id if kind == "prompt" else None,
-            target=None,
-            input=None,
-            prompt_text=(prompt_text or None),
-            instructions=str(body or ""),
-            model=_model_from(attrs) or "gpt-5",
-            attributes=attr_copy,
-            vs_list=_norm_list(attrs.get("vs")),
-            mcp=_listify(attrs.get("mcp")),
-            merge=False,
-            base_dir=base_dir_val,
-        )
 
     # Determine runnable kind and primary absolute path
     selected_kind: str | None = None
@@ -1230,39 +1159,6 @@ def build_runnable_instructions_config(
     else:
         prompt_text_val = None
 
-    project_cfg: Optional[RunnableConfig] = None
-    agent_cfg: Optional[RunnableConfig] = None
-
-    if selected_kind in {"agent", "prompt"} and (proj_attrs or proj_instr):
-        project_cfg = _sub_cfg(
-            kind="project",
-            attrs=proj_attrs,
-            body=proj_instr,
-            raw_path=proj_yaml,
-            rel_path=None,
-            url_val=None,
-            project_id=project_id,
-            agent_id=None,
-            prompt_id=None,
-        )
-
-    if selected_kind == "prompt" and (ag_attrs or ag_instr):
-        agent_cfg = _sub_cfg(
-            kind="agent",
-            attrs=ag_attrs,
-            body=ag_instr,
-            raw_path=path_p,
-            rel_path=None,
-            url_val=None,
-            project_id=project_id,
-            agent_id=agent_id,
-            prompt_id=prompt_id,
-        )
-
-    source_path_str = str(selected_abs) if selected_abs else None
-    if source_path_str and isinstance(attributes, dict):
-        attributes.setdefault("_source_path", source_path_str)
-
     cfg = RunnableConfig(
         id=(selected_id or ""),
         type=(selected_kind or ""),
@@ -1281,10 +1177,7 @@ def build_runnable_instructions_config(
         attributes=attributes if isinstance(attributes, dict) else {},
         vs_list=vs_list,
         mcp=mcp_list,
-        merge=bool(merge),
         base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else ""),
-        project_cfg=project_cfg,
-        agent_cfg=agent_cfg,
     )
 
     # Back-compat: ensure .name exists for tests expecting it
@@ -1417,8 +1310,8 @@ def _parse_session_id(raw: Optional[str]) -> tuple[Optional[int], Optional[int]]
 
 async def call_async(
     *,
-    project: Optional[str],
-    agent: Optional[str],
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
@@ -1427,7 +1320,6 @@ async def call_async(
     session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
-    merge: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the digest pipeline for a given agent name and input text.
@@ -1481,7 +1373,7 @@ async def call_async(
 
     # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
     try:
-        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, target=target, input=input, merge=merge)
+        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, target=target, input=input)
     except Exception:
         cfg, cfg_err = None, None
     if isinstance(cfg_err, dict):
@@ -1496,12 +1388,11 @@ async def call_async(
     # cfg is ready; dump a normalized snapshot in DEBUG
     try:
         from dataclasses import asdict as _asdict
-        from call.lib.logging import debug_print as _dbg
         snap = _asdict(cfg) if cfg is not None else {}
         if cfg is not None:
             snap["instructions_len"] = len(cfg.instructions or "")
             snap.pop("instructions", None)
-        _dbg("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False))
+        debug_print("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False, indent=2))
     except Exception:
         pass
 
@@ -1613,14 +1504,13 @@ async def call_async(
                     except Exception:
                         actual_sid = None
             except TypeError:
-                # Legacy compatibility: (name, samples_dir, user_input, prompt_override, project_name, merge)
+                # Legacy compatibility: (name, samples_dir, user_input, prompt_override, project_name)
                 async with cm(
                     ((getattr(cfg, "agent", None) if cfg else None) or (agent or "") or (chosen_id or "")),
                     None,
                     user_input=(input or ""),
                     prompt_override=((getattr(cfg, "prompt", None) if cfg else None) or (prompt or None)),
                     project_name=((getattr(cfg, "project", None) if cfg else None) or (project or None)),
-                    merge=bool((getattr(cfg, "merge", None) if cfg else False)),
                 ) as (agent_obj, _cfg, _session):
                     final_output = getattr(_cfg, "_last_final_output", None)
                     try:
@@ -1717,8 +1607,8 @@ async def call_async(
 
 def call(
     *,
-    project: Optional[str],
-    agent: Optional[str],
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
@@ -1727,7 +1617,6 @@ def call(
     session_id: Optional[str] = None,
     echo: bool = False,
     debug: bool = False,
-    merge: bool = False,
 ) -> Dict[str, Any]:
     """
     Thin sync wrapper over call_async. All selection and error handling is in call_async.
@@ -1745,7 +1634,6 @@ def call(
                 session_id=session_id,
                 echo=echo,
                 debug=debug,
-                merge=merge,
             )
         )
     except Exception as e:
@@ -1920,10 +1808,17 @@ def interpret_exec_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Opt
     - Exactly one of project|agent|prompt|target must be present (truthy string).
     - Always use the full payload JSON as the input string.
     - session_id and echo are passed through when present.
-
     Returns (kwargs, err) where kwargs can be passed to call(**kwargs) and err is an error envelope on validation error.
     """
     try:
+        try:
+            import json
+            debug_print(
+                "[api]", "interpret_exec_payload:|-\n",
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            )
+        except Exception:
+            pass
         # Determine exactly one among project|agent|prompt|target
         f_project = payload.get("project")
         f_agent = payload.get("agent")
