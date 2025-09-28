@@ -14,7 +14,7 @@ def test_compose_welcome_html_includes_model_and_preview(monkeypatch):
         source_path=None,
         user_input="hello world",
         mcp_servers_started=[],
-        vs_list=["vs_abc"],
+        tools=["FileSearchTool[ExampleStore]"],
         model="gpt-5",
     )
 
@@ -22,5 +22,5 @@ def test_compose_welcome_html_includes_model_and_preview(monkeypatch):
     assert "hello world" in html
     # mcp is empty in this test, so the section should be omitted
     assert "mcp:" not in html
-    assert "vs: ['vs_abc']" in html
+    assert "tools: ['FileSearchTool[ExampleStore]']" in html
     assert "model: gpt-5" in html

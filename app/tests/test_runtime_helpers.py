@@ -28,7 +28,7 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
         path="prompt/ready/FooAgent.md",
         attributes={},
         model="gpt-4.1-mini",
-        vs_list=["vs_abc"],
+        tools=["FileSearchTool[ExampleStore]"],
     )
 
     monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
@@ -61,7 +61,7 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
     async def fake_send(**kwargs):  # pragma: no cover - should not be called
         calls.append("send")
 
-    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, vs_list=None)
+    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, tools=[])
 
     monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
     monkeypatch.setattr(app_call, "send_telegram_welcome_message", fake_send, raising=False)
@@ -144,13 +144,11 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
 
     monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False)
 
-    async def fake_base_tools(cfg):
+    async def fake_build_tools(cfg):
         return []
 
-    monkeypatch.setattr(app_call, "_base_tools_for_cfg", fake_base_tools, raising=False)
+    monkeypatch.setattr(app_call, "build_tools_for_cfg", fake_build_tools, raising=False)
     monkeypatch.setattr(app_call, "_collect_tool_entries", lambda *_: [], raising=False)
-    monkeypatch.setattr(app_call, "resolve_vector_stores", lambda *_: [], raising=False)
-    monkeypatch.setattr(app_call, "WebSearchTool", lambda: "web", raising=False)
     monkeypatch.setattr(app_call, "_merge_outputs", lambda *a, **k: {})
     monkeypatch.setattr(app_call, "_extract_tg_targets", lambda *_: (None, None))
     monkeypatch.setattr(app_call, "send_digest_notification", lambda **_: None, raising=False)
@@ -183,7 +181,7 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
         attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",
-        vs_list=[],
+        tools=[],
     )
 
     app_call.selected_chat_id = 111
@@ -256,7 +254,7 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
         attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",
-        vs_list=[],
+        tools=[],
     )
 
     app_call.selected_chat_id = 111

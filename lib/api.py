@@ -471,8 +471,9 @@ class RunnableConfig:
     # Runtime configuration and attributes
     model: str = "gpt-5"
     attributes: Dict[str, Any] = field(default_factory=dict)
-    vs_list: List[str] = field(default_factory=list)
     mcp: List[Dict[str, Any]] = field(default_factory=list)
+    # Declared tools to enable for the run (e.g., ["WebSearchTool", "image_genetation_tool"]) 
+    tools: List[str] = field(default_factory=list)
 
     # Additional execution context
     base_dir: str = ""
@@ -494,8 +495,8 @@ def build_runnable_instructions_config(
 
     Behavior:
       - Uses resolve_agent(project, agent, prompt) to pick a single agent/prompt
-      - Fills id, project, agent, prompt, path, base_dir, instructions, attributes, vs_list, mcp
-      - Best-effort parse of agent.md/prompt.md to populate attributes/instructions/model/vs_list if present
+      - Fills id, project, agent, prompt, path, base_dir, instructions, attributes, mcp
+      - Best-effort parse of agent.md/prompt.md to populate attributes/instructions/model/tools if present
     """
     # Local helpers (avoid importing app layer):
     import os as _os
@@ -654,8 +655,8 @@ def build_runnable_instructions_config(
             instructions="",
             model=str(_os.environ.get("LLM_MODEL", "gpt-5")),
             attributes={},
-            vs_list=[],
             mcp=[],
+            tools=[],
             base_dir=None,
         ), None
 
@@ -973,10 +974,8 @@ def build_runnable_instructions_config(
         return meta.get(key) if isinstance(meta, dict) else None
 
     role_val = _get(pr_attrs, "role") or _get(ag_attrs, "role") or _get(proj_attrs, "role")
-    vs_val = _get(pr_attrs, "vs") or _get(ag_attrs, "vs") or _get(proj_attrs, "vs")
     mcp_val = _get(pr_attrs, "mcp") or _get(ag_attrs, "mcp") or _get(proj_attrs, "mcp")
 
-    vs_list = _norm_list(vs_val)
     mcp_list = _listify(mcp_val)
 
     def _model_from(attrs: Dict[str, Any] | None) -> str | None:
@@ -1169,6 +1168,12 @@ def build_runnable_instructions_config(
     else:
         prompt_text_val = None
 
+    # Tools: prefer prompt > agent > project
+    try:
+        tools_list: List[str] = _norm_list(_get(pr_attrs, "tools") or _get(ag_attrs, "tools") or _get(proj_attrs, "tools"))
+    except Exception:
+        tools_list = []
+
     cfg = RunnableConfig(
         id=(selected_id or ""),
         type=(selected_kind or ""),
@@ -1185,8 +1190,8 @@ def build_runnable_instructions_config(
         instructions=str(instr or ""),
         model=( _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs) or ""),
         attributes=attributes if isinstance(attributes, dict) else {},
-        vs_list=vs_list,
         mcp=mcp_list,
+        tools=tools_list,
         base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else ""),
     )
 

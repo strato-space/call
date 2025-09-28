@@ -28,16 +28,14 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     monkeypatch.setattr(app_call, "post_run_git_push", lambda **k: None, raising=False)
     monkeypatch.setattr(app_call, "_merge_outputs", lambda *a, **k: {})
     monkeypatch.setattr(app_call, "_extract_tg_targets", lambda merged: (None, None))
-    monkeypatch.setattr(app_call, "resolve_vector_stores", lambda *a, **k: [], raising=False)
-    monkeypatch.setattr(app_call, "WebSearchTool", lambda: "web", raising=False)
     async def fake_prepare_mcp_servers(astack):
         return [], None
 
     monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False)
-    async def fake_base_tools_for_cfg(cfg):
+    async def fake_build_tools_for_cfg(cfg):
         return ["web"]
 
-    monkeypatch.setattr(app_call, "_base_tools_for_cfg", fake_base_tools_for_cfg, raising=False)
+    monkeypatch.setattr(app_call, "build_tools_for_cfg", fake_build_tools_for_cfg, raising=False)
     monkeypatch.setattr(app_call, "_collect_tool_entries", lambda cfg: [("HelperAgent", "desc")], raising=False)
 
     # Stub async runner + session types
@@ -88,7 +86,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         instructions="",
         model="gpt-4.1-mini",
         attributes={},
-        vs_list=[],
+        tools=["FileSearchTool[foo]"] ,
         mcp=[],
     )
 
@@ -105,7 +103,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         model="gpt-4.1-mini",
         attributes={"agents": {"HelperAgent": "desc"}},
         path="agent/AgentFab/agent.md",
-        vs_list=[],
+        tools=["WebSearchTool"],
         mcp=[],
     )
 
