@@ -152,8 +152,9 @@ def _read_agent_name(path: Path, *, default: str) -> str:
                 import yaml
                 meta = yaml.safe_load(text[y1:y2]) or {}
                 cand = (meta.get("id") or meta.get("name") or meta.get("title") or "").strip()
-                if cand:
-                    name = str(cand)
+                if not cand:
+                    cand = path.stem
+                name = str(cand)
             except Exception:
                 pass
     except Exception:

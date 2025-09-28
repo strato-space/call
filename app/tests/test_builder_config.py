@@ -57,8 +57,8 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
             ```yaml
             goal: Project goal
             role: project role
-            vs:
-              - vs_project
+            tools:
+              - FileSearchTool[vs_project]
             mcp:
               - id: project-mcp
             ```
@@ -80,8 +80,8 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
             ```yaml
             goal: Agent goal
             role: agent role
-            vs:
-              - vs_agent
+            tools:
+              - FileSearchTool[vs_agent]
             mcp:
               - id: agent-mcp
             ```
@@ -104,8 +104,8 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
             goal: Prompt goal
             role: prompt role
             agent: AgentY
-            vs:
-              - vs_prompt
+            tools:
+              - FileSearchTool[vs_prompt]
             mcp:
               - id: prompt-mcp
             ```
@@ -165,7 +165,7 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     assert cfg.prompt == "PromptZ"
 
     assert cfg.role == "prompt role"
-    assert cfg.vs_list == ["vs_prompt"]
+    assert cfg.tools == ["FileSearchTool[vs_prompt]"]
     assert cfg.mcp == [{"id": "prompt-mcp"}]
 
     assert cfg.instructions.strip().startswith("Prompt instructions")

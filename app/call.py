@@ -103,7 +103,7 @@ if _env_file is None:
     raise FileNotFoundError(f".env not found. Checked: {checked}")
 
 from agents import Agent, Runner, WebSearchTool, SQLiteSession
-from agents.tool import FileSearchTool, FunctionTool
+from agents.tool import FileSearchTool, FunctionTool, ImageGenerationTool, function_tool
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 from agents.model_settings import ModelSettings
@@ -389,18 +389,58 @@ async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict 
             pass
     return servers, cfg_yaml
 
+def get_tool_by_name(name: str) -> Any:
+    tool_name = (name or "").strip()
+    if not tool_name:
+        return None
 
-async def _base_tools_for_cfg(cfg) -> list[Any]:
-    """Return the default tool list for a cfg."""
-    tools: list[Any] = [WebSearchTool()]
+    # Handle FileSearchTool[VectorStoreName]
+    if tool_name.startswith("FileSearchTool[") and tool_name.endswith("]"):
+        vs_name = tool_name[len("FileSearchTool["):-1].strip()
+        if vs_name:
+            try:
+                return FileSearchTool(vector_store_ids=[vs_name])
+            except Exception:
+                return None
+        return None
+
+    tools_catalog = {
+        "WebSearchTool": WebSearchTool,
+        "ImageGenerationTool": ImageGenerationTool,
+        "image_genetation_tool": lambda: image_genetation_tool,
+    }
+
+    factory = tools_catalog.get(tool_name)
+    if factory is None:
+        return None
+
     try:
-        attrs = getattr(cfg, "attributes", {}) or {}
-        vs_ids = await resolve_vector_stores(attrs.get("vs"))
-        if vs_ids:
-            tools.append(FileSearchTool(vector_store_ids=vs_ids))
+        tool = factory()
+    except TypeError:
+        # Already an instance (lambda returning existing tool)
+        tool = factory
     except Exception:
-        pass
-    return tools
+        return None
+
+    return tool
+
+
+async def build_tools_for_cfg(cfg) -> list[Any]:
+    """Build tool instances from the explicit `cfg.tools` entries."""
+
+    configured_tools = [str(name).strip() for name in cfg.tools if str(name).strip()]
+    tool_instances: list[Any] = []
+    seen: set[str] = set()
+
+    for name in configured_tools:
+        if name in seen:
+            continue
+        tool_obj = get_tool_by_name(name)
+        if tool_obj is not None:
+            tool_instances.append(tool_obj)
+            seen.add(name)
+
+    return tool_instances
 
 
 async def _git_pull_prompt_repo() -> None:
@@ -762,7 +802,7 @@ async def _send_welcome_banner(
             source_path=(((cfg.attributes or {}).get("_source_path") if isinstance(getattr(cfg, "attributes", None), dict) else None) or (cfg.path or None)),
             user_input=user_input,
             mcp_servers_started=mcp_servers,
-            vs_list=(cfg.vs_list or []),
+            tools=cfg.tools or [],
             model=(getattr(cfg, "model", None) or None),
         )
         debug_print("[app]", "welcome_html=\n" + (welcome_html or ""))
@@ -1628,7 +1668,7 @@ def compose_welcome_html(
     source_path: str | Path | None,
     user_input: str,
     mcp_servers_started: list[Any] | None,
-    vs_list: list[str] | None,
+    tools: list[str] | None,
     model: str | None = None,
 ) -> str:
     """Compose the Telegram welcome banner HTML.
@@ -1637,7 +1677,7 @@ def compose_welcome_html(
       🍴 <b><a href='github-path'>AgentName</a></b>  (falls back to bold if URL missing)
       <code>input[:3800]</code>
       <code>mcp: [...]</code>
-      <code>vs: [...]</code>
+      <code>tools: [...]</code>
     """
     title = (agent_name or "Agent").strip() or "Agent"
     gh_url = github_blob_url(source_path) if source_path else None
@@ -1671,7 +1711,11 @@ def compose_welcome_html(
     except Exception:
         pass
 
-    vs_ids = list(vs_list or []) if isinstance(vs_list, list) else []
+    tool_names = []
+    try:
+        tool_names = [str(t).strip() for t in (tools or []) if str(t).strip()]
+    except Exception:
+        tool_names = []
 
     parts = [header]
     # Build preview line and attrs lines separately to control spacing
@@ -1679,8 +1723,8 @@ def compose_welcome_html(
     attr_lines: list[str] = []
     if mcp_names:
         attr_lines.append(f"<code>mcp: {mcp_names}</code>")
-    if vs_ids:
-        attr_lines.append(f"<code>vs: {vs_ids}</code>")
+    if tool_names:
+        attr_lines.append(f"<code>tools: {tool_names}</code>")
     if model:
         attr_lines.append(f"<code>model: {model}</code>")
 
@@ -2523,6 +2567,33 @@ async def _build_mcp_servers_from_yaml(cfg_yaml: dict | None, astack: AsyncExitS
     return mcp_servers_started
 
 
+@function_tool
+def image_genetation_tool(ctx: RunContextWrapper[Any], prompt: str,
+                   size: str = "1024x1024", background: str | None = None) -> str:
+    """
+    Генерация картинки с параметрами. Возвращает data URL base64.
+    Args:
+      prompt: текстовое описание
+      size: "1024x1024" | "1024x1792" | ...
+      background: "transparent" для PNG с альфой, иначе None
+    """
+    img = client.images.generate(
+        model="gpt-image-1",
+        prompt=prompt,
+        size=size,
+        background=background,
+        n=1,
+        response_format="b64_json",
+    )
+    b64 = img.data[0].b64_json
+    return f"data:image/png;base64,{b64}"
+
+# agent = Agent(
+#     name="Designer",
+#     instructions="Если пользователь просит картинку — вызывай инструмент generate_image.",
+#     tools=[image_genetation_tool],
+# )
+
 @asynccontextmanager
 async def build_and_run_agent(cfg, user_input: str = ""):
     """Async context manager that builds an Agent from a ready-to-run cfg and runs one turn.
@@ -2537,7 +2608,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
     """
     async with AsyncExitStack() as astack:
         mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
-        tools = await _base_tools_for_cfg(cfg)
+        tools = await build_tools_for_cfg(cfg)
 
         await _git_pull_prompt_repo()
 
@@ -2718,4 +2789,3 @@ async def build_and_run_agent(cfg, user_input: str = ""):
 
         yield agent, cfg, session
         
-
