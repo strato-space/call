@@ -184,10 +184,12 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     return out
 
 
-def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, str]]:
-    """Return a flat list of prompt rows from the index with fields {project, agent, prompt, path, state, target, engine, orchestration}.
+def find_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, str]]:
+    """Return prompt rows from repo.db with wildcard-aware filters.
 
-    Wildcards: '*' supported in project/agent/prompt/state/target. All filters are ANDed, with target applied last.
+    Wildcards:
+      - '*' supported for project/agent/prompt/state/target
+      - Filters are ANDed; target applied after SQL fetch to preserve `LIKE` semantics
     """
     conn = _ensure_db(); cur = conn.cursor()
     try:
@@ -195,25 +197,36 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
         where, params = _build_where_and_params(project, agent, prompt, state)
         # Ensure we only select prompt rows
         where = ["prompt != ''"] + [w for w in where if w != "1=1"]
-        sql = "SELECT project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal, card FROM repo WHERE " + " AND ".join(where)
+        sql = (
+            "SELECT project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal, card "
+            "FROM repo WHERE "
+            + " AND ".join(where)
+        )
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         out: List[Dict[str, str]] = []
         for prj, ag, pr, path, st, tgt, eng, orch, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
+            pr_id = (pr or "").strip()
+            tgt_id = (tgt or "").strip()
+            rel_path = (rel or path or "").strip()
+            if not pr_id and not tgt_id:
+                continue
+            if not rel_path:
+                continue
             out.append({
+                "id": pr_id or tgt_id,
                 "project": prj or "",
                 "agent": ag or "",
                 "prompt": pr or "",
                 "path": path or "",
+                "rel_path": rel or "",
                 "state": st or "",
-                # Target: prompt name/id only
-                "target": (tgt or pr or ""),
+                "target": tgt_id or pr_id,
                 "engine": eng or "",
                 "orchestration": orch or "",
-                "type": typ or "",
-                "rel_path": rel or "",
+                "type": (typ or "prompt"),
                 "url": url or "",
                 "goal": goal or "",
                 "card": card or "",
@@ -222,10 +235,8 @@ def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
     finally:
         cur.close(); conn.close()
 
-
-def find_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
-    """Find prompt records with wildcard support. Returns an array of rows."""
-    return list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
+# Backwards-compat alias
+list_prompts = find_prompts
 
 
 def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
@@ -243,13 +254,21 @@ def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, t
         for prj, ag, path, tgt, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
+            ag_id = (ag or "").strip()
+            tgt_id = (tgt or "").strip()
+            rel_path = (rel or path or "").strip()
+            if not ag_id and not tgt_id:
+                continue
+            if not rel_path:
+                continue
             out.append({
+                "id": ag_id or tgt_id,
                 "project": prj or "",
                 "agent": ag or "",
                 "path": path or "",
-                "target": tgt or f"a:{prj}/{ag}",
-                "type": typ or "",
                 "rel_path": rel or "",
+                "target": tgt_id or ag_id,
+                "type": (typ or "agent"),
                 "url": url or "",
                 "goal": goal or "",
                 "card": card or "",
@@ -274,12 +293,20 @@ def find_projects(*, project: Optional[str] = None, target: Optional[str] = None
         for prj, path, tgt, typ, rel, url, goal, card in rows:
             if rx_t and not (tgt and rx_t.match(tgt)):
                 continue
+            pr_id = (prj or "").strip()
+            tgt_id = (tgt or "").strip()
+            rel_path = (rel or path or "").strip()
+            if not pr_id and not tgt_id:
+                continue
+            if not rel_path:
+                continue
             out.append({
+                "id": pr_id or tgt_id,
                 "project": prj or "",
                 "path": path or "",
-                "target": tgt or f"p:{prj}",
-                "type": typ or "",
                 "rel_path": rel or "",
+                "target": tgt_id or pr_id,
+                "type": (typ or "project"),
                 "url": url or "",
                 "goal": goal or "",
                 "card": card or "",

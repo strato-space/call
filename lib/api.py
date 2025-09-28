@@ -363,26 +363,24 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     refs: list[dict] = []
     seen_refs: set[tuple[str, str, str]] = set()
 
-    def _append_rows(rows: list[dict], field: str, default_type: str, fallback: str) -> None:
+    def _append_rows(rows: list[dict]) -> None:
         if not rows:
             return
         for row in rows:
-            rpath = str(row.get("rel_path") or row.get("path") or "").strip()
+            row_id = row["id"]
+            rpath = str(row["rel_path"]).strip()
+            ref_type = row["type"]
             ref = {
-                "type": row.get("type"),
+                "type": ref_type,
                 "path": rpath,
+                "id": row_id,
                 "mutable": True,
             }
-            for key in ("target", "project", "agent", "prompt", "state", "goal", "engine", "orchestration"):
-                if key in row and row.get(key) not in (None, ""):
-                    if key == "target":
-                        ref["id"] = row[key]
-                    else:
-                        ref[key] = row[key]
-            url_val = str(row.get("url") or "").strip()
-            if url_val:
-                ref["url"] = url_val
-            key_id = (ref["type"], ref["id"], ref["path"])
+            for key in ("id", "type", "target", "project", "agent", "prompt", "state", "goal", "engine", "orchestration", "url"):
+                if key in row and row[key] not in (None, ""):
+                    ref[key] = row[key]
+
+            key_id = (ref.get("id"), ref.get("path"))
             if key_id in seen_refs:
                 continue
             seen_refs.add(key_id)
@@ -393,19 +391,20 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
             proj_rows = call_repo.find_projects(project=tok, target=None)
         except Exception:
             proj_rows = []
-        _append_rows(proj_rows, "project", "project", tok)
+        _append_rows(proj_rows)
 
         try:
             agent_rows = call_repo.find_agents(project=None, agent=tok, target=None)
         except Exception:
             agent_rows = []
-        _append_rows(agent_rows, "agent", "agent", tok)
+        _append_rows(agent_rows)
 
         try:
-            prompt_rows = call_repo.find_prompts(project=None, agent=None, prompt=tok, state=None, target=None)
+            prompt_rows = list_prompts(project=None, agent=None, prompt=tok)
         except Exception:
             prompt_rows = []
-        _append_rows(prompt_rows, "prompt", "prompt", tok)
+
+        _append_rows(prompt_rows)
 
     if refs:
         try:
