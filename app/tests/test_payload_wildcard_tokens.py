@@ -1,6 +1,8 @@
 """Validate wildcard token handling when building input payloads for AgentFab tools."""
 
 import json
+import re
+
 import pytest
 
 pytestmark = pytest.mark.anyio("asyncio")
@@ -11,13 +13,13 @@ def test_build_input_payload_wildcard_single(monkeypatch):
 
     # Simulate DB prompts with a single match for '31-*'
     def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
-        # When wildcard used, our builder passes prompt=None and filters locally
         items = [
-            {"prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md"},
-            {"prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md"},
+            {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
         ]
         if prompt:
-            # Direct match path for non-wildcard
+            if "*" in prompt:
+                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
@@ -28,7 +30,6 @@ def test_build_input_payload_wildcard_single(monkeypatch):
     obj = json.loads(payload_json)
     assert obj["target"] == "AgentFab"
     assert obj["input"] == "@31-*"
-    # Context should be present with the matched prompt
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
     ref = ctx[0]
@@ -44,10 +45,13 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     # Simulate DB prompts with two independent wildcard hits: '31-*' and '32-*'
     def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
         items = [
-            {"prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md"},
-            {"prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md"},
+            {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
+            {"id": "32-InterviewSummary", "prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md", "type": "prompt"},
         ]
         if prompt:
+            if "*" in prompt:
+                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
@@ -56,12 +60,14 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     payload_json, payload_dict = call_api.build_input_payload(target="AgentFab", main_text="31-* 32-*")
     obj = json.loads(payload_json)
     ctx = obj.get("context")
-    # Expect two refs, stable order by first match order in items
     assert isinstance(ctx, list) and len(ctx) == 2
     ids = [r["id"] for r in ctx]
     assert ids == ["31-OnlineQuestionsBabook", "32-InterviewSummary"]
     paths = [r["path"].replace("\\", "/") for r in ctx]
-    assert paths == ["prompt/draft/31-OnlineQuestionsBabook.md", "prompt/draft/32-InterviewSummary.md"]
+    assert paths == [
+        "prompt/draft/31-OnlineQuestionsBabook.md",
+        "prompt/draft/32-InterviewSummary.md",
+    ]
     types = [r["type"] for r in ctx]
     assert types == ["prompt", "prompt"]
 
@@ -86,7 +92,7 @@ def test_build_input_payload_deduplicate_refs(monkeypatch):
     from call.lib import api as call_api
 
     items = [
-        {"prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md"},
+        {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
     ]
 
     def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
@@ -107,9 +113,12 @@ def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
 
     def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
         items = [
-            {"prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md"},
+            {"id": "32-InterviewSummary", "prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md", "type": "prompt"},
         ]
         if prompt:
+            if "*" in prompt:
+                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
@@ -131,6 +140,7 @@ def test_cli_prompt_wildcard_context(monkeypatch):
             {
                 "project": "AgentFab",
                 "agent": "DiscoveryAgent",
+                "id": "33-extensions",
                 "prompt": "33-extensions",
                 "path": "prompt/ready/33-extensions.md",
                 "rel_path": "prompt/ready/33-extensions.md",
@@ -140,6 +150,7 @@ def test_cli_prompt_wildcard_context(monkeypatch):
             {
                 "project": "AgentFab",
                 "agent": "DiscoveryAgent",
+                "id": "33-Questioning",
                 "prompt": "33-Questioning",
                 "path": "prompt/draft/33-Questioning.md",
                 "rel_path": "prompt/draft/33-Questioning.md",
@@ -148,6 +159,9 @@ def test_cli_prompt_wildcard_context(monkeypatch):
             },
         ]
         if prompt:
+            if "*" in prompt:
+                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
@@ -178,6 +192,7 @@ def test_cli_agent_exact_context(monkeypatch):
             {
                 "project": "AgentFab",
                 "agent": "DiscoveryAgent",
+                "id": "DiscoveryAgent",
                 "path": "prompt/AgentFab/DiscoveryAgent/agent.md",
                 "rel_path": "prompt/AgentFab/DiscoveryAgent/agent.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md",
@@ -207,6 +222,7 @@ def test_cli_project_exact_context(monkeypatch):
         return [
             {
                 "project": "AgentFab",
+                "id": "AgentFab",
                 "rel_path": "prompt/AgentFab/project.md",
                 "url": "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md",
                 "type": "project",

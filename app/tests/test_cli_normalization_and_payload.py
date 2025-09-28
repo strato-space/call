@@ -18,9 +18,11 @@ def test_build_input_payload_uses_db_prompt_name(monkeypatch):
 
     def fake_list_prompts(project=None, agent=None, prompt=None, state=None, target=None):
         return [{
+            "id": "50-DiscoveryAgent",
             "prompt": "50-DiscoveryAgent",
             "project": "AgentFab",
             "agent": "DiscoveryAgent",
+            "type": "prompt",
             "rel_path": "prompt/draft/50-Discoveryagent.md",
         }]
 
