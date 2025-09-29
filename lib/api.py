@@ -588,8 +588,13 @@ def build_runnable_instructions_config(
         proj2, agent2, prompt2, terr = project, agent, prompt, None
     if terr is not None:
         err = _error_payload(
-            agent=(agent or ""), input=(input or ""), exc=terr.get("description", "bad target"),
-            status=int(terr.get("status", 400)), code=str(terr.get("code")), project=project, options=terr.get("options") or []
+            agent=(agent or ""),
+            input=(input or ""),
+            exc=terr.get("description", "bad target"),
+            status=int(terr.get("status", 400)),
+            code=str(terr.get("code")),
+            project=project,
+            options=terr.get("options") or [],
         )
         return None, err
     project, agent, prompt = proj2, agent2, prompt2
@@ -624,13 +629,23 @@ def build_runnable_instructions_config(
                 if not suggestions:
                     suggestions = _suggest(None, None, prompt)
                 return None, _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc="not found",
-                    status=404, code="NO_DATA_FOUND", project=project, options=suggestions
+                    agent=(agent or ""),
+                    input=(input or ""),
+                    exc="not found",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                    options=suggestions,
                 )
             if len(matches) > 1:
                 return None, _error_payload(
-                    agent=(agent or ""), input=(input or ""), exc="Multiple prompts matched your criteria",
-                    status=400, code="TOO_MANY_ROWS", project=project, options=matches
+                    agent=(agent or ""),
+                    input=(input or ""),
+                    exc="Multiple prompts matched your criteria",
+                    status=400,
+                    code="TOO_MANY_ROWS",
+                    project=project,
+                    options=matches,
                 )
             prompt = str(matches[0].get("prompt") or prompt)
     except Exception:
@@ -677,17 +692,46 @@ def build_runnable_instructions_config(
             except Exception:
                 rows = []
             if not rows:
-                return None, _error_payload(agent=(agent or ""), input=(input or ""), exc="No agent found matching criteria — not found", status=404, code="NO_DATA_FOUND", project=project)
+                return None, _error_payload(
+                    agent=(agent or ""),
+                    input=(input or ""),
+                    exc="No agent found matching criteria — not found",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                )
             if len(rows) > 1:
-                return None, _error_payload(agent=(agent or ""), input=(input or ""), exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
+                return None, _error_payload(
+                    agent=(agent or ""),
+                    input=(input or ""),
+                    exc="Multiple agents matched your criteria",
+                    status=400,
+                    code="TOO_MANY_ROWS",
+                    project=project,
+                    options=rows[:20],
+                )
             # Single agent; proceed as if explicitly selected
             agent = rows[0].get("agent") or agent
             try:
                 env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
             except Exception as e:
-                return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+                return None, _error_payload(
+                    agent=(agent or ""),
+                    input="",
+                    exc=e,
+                    status=500,
+                    code="INTERNAL_ERROR",
+                    project=project,
+                )
             if not isinstance(env, dict) or not env.get("ok"):
-                return None, _error_payload(agent=(agent or ""), input=(input or ""), exc="No agent found matching criteria — not found", status=404, code="NO_DATA_FOUND", project=project)
+                return None, _error_payload(
+                    agent=(agent or ""),
+                    input=(input or ""),
+                    exc="No agent found matching criteria — not found",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                )
             resolved = env.get("resolved") or {}
             name = str(resolved.get("name") or "")
             proj = resolved.get("project") or project
@@ -698,15 +742,26 @@ def build_runnable_instructions_config(
         try:
             env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
         except Exception as e:
-            return None, _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+            return None, _error_payload(
+                agent=(agent or ""),
+                input="",
+                exc=e,
+                status=500,
+                code="INTERNAL_ERROR",
+                project=project,
+            )
 
         if not isinstance(env, dict) or not env.get("ok"):
             # Agent resolution failed.
             # 1) If no prompt is provided, return 404 (do NOT fall back to project-only).
             if not (isinstance(prompt, str) and prompt.strip()):
                 return None, _error_payload(
-                    agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
-                    status=404, code="NO_DATA_FOUND", project=project
+                    agent=(agent or ""),
+                    input="",
+                    exc="No agent found matching criteria — not found",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
                 )
             # 2) Try DB prompt row (respect project filter first)
             prompt_row = None
@@ -739,8 +794,12 @@ def build_runnable_instructions_config(
                         pr_fallback = None
                     if pr_fallback is None:
                         return None, _error_payload(
-                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
-                            status=404, code="NO_DATA_FOUND", project=project
+                            agent=(agent or ""),
+                            input="",
+                            exc="No agent found matching criteria — not found",
+                            status=404,
+                            code="NO_DATA_FOUND",
+                            project=project,
                         )
                     # Load card text to detect malformed METADATA; if malformed, allow strict checks later (400); else return 404
                     meta_chk, body_chk, raw_chk = _load_card(pr_fallback)
@@ -753,8 +812,12 @@ def build_runnable_instructions_config(
                     else:
                         # Valid card exists but DB row not in this project -> respect project filter and return 404
                         return None, _error_payload(
-                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
-                            status=404, code="NO_DATA_FOUND", project=project
+                            agent=(agent or ""),
+                            input="",
+                            exc="No agent found matching criteria — not found",
+                            status=404,
+                            code="NO_DATA_FOUND",
+                            project=project,
                         )
                 else:
                     # No project filter: allow filesystem fallback and continue strict validation path
@@ -1218,40 +1281,7 @@ def build_runnable_instructions_config(
             cfg.model = "gpt-5"
 
     return cfg, None
-
-
-def _try_parse_error_payload(text: str | None) -> Dict[str, Any] | None:
-    if not text or not isinstance(text, str):
-        return None
-
-    stripped = text.strip()
-    if not stripped:
-        return None
-
-    loaders = []
-    try:
-        import json as _json
-
-        loaders.append(_json.loads)
-    except Exception:
-        pass
-    try:
-        import ast as _ast
-
-        loaders.append(_ast.literal_eval)
-    except Exception:
-        pass
-
-    for loader in loaders:
-        try:
-            parsed = loader(stripped)
-        except Exception:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
+    
 def _error_payload(
     agent: str,
     input: str,
@@ -1263,62 +1293,41 @@ def _error_payload(
     code: Optional[str] = None,
     options: Optional[List[Dict[str, Any]]] = None,
     project: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    message = str(exc)
-
-    error_dict: Dict[str, Any] | None = None
-    if isinstance(details, dict):
-        error_dict = details
-    elif isinstance(exc, dict):
-        error_dict = exc
+    if isinstance(exc, BaseException):
+        msg_attr = getattr(exc, "message", None)
+        message = msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        code_attr = getattr(exc, "code", None)
+        if isinstance(code_attr, int):
+            effective_status = code_attr
+        elif isinstance(code_attr, str) and code_attr.isdigit():
+            effective_status = int(code_attr)
+        else:
+            effective_status = int(status or 400)
+        err_attr = getattr(exc, "error", None)
+        error_obj = err_attr if isinstance(err_attr, dict) else {"message": message}
     else:
-        error_dict = _try_parse_error_payload(message)
+        message = str(exc) if exc is not None else "Error"
+        effective_status = int(status or 400)
+        error_obj = {"message": message}
 
-    remainder_for_description: str | None = None
-    if message.startswith("Error code:") and " - " in message:
-        remainder_for_description = message.split(" - ", 1)[1].strip()
-        parsed = _try_parse_error_payload(remainder_for_description)
-        if isinstance(parsed, dict):
-            error_section = parsed.get("error") if isinstance(parsed.get("error"), dict) else parsed
-            if isinstance(error_section, dict):
-                error_dict = error_dict or error_section
-
-    if error_dict is None and remainder_for_description:
-        error_dict = _try_parse_error_payload(remainder_for_description)
-
-    status_values: list[int] = []
-    if isinstance(status, int):
-        status_values.append(status)
-    if isinstance(error_dict, dict):
-        raw_code = error_dict.get("code")
-        if isinstance(raw_code, int):
-            status_values.append(raw_code)
-        elif isinstance(raw_code, str) and raw_code.isdigit():
-            status_values.append(int(raw_code))
-
-    effective_status = status_values[0] if status_values else 400
-    description = message or "Error"
-    if remainder_for_description:
-        description = remainder_for_description
-    if isinstance(error_dict, dict):
-        err_msg = error_dict.get("message")
+    if isinstance(error_obj, dict):
+        err_msg = error_obj.get("message")
         if isinstance(err_msg, str) and err_msg.strip():
-            description = err_msg.strip()
+            message = err_msg.strip()
 
     payload: Dict[str, Any] = {
         "ok": False,
         "error_code": effective_status,
-        "description": description,
+        "description": message,
         "agent": agent,
         "project": (project or ""),
         "final_output": None,
         "echo": bool(echo),
+        "error": error_obj,
     }
 
-    if error_dict is not None:
-        payload["error"] = error_dict
     if session_id:
         payload["session_id"] = session_id
     if options is not None:
@@ -1329,7 +1338,6 @@ def _error_payload(
     if debug:
         try:
             import traceback
-
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
         except Exception:
             pass
