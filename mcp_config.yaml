@@ -17,7 +17,7 @@ mcpServers:
 
   # npx -y @modelcontextprotocol/server-sequential-thinking
   seq:
-    enabled: false
+    enabled: true
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
@@ -35,7 +35,7 @@ mcpServers:
 
   # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
   voice:
-    enabled: false
+    enabled: true
     command: uv
     args:
       - --directory
