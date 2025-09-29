@@ -368,7 +368,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
             return
         for row in rows:
             row_id = row["id"]
-            rpath = str(row["rel_path"]).strip()
+            rpath = row["rel_path"]
             ref_type = row["type"]
             ref = {
                 "type": ref_type,
