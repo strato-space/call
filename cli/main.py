@@ -578,7 +578,35 @@ def main() -> int:
 
         # Echo path: print payload JSON and exit (do not execute)
         if bool(getattr(args, "echo", False)):
-            _emit_output(payload, getattr(args, "format", "json"))
+            output = dict(payload)
+            if bool(getattr(args, "resolved", False)):
+                resolved = None
+                try:
+                    cfg, err = call_api.build_runnable_instructions_config(
+                        project=(args.project or None),
+                        agent=(args.agent or None),
+                        prompt=(args.prompt or None),
+                        target=(args.target or None),
+                        input=None,
+                    )
+                    if not err and cfg:
+                        agent_val = getattr(cfg, "agent", None)
+                        if getattr(cfg, "type", None) == "project":
+                            agent_val = None
+                        resolved = {
+                            "id": getattr(cfg, "id", None),
+                            "type": getattr(cfg, "type", None),
+                            "project": getattr(cfg, "project", None),
+                            "agent": agent_val,
+                            "prompt": getattr(cfg, "prompt", None),
+                            "path": getattr(cfg, "path", None),
+                            "url": getattr(cfg, "url", None),
+                        }
+                except Exception:
+                    resolved = None
+                if resolved:
+                    output["resolved"] = resolved
+            _emit_output(output, getattr(args, "format", "json"))
             return 0
 
         # Optional: MCP build-and-stop — construct cfg and exit without running
@@ -665,6 +693,7 @@ def main() -> int:
     p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
     p_exec.add_argument("--echo", action="store_true", help="Print the payload and exit (no execution)")
+    p_exec.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
     p_exec.add_argument("--mcp-build-and-stop", dest="mcp_build_and_stop", action="store_true", help="Build runnable config, print and exit (no execution)")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
