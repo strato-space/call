@@ -11,6 +11,33 @@
   - If neither is provided, no session is created and no Telegram messages are sent. The response omits `session_id`.
 - On success and on error, when a session is known, responses include `session_id`.
 
+### Error payload schema (Updated)
+
+- All library responses use a consistent envelope:
+
+  ```json
+  {
+    "ok": false,
+    "error": {
+      "code": 400,
+      "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+      "type": "invalid_request_error",
+      "param": "input",
+      "provider_code": "context_length_exceeded"
+    },
+    "error_code": 400,
+    "description": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+    "agent": "2-SplitByTopics",
+    "project": "UxFab",
+    "final_output": null,
+    "echo": false
+  }
+  ```
+
+- Field order is stable (`ok`, `error`, `error_code`, `description`, ...). Consumers should read from the `error` object for structured diagnostics and use `description` for the primary message.
+- `provider_code` carries the upstream provider identifier (when present). The legacy top-level `code` field has been removed; existing integrations should read numeric statuses from `error.code` instead.
+- When no structured payload is available, `error` is omitted and `description` falls back to the raw string. The CLI mirrors this envelope in all formats (`json`, `yaml`, `text`).
+
 ### Exec payload contract
 
 - The single JSON payload accepted by Actions and MCP is:

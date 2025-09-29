@@ -943,6 +943,38 @@ async def _notify_digest_if_applicable(
         pass
 
 
+async def _send_error_notification(
+    *,
+    cfg: RunnableConfig,
+    selected_chat_id: int | None,
+    selected_thread_id: int | None,
+    message: str,
+) -> None:
+    """Best-effort Telegram notification when the agent pipeline fails."""
+    if selected_chat_id is None:
+        return
+
+    text = (message or "").strip() or "Неизвестная ошибка"
+
+    try:
+        await init_bot()
+    except Exception:
+        return
+
+    try:
+        safe_title = sanitize_telegram_html(getattr(cfg, "id", "") or getattr(cfg, "name", "") or "Agent")
+        safe_body = sanitize_telegram_html(text)
+        body = telegram_truncate_html_safe(f"❌ <b>{safe_title}</b>\n\n<code>{safe_body}</code>", 3800)
+        await safe_send_message(
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+            text=body,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
 def ensure_env(var: str, default: str = None) -> str:
     """Return the sanitized value of environment variable or raise."""
     value = os.environ.get(var, default)
@@ -2770,6 +2802,20 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             short_msg = str(e) or "Error"
             debug_print("[app]", f"Error during main agent run: {short_msg}")
             step1_output = f"Error: {short_msg}"
+            parsed_error = getattr(e, "error", None)
+            message_for_tg = None
+            if isinstance(parsed_error, dict):
+                msg_val = parsed_error.get("message")
+                if isinstance(msg_val, str) and msg_val.strip():
+                    message_for_tg = msg_val.strip()
+            if not message_for_tg:
+                message_for_tg = short_msg
+            await _send_error_notification(
+                cfg=cfg,
+                selected_chat_id=selected_chat_id,
+                selected_thread_id=selected_thread_id,
+                message=message_for_tg,
+            )
 
         # Notify digest (no image) and push
         await _notify_digest_if_applicable(
