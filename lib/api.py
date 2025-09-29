@@ -345,7 +345,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     try:
         s = (main_text or "").strip()
         if s:
-            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9._:/\\\-*]*", s)
+            raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9*][A-Za-zА-Яа-я0-9._:/\\\-*]*", s)
             for t in raw:
                 u = t.lstrip('@').strip().strip(',.;:')
                 ul = u.lower()
