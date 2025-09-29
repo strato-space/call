@@ -996,19 +996,9 @@ def build_runnable_instructions_config(
     attributes: Dict[str, Any] = {}
     instr: str = ""
     if pr_instr or pr_attrs or pr_raw:
-        # Prefer prompt attributes/body; include agent raw block for richer preview
+        # Prefer prompt attributes/body
         attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
         instr = pr_instr or ""
-        try:
-            if ag_raw and str(ag_raw).strip():
-                parts: list[str] = []
-                if instr.strip():
-                    parts.append(instr.strip())
-                parts.append("<agent>\n" + ag_raw.strip() + "\n</agent>")
-                instr = "\n\n".join(parts)
-        except Exception:
-            # Fallback to prompt text only on any error
-            instr = pr_instr or ""
     elif ag_instr or ag_attrs:
         attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
         instr = ag_instr
