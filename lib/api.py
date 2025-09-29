@@ -1220,6 +1220,38 @@ def build_runnable_instructions_config(
     return cfg, None
 
 
+def _try_parse_error_payload(text: str | None) -> Dict[str, Any] | None:
+    if not text or not isinstance(text, str):
+        return None
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    loaders = []
+    try:
+        import json as _json
+
+        loaders.append(_json.loads)
+    except Exception:
+        pass
+    try:
+        import ast as _ast
+
+        loaders.append(_ast.literal_eval)
+    except Exception:
+        pass
+
+    for loader in loaders:
+        try:
+            parsed = loader(stripped)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def _error_payload(
     agent: str,
     input: str,
@@ -1234,69 +1266,72 @@ def _error_payload(
     details: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a consistent error payload for API/CLI/Bot.
+    message = str(exc)
 
-    Shape:
-    { ok: false, error_code: <int>, description: <str>, code?: <str>, options?: [..], agent, final_output: null, echo }
-    """
-    try:
-        msg = str(exc)
-    except Exception:
-        msg = ""
-    # Heuristic mapping for Not Found
-    if status is None and isinstance(exc, (KeyError, FileNotFoundError, ValueError)) and "not found" in msg.lower():
-        status = 404
+    error_dict: Dict[str, Any] | None = None
+    if isinstance(details, dict):
+        error_dict = details
+    elif isinstance(exc, dict):
+        error_dict = exc
+    else:
+        error_dict = _try_parse_error_payload(message)
+
+    remainder_for_description: str | None = None
+    if message.startswith("Error code:") and " - " in message:
+        remainder_for_description = message.split(" - ", 1)[1].strip()
+        parsed = _try_parse_error_payload(remainder_for_description)
+        if isinstance(parsed, dict):
+            error_section = parsed.get("error") if isinstance(parsed.get("error"), dict) else parsed
+            if isinstance(error_section, dict):
+                error_dict = error_dict or error_section
+
+    if error_dict is None and remainder_for_description:
+        error_dict = _try_parse_error_payload(remainder_for_description)
+
+    status_values: list[int] = []
+    if isinstance(status, int):
+        status_values.append(status)
+    if isinstance(error_dict, dict):
+        raw_code = error_dict.get("code")
+        if isinstance(raw_code, int):
+            status_values.append(raw_code)
+        elif isinstance(raw_code, str) and raw_code.isdigit():
+            status_values.append(int(raw_code))
+
+    effective_status = status_values[0] if status_values else 400
+    description = message or "Error"
+    if remainder_for_description:
+        description = remainder_for_description
+    if isinstance(error_dict, dict):
+        err_msg = error_dict.get("message")
+        if isinstance(err_msg, str) and err_msg.strip():
+            description = err_msg.strip()
+
     payload: Dict[str, Any] = {
         "ok": False,
-        "error_code": int(status or 400),
-        "description": msg,
+        "error_code": effective_status,
+        "description": description,
         "agent": agent,
         "project": (project or ""),
         "final_output": None,
         "echo": bool(echo),
     }
+
+    if error_dict is not None:
+        payload["error"] = error_dict
     if session_id:
-        try:
-            payload["session_id"] = session_id
-        except Exception:
-            pass
-    if code:
-        payload["code"] = code
+        payload["session_id"] = session_id
     if options is not None:
         payload["options"] = options
-    if details is not None:
-        try:
-            payload["details"] = details
-        except Exception:
-            pass
+    if code is not None:
+        payload["legacy_code"] = code
 
-    # Optional debug details (file/line/stack) for CLI usage
-    try:
-        debug_enabled = bool(debug) or str(os.environ.get("CALL_DEBUG", "")).lower() in ("1", "true", "yes", "on")
-    except Exception:
-        debug_enabled = bool(debug)
-    if debug_enabled:
+    if debug:
         try:
             import traceback
-            tb = exc.__traceback__
-            frames = traceback.extract_tb(tb) if tb is not None else []
-            stack_items: List[Dict[str, Any]] = []
-            for fr in frames[-20:]:
-                stack_items.append({
-                    "file": fr.filename,
-                    "line": fr.lineno,
-                    "function": fr.name,
-                    "code": fr.line,
-                })
-            top_file = stack_items[-1]["file"] if stack_items else None
-            top_line = stack_items[-1]["line"] if stack_items else None
-            payload["debug"] = {
-                "file": top_file,
-                "line": top_line,
-                "stack": stack_items,
-            }
+
+            payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
         except Exception:
-            # best-effort only
             pass
 
     return payload
