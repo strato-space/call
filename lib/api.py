@@ -1515,35 +1515,6 @@ async def call_async(
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
-    # TEST HOOK (early): simulate Tracing 403 for CLI integration tests
-    try:
-        _fake = str(os.environ.get("CALL_FAKE_TRACING_403", "")).strip().lower()
-        if _fake in ("1", "true", "yes", "on"):
-            _details = {
-                "error": {
-                    "code": "unsupported_country_region_territory",
-                    "message": "Country, region, or territory not supported",
-                    "param": None,
-                    "type": "request_forbidden",
-                }
-            }
-            result = _error_payload(
-                agent=(agent or ""),
-                input=(input or ""),
-                exc="Tracing client request forbidden",
-                status=403,
-                echo=echo,
-                debug=debug,
-                code="REQUEST_FORBIDDEN",
-                project=project,
-                details=_details,
-                session_id=(session_id or None),
-            )
-            _reset_override()
-            return result
-    except Exception:
-        pass
-
     # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
     cfg, cfg_err = build_runnable_instructions_config(
         project=project,
@@ -1656,13 +1627,6 @@ async def call_async(
             dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s, dump_fp))
 
         try:
-            # TEST HOOK: simulate a tracing 403 error when requested
-            try:
-                if str(os.environ.get("CALL_FAKE_TRACING_403", "")).strip().lower() in ("1", "true", "yes", "on"):
-                    raise RuntimeError('Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}')
-            except Exception:
-                pass
-
             # Use the app layer context manager to build and run the agent once with a ready config.
             async with app_call.build_and_run_agent(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
                 final_output = getattr(_cfg, "_last_final_output", None)
