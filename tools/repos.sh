@@ -4,7 +4,7 @@ set -euo pipefail
 # 1) Load variables from .env (export all)
 # Warning: this executes lines as shell code — .env must be trusted.
 set -a
-. "$REPO/.env"
+. <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env)
 set +a
 
 # 2) Configure git to use the token (do not print it!)
