@@ -173,6 +173,8 @@ Use the project virtual environment interpreter for consistency.
 ```powershell
 python -m call.cli.main list --project UxFab
 python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
+# full card contents (metadata + prompt)
+python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-card
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 .
 # Reload repositories and print result as YAML
@@ -190,7 +192,8 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 - call (keyword-based)
   - Selectors are provided as flags: `--project`, `--agent`, `--prompt`, `--target`.
   - `--input` passes raw text; `--parse-input` uses the shared Telegram parser to build a JSON payload (tokens such as `@3-OnlineChunkSummarization` may resolve into `context`).
-  - `--print-instructions` prints the instructions for the selection and exits (no execution).
+  - `--print-instructions` prints only the runnable instruction body (no metadata) and exits (no execution).
+  - `--print-card` prints the full card as stored in the prompts/agents repository (metadata + prompt body) and exits.
   - `--echo` prints the payload preview and resolved selection snapshot.
   - Project-only selections now report `"agent": null` in the `resolved` payload for clarity.
   - `--format json|yaml|text` controls output format for previews and listings.
@@ -214,6 +217,8 @@ python -m call.cli.main call --target AgentFab --parse-input "@3-OnlineChunkSumm
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis \
   --content-item "https://docs.google.com/document/d/FILE_ID/edit" \
   --content-item '{"type":"text","text":"Hello"}' --output-type html
+# inspect full card metadata via exec path
+python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --print-card
 
 # exec with multiple selectors (falls back to explicit call path)
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --target 33-Questioning --echo

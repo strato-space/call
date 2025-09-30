@@ -466,6 +466,7 @@ class RunnableConfig:
     # Text payloads
     prompt_text: str = ""  # Raw prompt body extracted from the primary card prior to merges
     instructions: str = ""  # Final instructions dispatched to the runtime after merges/overlays
+    card_text: str = ""  # Raw Markdown/structured card text (if available)
 
     # Runtime configuration and attributes
     model: str = "gpt-5"
@@ -667,6 +668,7 @@ def build_runnable_instructions_config(
             input=(input or None),
             prompt_text=None,
             instructions="",
+            card_text="",
             model=str(_os.environ.get("LLM_MODEL", "gpt-5")),
             attributes={},
             mcp=[],
@@ -1207,18 +1209,27 @@ def build_runnable_instructions_config(
         selected_id = project_id or agent_id or prompt_id
 
     prompt_text_val: Optional[str]
+    card_text_val: Optional[str]
     if selected_kind == "prompt":
         prompt_text_val = pr_instr or ""
+        card_text_val = pr_raw or ""
     elif selected_kind == "agent":
         prompt_text_val = ag_instr or ""
+        card_text_val = ag_raw or ""
     elif selected_kind == "project":
         prompt_text_val = proj_instr or ""
+        card_text_val = proj_raw or ""
     else:
         prompt_text_val = pr_instr or ag_instr or proj_instr or ""
+        card_text_val = pr_raw or ag_raw or proj_raw or ""
     if prompt_text_val:
         prompt_text_val = prompt_text_val if prompt_text_val.strip() else ""
     else:
         prompt_text_val = None
+    if card_text_val:
+        card_text_val = card_text_val if str(card_text_val).strip() else ""
+    else:
+        card_text_val = ""
 
     # Tools: prefer prompt > agent > project
     try:
@@ -1245,6 +1256,7 @@ def build_runnable_instructions_config(
         mcp=mcp_list,
         tools=tools_list,
         base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else ""),
+        card_text=str(card_text_val or ""),
     )
 
     # Back-compat: ensure .name exists for tests expecting it
@@ -1284,6 +1296,7 @@ def _error_payload(
     options: Optional[List[Dict[str, Any]]] = None,
     project: Optional[str] = None,
     session_id: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if isinstance(exc, BaseException):
         msg_attr = getattr(exc, "message", None)
@@ -1323,7 +1336,7 @@ def _error_payload(
     if options is not None:
         payload["options"] = options
     if code is not None:
-        payload["legacy_code"] = code
+        payload["code"] = code
 
     if debug:
         try:
@@ -1331,6 +1344,9 @@ def _error_payload(
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
         except Exception:
             pass
+
+    if details is not None:
+        payload["details"] = details
 
     return payload
 
@@ -1394,7 +1410,6 @@ async def call_async(
     try:
         _fake = str(os.environ.get("CALL_FAKE_TRACING_403", "")).strip().lower()
         if _fake in ("1", "true", "yes", "on"):
-            import json as _json
             _details = {
                 "error": {
                     "code": "unsupported_country_region_territory",
@@ -1406,7 +1421,7 @@ async def call_async(
             return _error_payload(
                 agent=(agent or ""),
                 input=(input or ""),
-                exc=RuntimeError("Tracing client error 403: " + _json.dumps(_details, ensure_ascii=False)),
+                exc="Tracing client request forbidden",
                 status=403,
                 echo=echo,
                 debug=debug,
@@ -1581,7 +1596,6 @@ async def call_async(
             ):
                 status = 403
                 err_code = "REQUEST_FORBIDDEN"
-                # Try to parse trailing JSON from message
                 try:
                     import json as _json
                     brace = msg.find("{")
@@ -1589,6 +1603,19 @@ async def call_async(
                         details = _json.loads(msg[brace:])
                 except Exception:
                     details = None
+            if status == 403:
+                return _error_payload(
+                    agent=(chosen_id or ""),
+                    input=(input or ""),
+                    exc="Tracing client request forbidden",
+                    status=403,
+                    echo=echo,
+                    debug=debug,
+                    code=err_code,
+                    project=chosen_project,
+                    details=details,
+                    session_id=(session_id or None),
+                )
             return _error_payload(agent=(chosen_id or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details, session_id=(session_id or None))
     finally:
         if dump_task is not None:
