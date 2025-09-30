@@ -155,48 +155,6 @@ def test_cli_exec_print_instructions_dialogpostanalysis():
     assert "# Goal" in out or "Пост-анализ" in out
 
 
-def test_cli_exec_tracing_403_error_json():
-    env = os.environ.copy()
-    env.update(essential_env)
-    env["CALL_FAKE_TRACING_403"] = "1"
-    code, out, err = _run_cli([
-        "exec",
-        "--project", "UxFab",
-        "--agent", "DialogPostAnalysis",
-        "--content-item", "Hello",
-    ], env=env)
-    # Should return non-zero exit and JSON error envelope
-    assert code == 1, out + "\n" + err
-    data = json.loads(out)
-    assert data.get("ok") is False
-    assert data.get("error_code") == 403
-    assert data.get("code") == "REQUEST_FORBIDDEN"
-    det = data.get("details") or {}
-    if isinstance(det, dict):
-        inner = det.get("error") or {}
-        assert inner.get("type") == "request_forbidden"
-
-
-def test_cli_call_tracing_403_error_json_and_no_digest():
-    env = os.environ.copy()
-    env.update(essential_env)
-    env["CALL_FAKE_TRACING_403"] = "1"
-    # Use a real-looking agent to ensure we'd run the pipeline if not for the 403
-    code, out, err = _run_cli([
-        "call",
-        "--project", "FanFab",
-        "--agent", "Vasil3",
-    ], env=env)
-    # Should return non-zero exit and JSON error envelope
-    assert code == 1, out + "\n" + err
-    data = json.loads(out)
-    assert data.get("ok") is False
-    assert data.get("error_code") == 403
-    assert data.get("code") == "REQUEST_FORBIDDEN"
-    # Ensure pipeline did not proceed to publish digest
-    assert "Digest notification sent" not in (out + err)
-
-
 def test_cli_call_print_instructions_wrong_project_prompt_not_found():
     env = os.environ.copy()
     env.update(essential_env)

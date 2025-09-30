@@ -667,11 +667,9 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 - Centralized debug logging: all layers (app, discovery, Telegram bot) use a single `debug_print()` in `call.lib.logging` gated by `CALL_DEBUG`.
 - Telegram bot: incoming update summaries are logged via `debug_print` (printed only when `CALL_DEBUG=1`).
 - Tracing 403 mapping: upstream errors containing `request_forbidden` or `unsupported_country_region_territory` return
-  `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`.
-  - Test hook for CI/manual checks:
-  - PowerShell: `$env:CALL_FAKE_TRACING_403=1; python -m call.cli.main exec --agent DialogPostAnalysis`
-  - cmd.exe: `set CALL_FAKE_TRACING_403=1 && python -m call.cli.main exec --agent DialogPostAnalysis`
-  - Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
+  `{ ok:false, error_code:403, code:"REQUEST_FORBIDDEN", details:{...} }`. Tests cover this path by forcing the
+  runtime to raise a `request_forbidden` error inside `build_and_run_agent`.
+- Text error conversion: if the pipeline returns `final_output` starting with `"Error:"`, the library converts it to a structured error envelope
   (e.g., `error_code: 502`, `code: UPSTREAM_CONNECT_ERROR|PIPELINE_ERROR`) to avoid printing tracebacks to users.
 
 ### Google service account key
@@ -838,12 +836,11 @@ See also the strategy doc:
 
 ```powershell
 python -m pytest -q
-python -m pytest -q app/tests/test_cli_prompts_and_exec.py::test_cli_exec_tracing_403_error_json
+python -m pytest -q app/tests/test_tracing_403.py::test_call_async_tracing_403_error_json
 ```
 
 - Useful env flags:
   - `CALL_DEBUG=1` — verbose debug logs to console
-  - `CALL_FAKE_TRACING_403=1` — simulate a 403 error envelope for `exec`/`call` integration tests
 
 ## AgentFab (Group Agent) — Quick Start
 
