@@ -328,12 +328,6 @@ set -a
 . <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' call/.env)
 set +a
 
-# 2) Configure git to use the token (do not print it!)
-# DO NOT echo — so the token does not appear in logs.
-if [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
-  git config --global url."https://${GITHUB_TOKEN_PROMPT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
-fi
-
 echo "Working in: $PWD"
 
 # If running under a Windows-like shell (Git Bash/MSYS/Cygwin), set consistent EOL in the main workspace.
@@ -359,6 +353,7 @@ esac
 repo() {
   local url="$1"
   local dir
+  local clone_url="$url"
   if [ "${2-}" != "" ]; then
     dir="$2"
   else
@@ -368,14 +363,21 @@ repo() {
     dir="${last_component%.git}"
   fi
 
+  if [ "$dir" = "call" ] && [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
+    clone_url="https://x-access-token:${GITHUB_TOKEN_PROMPT}@github.com/strato-space/call/"
+  fi
+
   if [ -d "$dir/.git" ]; then
     echo "Updating $dir..."
+    if [ "$dir" = "call" ] && [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
+      git -C "$dir" remote set-url origin "$clone_url"
+    fi
     git -C "$dir" pull --ff-only
   elif [ -d "$dir" ]; then
     echo "Directory $dir exists but is not a git repository. Skipping to avoid overwriting."
   else
-    echo "Cloning $url into $dir..."
-    git clone "$url" "$dir"
+    echo "Cloning $clone_url into $dir..."
+    git clone "$clone_url" "$dir"
   fi
 }
 
