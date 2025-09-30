@@ -1265,20 +1265,50 @@ async def send_digest_notification(
     # Build inline buttons from provided configuration and perform macro substitution
     keyboard = None
     try:
-        row: list[InlineKeyboardButton] = []
         btn_source = buttons if isinstance(buttons, list) else []
-        for b in btn_source:
-            if not isinstance(b, dict):
-                continue
-            label = str(b.get("label", "")).strip() or "🔗"
-            link = str(b.get("url", "")).strip()
+        keyboard_rows: list[list[InlineKeyboardButton]] = []
+        current_row: list[InlineKeyboardButton] = []
+
+        def _build_button(entry: dict[str, Any]) -> InlineKeyboardButton | None:
+            label = str(entry.get("label", "")).strip() or "🔗"
+            link = str(entry.get("url", "")).strip()
             if link:
                 safe_url = local_url or ""
                 link = link.replace("{{digest_url}}", safe_url)
             if link:
-                row.append(InlineKeyboardButton(label, url=link))
-        if row:
-            keyboard = [row]
+                return InlineKeyboardButton(label, url=link)
+            return None
+
+        def _flush_current_row() -> None:
+            nonlocal current_row
+            if current_row:
+                keyboard_rows.append(current_row)
+                current_row = []
+
+        for b in btn_source:
+            if not isinstance(b, dict):
+                continue
+            row_spec = b.get("row")
+            if isinstance(row_spec, (list, tuple)):
+                _flush_current_row()
+                row_buttons: list[InlineKeyboardButton] = []
+                for rb in row_spec:
+                    if not isinstance(rb, dict):
+                        continue
+                    btn = _build_button(rb)
+                    if btn:
+                        row_buttons.append(btn)
+                if row_buttons:
+                    keyboard_rows.append(row_buttons)
+                continue
+
+            btn = _build_button(b)
+            if btn:
+                current_row.append(btn)
+
+        _flush_current_row()
+        if keyboard_rows:
+            keyboard = keyboard_rows
     except Exception:
         keyboard = None
 

@@ -148,3 +148,51 @@ def test_send_digest_notification_multiple_buttons(monkeypatch):
     assert rendered[0].url == "https://example.com/docs"
     assert rendered[1].text == "Open"
     assert rendered[1].url == "https://example.com/digest"
+
+
+def test_send_digest_notification_button_rows(monkeypatch):
+    from telegram import InlineKeyboardMarkup
+
+    captured = {"reply_markup": None}
+
+    monkeypatch.setattr("call.app.call.publish_results", lambda *a, **k: "https://example.com/digest")
+
+    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+        captured["reply_markup"] = reply_markup
+        return DummyMsg()
+
+    monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
+
+    buttons = [
+        {"row": [{"label": "Result", "url": "{{digest_url}}"}]},
+        {
+            "row": [
+                {"label": "Agent", "url": "https://example.com/agent"},
+                {"label": "Structure", "url": "https://example.com/structure"},
+            ]
+        },
+    ]
+
+    async def _run():
+        return await send_digest_notification(
+            text="z" * 5000,
+            agent_name="Test",
+            buttons=buttons,
+            chat_id=999,
+        )
+
+    _ = asyncio.run(_run())
+
+    rm = captured["reply_markup"]
+    assert isinstance(rm, InlineKeyboardMarkup)
+    assert len(rm.inline_keyboard) == 2
+    first_row = rm.inline_keyboard[0]
+    second_row = rm.inline_keyboard[1]
+    assert len(first_row) == 1
+    assert first_row[0].text == "Result"
+    assert first_row[0].url == "https://example.com/digest"
+    assert len(second_row) == 2
+    assert second_row[0].text == "Agent"
+    assert second_row[0].url == "https://example.com/agent"
+    assert second_row[1].text == "Structure"
+    assert second_row[1].url == "https://example.com/structure"
