@@ -330,8 +330,8 @@ set +a
 
 # 2) Configure git to use the token (do not print it!)
 # DO NOT echo — so the token does not appear in logs.
-if [ -n "${GITHUB_TOKEN_VM:-}" ]; then
-  git config --global url."https://${GITHUB_TOKEN_VM}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+if [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
+  git config --global url."https://${GITHUB_TOKEN_PROMPT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 fi
 
 echo "Working in: $PWD"
