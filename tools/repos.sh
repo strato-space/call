@@ -3,12 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./tools/repos.sh [--pip] [--mcp]
+Usage: ./tools/repos.sh [--pull] [--pip] [--mcp] [--all]
 
 Flags:
-  --pip         Ensure .venv exists and install Python dependencies from requirements files.
-  --mcp         Install uv and JavaScript MCP servers (filesystem, sequential-thinking).
-  -h, --help    Show this help message.
+  --pull       Clone or update repositories listed in this script.
+  --pip        Ensure .venv exists and install Python dependencies from requirements files.
+  --mcp        Install uv and JavaScript MCP servers (filesystem, sequential-thinking).
+  --all        Run all workflows: --pull, --pip, and --mcp.
+  -h, --help   Show this help message.
 EOF
 }
 
@@ -266,15 +268,24 @@ setup_mcp() {
   install_mcp_node_servers
 }
 
+DO_PULL=false
 DO_PIP=false
 DO_MCP=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --pull)
+      DO_PULL=true
+      ;;
     --pip)
       DO_PIP=true
       ;;
     --mcp)
+      DO_MCP=true
+      ;;
+    --all)
+      DO_PULL=true
+      DO_PIP=true
       DO_MCP=true
       ;;
     -h|--help)
@@ -356,26 +367,27 @@ repo() {
   fi
 }
 
-# Ensure core repositories
-repo https://github.com/strato-space/call
-repo https://github.com/strato-space/agent
-repo https://github.com/strato-space/prompt
-repo https://github.com/strato-space/server
-repo https://github.com/strato-space/rms
-repo https://github.com/strato-space/voice
-# Ensure cache directories for SQLite DBs referenced from call/.env
-if [ -d "call" ]; then
-  CACHE_ROOT="${BASE_DIR}/.cache/call"
-  if [ ! -d "$CACHE_ROOT" ]; then
-    mkdir -p "$CACHE_ROOT"
-    echo "Created cache directory: $CACHE_ROOT"
+if [ "$DO_PULL" = true ]; then
+  log_section "Running --pull workflow"
+  repo https://github.com/strato-space/call
+  repo https://github.com/strato-space/agent
+  repo https://github.com/strato-space/prompt
+  repo https://github.com/strato-space/server
+  repo https://github.com/strato-space/rms
+  repo https://github.com/strato-space/voice
+  # Optional repositories
+  # repo https://github.com/strato-space/telegram-mcp
+  # repo https://github.com/strato-space/mcp-google-sheets
+  # repo https://github.com/strato-space/mcp-telegram
+  # repo https://github.com/strato-space/ai
+  if [ -d "call" ]; then
+    CACHE_ROOT="${BASE_DIR}/.cache/call"
+    if [ ! -d "$CACHE_ROOT" ]; then
+      mkdir -p "$CACHE_ROOT"
+      echo "Created cache directory: $CACHE_ROOT"
+    fi
   fi
 fi
-# Optional repositories
-# repo https://github.com/strato-space/telegram-mcp
-# repo https://github.com/strato-space/mcp-google-sheets
-# repo https://github.com/strato-space/mcp-telegram
-# repo https://github.com/strato-space/ai
 
 if [ "$DO_PIP" = true ]; then
   log_section "Running --pip workflow"
