@@ -54,6 +54,24 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 
 > Recent changes: see `CHANGELOG.md`.
 
+### Subsystem quick reference (Updated)
+
+- **`actions/`** — FastAPI REST API for GPT Actions. Endpoints proxy to `call.lib.api` helpers (`call`, `list`, `models`, etc.), enforce bearer authentication, and publish an OpenAPI document (`actions/openapi.json`). Patch the schema when you add or rename endpoints so client generators stay in sync.
+- **`mcp/`** — Model Context Protocol (MCP) server implemented with the FastMCP SDK. Tools mirror the REST surface (`call`, `exec`, `notify`, `reload`, `models`) and are loaded by `mcp_config.yaml` / `mcp_config.json`. Keep tool signatures aligned with the REST payload contract.
+- **`telegram_bot/`** — Production Telegram bot wired through the public API facade (`call.lib.api`). It handles `/agents`, `/prompts`, `/call`, parsed replies, and renders structured envelopes. Preserve reply markup expectations (HTML-safe output, welcome banners, debug logging) when changing flows.
+- **`wallet/`** — Deployment-time secrets such as `service-account-key.json` for Google Workspace automations. The file in the repo is a placeholder; do not commit live credentials or print them in logs/tests.
+- **`windsurf/`** — Windsurf IDE workspace settings. Update formatter/linter toggles here whenever repo tooling changes so contributors on Windsurf inherit the same defaults.
+- **`requirements.txt`** — Pinned Python dependencies for the runtime, CLI, bot, Actions API, and MCP server. Rebuild with your dependency management tool (`uv pip compile`, `pip-tools`, etc.) and test inside `/workspace/.venv` before committing.
+- **`mcp_config.yaml` / `mcp_config.json`** — Declarative presets for external MCP servers (filesystem, sequential thinking, voice bridge, Google Sheets, etc.). Comments document how to hydrate Claude Desktop configs. Synchronize these files with operational reality when enabling/disabling servers.
+
+### Engineering principles (New)
+
+- **Keep It Simple (KISS)** — prefer direct, comprehensible solutions over layered abstractions or speculative flexibility. Delete dead code and redundant fallbacks when you touch a module.
+- **SOLID & Dependency Injection** — design classes and functions around clear responsibilities and inject collaborators. Avoid reaching for globals or singletons so components stay testable and composable.
+- **Small, focused helpers** — extract reusable helpers when logic grows, keep function bodies tight, and name helpers according to their intent. This keeps reviews fast and reduces the chance of regressions.
+- **Explicit failure paths** — surface structured errors instead of burying them in nested fallbacks. When behavior is optional, branch early, log intentionally, and return standard envelopes.
+- **Observable errors** — log every exception and every I/O error, even when control flow continues, so operators can diagnose subtle degradations.
+
 ### Workspace sync script (`tools/repos.sh`)
 
 Use `call/tools/repos.sh` to clone or fast-forward the core Strato repositories from the monorepo root. Without flags it iterates through the standard list (`call`, `agent`, `prompt`, `server`, `rms`, `voice`), cloning any missing checkout or issuing a `git pull --ff-only` when the repository already exists.
@@ -66,6 +84,10 @@ Flags:
 
 - `--pip` — ensures `.venv` exists, activates it when possible, upgrades `pip`, and installs Python requirements from `call/requirements.txt`, `voice/requirements.txt`, and `server/mcp/requirements.txt` using the virtual-environment interpreter.
 - `--mcp` — makes sure [`uv`](https://docs.astral.sh/uv/getting-started/installation/) is installed (via `snap` on Linux or PowerShell/winget on Windows when available) and then installs the JavaScript MCP servers `@modelcontextprotocol/server-sequential-thinking` and `@modelcontextprotocol/server-filesystem` with `npm` (requires `nvm`/`npm` to be present).
+
+#### Codex bootstrap preset
+
+- `--codex` — convenience preset for agents running in Codex sandboxes. It clones or fast-forwards the sibling repositories (`agent`, `prompt`, `voice`, `rms`, `server`) into `/workspace/` and provisions a shared virtual environment at `/workspace/.venv` with the Python requirements mentioned above. Activate it via `source /workspace/.venv/bin/activate` before running tests or scripts.
 
 The script uses current directory as the workspace root, applies Git LF/CRLF settings when launched from Windows shells, and accepts `-h/--help` for the built-in usage summary shown above.
 
