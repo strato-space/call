@@ -201,6 +201,17 @@ def test_cli_exec_event_only_ack():
     assert data.get("event") == "session_closed"
 
 
+def test_cli_notify_event_only_ack():
+    code, out, err = _run_cli([
+        "notify",
+        "--event", "session_closed",
+    ])
+    assert code == 0, err
+    data = json.loads(out)
+    assert data.get("ok") is True
+    assert data.get("event") == "session_closed"
+
+
 def test_cli_call_echo_resolved_project_agent_null():
     code, out, err = _run_cli([
         "call",
