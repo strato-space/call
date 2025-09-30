@@ -2832,6 +2832,7 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             short_msg = str(e) or "Error"
             debug_print("[app]", f"Error during main agent run: {short_msg}")
             step1_output = f"Error: {short_msg}"
+            # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
             parsed_error = getattr(e, "error", None)
             message_for_tg = None
             if isinstance(parsed_error, dict):
