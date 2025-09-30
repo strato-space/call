@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 1) Load variables from .env (export all)
+# Warning: this executes lines as shell code — .env must be trusted.
+set -a
+. "$REPO/.env"
+set +a
+
+# 2) Configure git to use the token (do not print it!)
+# DO NOT echo — so the token does not appear in logs.
+if [ -n "${GITHUB_TOKEN_VM:-}" ]; then
+  git config --global url."https://${GITHUB_TOKEN_VM}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+fi
+
+
 usage() {
   cat <<'EOF'
 Usage: ./tools/repos.sh [--pull] [--pip] [--mcp] [--all]
