@@ -1378,6 +1378,7 @@ async def call_async(
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
+    event: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     session_id: Optional[str] = None,
@@ -1403,6 +1404,10 @@ async def call_async(
       3) project name
       The first match sets the corresponding field if it wasn't already set explicitly.
     """
+    # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
+    if event is not None:
+        return {"ok": True, "event": str(event), "agents": []}
+
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
@@ -1686,6 +1691,7 @@ def call(
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
+    event: Optional[str] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     session_id: Optional[str] = None,
@@ -1703,6 +1709,7 @@ def call(
                 prompt=prompt,
                 target=target,
                 input=input,
+                event=event,
                 chat_id=chat_id,
                 thread_id=thread_id,
                 session_id=session_id,
@@ -1893,17 +1900,26 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
             )
         except Exception:
             pass
-        # Determine exactly one among project|agent|prompt|target
+        # Determine exactly one among project|agent|prompt|target (allow zero when event present)
         f_project = payload.get("project")
         f_agent = payload.get("agent")
         f_prompt = payload.get("prompt")
         f_target = payload.get("target")
+        f_event = payload.get("event")
         fields = [f for f in [f_project, f_agent, f_prompt, f_target] if (str(f or "").strip())]
-        if len(fields) != 1:
+        event_present = f_event is not None and str(f_event).strip() != ""
+        if not event_present and len(fields) != 1:
             return {}, {
                 "ok": False,
                 "error_code": 400,
                 "description": "Provide exactly one of 'project' or 'agent' or 'prompt' or 'target'",
+                "code": "BAD_REQUEST",
+            }
+        if event_present and len(fields) > 0:
+            return {}, {
+                "ok": False,
+                "error_code": 400,
+                "description": "When 'event' is provided, do not include project|agent|prompt|target selectors",
                 "code": "BAD_REQUEST",
             }
         import json as _json
@@ -1929,6 +1945,8 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
         sid = payload.get("session_id")
         if sid:
             kwargs["session_id"] = str(sid)
+        if event_present:
+            kwargs["event"] = str(f_event)
         return kwargs, None
     except Exception as e:
         return {}, {

@@ -87,6 +87,48 @@ def mcp_exec(
     return api_call(**kwargs)
 
 
+@mcp.tool(name="notify")
+def mcp_notify(
+    event: str,
+    context: Optional[List[Dict[str, Any]]] = None,
+    echo: bool = False,
+    session_id: Optional[str] = None,
+    ctx: Context | None = None,
+) -> Any:
+    """Acknowledge an event without executing the pipeline.
+
+    Event notifications may include optional context items and echo/session metadata.
+    project|agent|prompt|target selectors are not allowed together with event.
+    """
+
+    payload: Dict[str, Any] = {"event": event}
+    if context is not None:
+        payload["context"] = context
+    if echo:
+        payload["echo"] = True
+    if session_id:
+        payload["session_id"] = session_id
+    kwargs, err = api_interpret_exec_payload(payload)
+    if err:
+        return err
+    return api_call(**kwargs)
+
+
+@mcp.tool(name="call")
+def mcp_call(
+    name: str,
+    input: str,
+    echo: bool = False,
+    session_id: Optional[str] = None,
+    event: Optional[str] = None,
+    ctx: Context | None = None,
+) -> Any:
+    """Invoke a single agent/prompt selection by name (uses same rules as /call)."""
+
+    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, event=event, session_id=session_id, echo=echo)
+    return res
+
+
 @mcp.tool()
 def reload(ctx: Context | None = None) -> Any:
     """Reload repository indices (agent/prompt) from .env configuration."""
