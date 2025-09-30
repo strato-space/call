@@ -10,7 +10,7 @@ Standardize card files (prompt .md, agent/project .yaml) across the repo:
 Usage:
   python -m call.scripts.standardize_cards --fix [--roots c:/path1 c:/path2] [--blame]
 Defaults:
-  roots = [c:/home/strato-space/prompt, c:/home/strato-space/agent]
+  roots = [./prompt, ./agent]
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import List, Tuple
 
 DEFAULT_ROOTS = [
-    Path("c:/home/strato-space/prompt"),
-    Path("c:/home/strato-space/agent"),
+    Path("./prompt"),
+    Path("./agent"),
 ]
 
 META_BLOCK_RE = re.compile(r"<!--\s*(METADATA|META):START\s*-->(.*?)<!--\s*(METADATA|META):END\s*-->", re.S)

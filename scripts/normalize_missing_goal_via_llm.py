@@ -35,11 +35,11 @@ def normalize_file_via_llm(path: Path, *, project_name: str = 'AgentFab', agent_
             "Keep only control-flow/runtime parameters in METADATA (model, temperature, top_p, engine, provider, tg, io, memory, chain, mcp, workdir[s], prompts, id). "
             "Ensure PROMPT contains only the text intended for LLM (no control params). Preserve original content otherwise."
         )
-        # Convert Windows absolute path to posix path for MCP FS (WORKDIR=/home/strato-space)
+        # Convert Windows absolute path to posix path for MCP FS (WORKDIR=.)
         posix_path: Optional[str] = None
         try:
             rel = path.resolve().relative_to(ROOT)
-            posix_path = "/home/strato-space/" + rel.as_posix()
+            posix_path = "./" + rel.as_posix()
         except Exception:
             posix_path = None
 

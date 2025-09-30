@@ -16,7 +16,7 @@ mcpServers:
   fs:
     enabled: true
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
     env: {}
 ```
 
@@ -29,7 +29,7 @@ mcpServers:
     serverUrl: "https://gsh-mcp.example.com"
     bridge:
       command: uvx
-      args: ["--env-file", "/home/strato-space/call/.env", "mcp-google-sheets"]
+      args: ["--env-file", "call/.env", "mcp-google-sheets"]
 ```
 
 ## Usage policy

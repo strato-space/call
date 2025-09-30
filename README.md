@@ -67,7 +67,7 @@ Flags:
 - `--pip` — ensures `.venv` exists, activates it when possible, upgrades `pip`, and installs Python requirements from `call/requirements.txt`, `voice/requirements.txt`, and `server/mcp/requirements.txt` using the virtual-environment interpreter.
 - `--mcp` — makes sure [`uv`](https://docs.astral.sh/uv/getting-started/installation/) is installed (via `snap` on Linux or PowerShell/winget on Windows when available) and then installs the JavaScript MCP servers `@modelcontextprotocol/server-sequential-thinking` and `@modelcontextprotocol/server-filesystem` with `npm` (requires `nvm`/`npm` to be present).
 
-The script auto-detects the workspace root (defaults to `/home/strato-space`), applies Git LF/CRLF settings when launched from Windows shells, and accepts `-h/--help` for the built-in usage summary shown above.
+The script uses current directory as the workspace root, applies Git LF/CRLF settings when launched from Windows shells, and accepts `-h/--help` for the built-in usage summary shown above.
 
 ### Repo Index (New)
 
@@ -574,13 +574,14 @@ You can enumerate available agents discovered in the Agent repository via the li
 Prefer the project venv interpreter to run commands:
 
 ```powershell
-cd D:\home\strato-space 
+cd ~ 
 .venv\Scripts\Activate.ps1
 python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
 ```
+
 ```bash
-cd /home/strato-space 
+cd ~
 . .venv/bin/activate.sh 
 python -m call.app.call "Vasil3" "рассказывай"
 python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в соответсвие с strato space prompt framework"
@@ -760,7 +761,7 @@ Call integrates with and executes artifacts produced by:
 - Agent Fab — a factory of early analytical agents; cards live in the Agent repo under `agent/AgentFab`.
 - Prompt Repository — canonical storage of prompts under flat folders: `prompt/ready/`, `prompt/draft/`.
 - RAG and MCP servers — optional data access and tool affordances:
-  - Filesystem: root /home/strato-space, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice [voicebot backed lib, mcp, actions, cli interfaces]
+  - Filesystem: root current directory, main repos: prompt [prompt repository], call [this repo], server [mcp's starter, nginx cofings], rms [sample of project repo], voice [voicebot backed lib, mcp, actions, cli interfaces]
 - Voice Bot, AI News Aggregator, Telegram, Google Sheets/Pages — integration touchpoints.
 
 -- Repos list:
@@ -783,23 +784,23 @@ Use the `call/repos.sh` script to keep local clones of our primary repositories 
   - When `dir` is omitted, it’s derived from the last path component of the URL (with optional `.git` removed), e.g., `.../voice.git` → `voice`.
 
 - Default working directory resolution:
-  - Prefers `/home/strato-space`, then `/d/home/strato-space`, otherwise uses the current directory.
+  - Uses the current directory.
 
 - Examples:
 
   ```bash
   # Git Bash or WSL
-  bash d:/home/strato-space/call/repos.sh
+  bash call/tools/repos.sh
 
   # Or run specific repos
-  bash d:/home/strato-space/call/repos.sh && \
+  bash call/tools/repos.sh && \
     repo https://github.com/strato-space/prompt && \
     repo https://github.com/strato-space/server custom-server-dir
   ```
 
   ```powershell
   # From PowerShell using Git Bash
-  "C:\Program Files\Git\bin\bash.exe" d:/home/strato-space/call/repos.sh
+  "C:\Program Files\Git\bin\bash.exe" call/tools/repos.sh
   ```
 
 See also the strategy doc: 

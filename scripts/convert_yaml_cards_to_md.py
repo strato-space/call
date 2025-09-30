@@ -143,8 +143,8 @@ def main() -> int:
     if not roots:
         # sensible defaults
         roots = [
-            Path("c:/home/strato-space/agent"),
-            Path("c:/home/strato-space/prompt/AgentFab"),
+            Path("agent"),
+            Path("prompt/AgentFab"),
         ]
     total: List[Tuple[Path, str]] = []
     for r in roots:

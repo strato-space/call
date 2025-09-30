@@ -37,7 +37,7 @@ def main():
     ap.add_argument("--repos", nargs="*", default=["agent", "prompt"], help="Top-level repos to scan")
     args = ap.parse_args()
 
-    root = Path(__file__).resolve().parents[2]  # c:\home\strato-space
+    root = Path(__file__).resolve().parents[2]
     targets = [root / r for r in args.repos]
 
     missing: List[str] = []
