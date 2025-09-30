@@ -14,6 +14,7 @@ def _ns(**kwargs):
         prompt="",
         target="",
         input="",
+        model="",
         session_id="",
         echo=False,
         print_instructions=False,
@@ -88,3 +89,25 @@ def test_cli_call_raw_input_is_passed_as_is(monkeypatch, capsys):
     assert out.get("ok") is True
     assert captured.get("input") == "as is text input"
     assert called["builder"] == 0
+
+
+def test_cli_call_includes_model_override(monkeypatch, capsys):
+    from call.cli.main import cmd_call
+    from call.lib import api as call_api
+
+    captured = {}
+
+    def fake_call(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(call_api, "call", fake_call, raising=True)
+
+    rc = cmd_call(_ns(target="AgentFab", input="hello", model="gpt-4o-mini"))
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("ok") is True
+    attrs = captured.get("attributes")
+    assert isinstance(attrs, dict)
+    assert attrs.get("model") == "gpt-4o-mini"

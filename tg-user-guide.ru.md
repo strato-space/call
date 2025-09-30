@@ -215,18 +215,19 @@
 ```bash
 py -m call.cli.main --
 usage: main.py [-h] [--json-logs] [--debug]
-               {agents,list,projects,call,prompts,reload,exec,clear-session} ...
+               {agents,list,projects,models,call,prompts,reload,exec,clear-session} ...
 main.py: error: the following arguments are required: cmd
 (.venv) PS #> py -m call.cli.main --help
 usage: main.py [-h] [--json-logs] [--debug]
-               {agents,list,projects,call,prompts,reload,exec,clear-session} ...
+               {agents,list,projects,models,call,prompts,reload,exec,clear-session} ...
 
 call — CLI for listing and invoking agents (keyword-only API)
 
 positional arguments:
-  {agents,list,projects,call,prompts,reload,exec,clear-session}
+  {agents,list,projects,models,call,prompts,reload,exec,clear-session}
     agents (list, projects)
                         List projects and agents (hierarchical)
+    models              List available OpenAI models
     call                Call an agent with input text
     prompts             List prompts (flat)
     reload              Scan repositories and rebuild repo.db

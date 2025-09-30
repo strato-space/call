@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 import os
 import sqlite3
 import asyncio
@@ -10,6 +11,53 @@ from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
 from call.lib.logging import debug_print
 import builtins as _bi
+
+
+_attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
+    "call_attribute_overrides",
+    default=None,
+)
+
+
+def _normalize_attribute_overrides(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(overrides, dict):
+        return {}
+    normalized: Dict[str, Any] = {}
+    for key, value in overrides.items():
+        if value is None:
+            continue
+        try:
+            key_str = str(key)
+        except Exception:
+            continue
+        normalized[key_str] = value
+    return normalized
+
+
+def _serialize_model_item(item: Any) -> Dict[str, Any]:
+    if isinstance(item, dict):
+        return dict(item)
+    for attr_name in ("model_dump", "dict", "to_dict"):
+        attr = getattr(item, attr_name, None)
+        if callable(attr):
+            try:
+                data = attr()
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                return data
+    try:
+        data = vars(item)
+    except Exception:
+        data = None
+    if isinstance(data, dict) and data:
+        return {k: v for k, v in data.items() if not k.startswith("_")}
+    identifier = getattr(item, "id", None)
+    try:
+        identifier = str(identifier) if identifier is not None else str(item)
+    except Exception:
+        identifier = None
+    return {"id": identifier}
 
 
 def _compile_wildcard_regex(pattern: str | None):
@@ -486,6 +534,7 @@ def build_runnable_instructions_config(
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
+    attributes_override: Optional[Dict[str, Any]] = None,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
 
@@ -581,6 +630,14 @@ def build_runnable_instructions_config(
         return result
 
     resolved_env: Dict[str, Any] | None = None
+
+    overrides_in = attributes_override
+    if overrides_in is None:
+        try:
+            overrides_in = _attribute_overrides_var.get()
+        except LookupError:
+            overrides_in = None
+    attribute_overrides = _normalize_attribute_overrides(overrides_in)
 
     # 0) Target interpretation (prompt > agent > project) and wildcard prompt resolution
     try:
@@ -1259,6 +1316,22 @@ def build_runnable_instructions_config(
         card_text=str(card_text_val or ""),
     )
 
+    if attribute_overrides:
+        merged_attrs = dict(cfg.attributes or {})
+        for key, value in attribute_overrides.items():
+            if value is None:
+                continue
+            if key == "model":
+                try:
+                    model_value = str(value).strip()
+                except Exception:
+                    model_value = ""
+                if model_value:
+                    merged_attrs["model"] = model_value
+                continue
+            merged_attrs[key] = value
+        cfg.attributes = merged_attrs
+
     # Back-compat: ensure .name exists for tests expecting it
     try:
         display = None
@@ -1281,6 +1354,22 @@ def build_runnable_instructions_config(
             cfg.model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
         except Exception:
             cfg.model = "gpt-5"
+
+    if attribute_overrides:
+        model_override = attribute_overrides.get("model")
+        if model_override is not None:
+            try:
+                model_value = str(model_override).strip()
+            except Exception:
+                model_value = ""
+            if model_value:
+                cfg.model = model_value
+                try:
+                    attrs = dict(cfg.attributes or {})
+                    attrs["model"] = model_value
+                    cfg.attributes = attrs
+                except Exception:
+                    pass
 
     return cfg, None
     
@@ -1379,6 +1468,7 @@ async def call_async(
     target: Optional[str] = None,
     input: Optional[str] = None,
     event: Optional[str] = None,
+    attributes: Optional[Dict[str, Any]] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     session_id: Optional[str] = None,
@@ -1408,6 +1498,20 @@ async def call_async(
     if event is not None:
         return {"ok": True, "event": str(event), "agents": []}
 
+    attribute_overrides = _normalize_attribute_overrides(attributes)
+    token_override = None
+    if attribute_overrides:
+        token_override = _attribute_overrides_var.set(attribute_overrides)
+
+    def _reset_override() -> None:
+        nonlocal token_override
+        if token_override is not None:
+            try:
+                _attribute_overrides_var.reset(token_override)
+            except Exception:
+                pass
+            token_override = None
+
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
@@ -1423,7 +1527,7 @@ async def call_async(
                     "type": "request_forbidden",
                 }
             }
-            return _error_payload(
+            result = _error_payload(
                 agent=(agent or ""),
                 input=(input or ""),
                 exc="Tracing client request forbidden",
@@ -1435,12 +1539,21 @@ async def call_async(
                 details=_details,
                 session_id=(session_id or None),
             )
+            _reset_override()
+            return result
     except Exception:
         pass
 
     # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
     try:
-        cfg, cfg_err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt, target=target, input=input)
+        cfg, cfg_err = build_runnable_instructions_config(
+            project=project,
+            agent=agent,
+            prompt=prompt,
+            target=target,
+            input=input,
+            attributes_override=(attribute_overrides or None),
+        )
     except Exception:
         cfg, cfg_err = None, None
     if isinstance(cfg_err, dict):
@@ -1450,6 +1563,7 @@ async def call_async(
                 cfg_err["session_id"] = session_id
         except Exception:
             pass
+        _reset_override()
         return cfg_err
 
     # cfg is ready; dump a normalized snapshot in DEBUG
@@ -1633,6 +1747,7 @@ async def call_async(
                 dump_fp.close()
             except Exception:
                 pass
+        _reset_override()
 
     # If the pipeline returned a plain-text error (e.g., "Error: ...\n\nTraceback ..."),
     # convert it to a structured error envelope to avoid printing stack traces to users.
@@ -1692,6 +1807,7 @@ def call(
     target: Optional[str] = None,
     input: Optional[str] = None,
     event: Optional[str] = None,
+    attributes: Optional[Dict[str, Any]] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
     session_id: Optional[str] = None,
@@ -1710,6 +1826,7 @@ def call(
                 target=target,
                 input=input,
                 event=event,
+                attributes=attributes,
                 chat_id=chat_id,
                 thread_id=thread_id,
                 session_id=session_id,
@@ -1760,6 +1877,23 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
         return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
     except Exception:
         return []
+
+
+def models() -> List[Dict[str, Any]]:
+    """Retrieve available OpenAI models using the official client."""
+
+    from openai import OpenAI
+
+    client = OpenAI()
+    response = client.models.list()
+    data = getattr(response, "data", None)
+    items: List[Dict[str, Any]] = []
+    for entry in data or []:
+        try:
+            items.append(_serialize_model_item(entry))
+        except Exception:
+            continue
+    return items
 
 
 def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, target: Optional[str] = None) -> Dict[str, Any]:
@@ -1947,6 +2081,17 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
             kwargs["session_id"] = str(sid)
         if event_present:
             kwargs["event"] = str(f_event)
+        model_value = payload.get("model")
+        if model_value is not None:
+            try:
+                model_str = str(model_value).strip()
+            except Exception:
+                model_str = ""
+            if model_str:
+                existing_attrs = kwargs.get("attributes")
+                attrs = dict(existing_attrs) if isinstance(existing_attrs, dict) else {}
+                attrs["model"] = model_str
+                kwargs["attributes"] = attrs
         return kwargs, None
     except Exception as e:
         return {}, {

@@ -19,6 +19,7 @@ from call.lib.api import list as api_list
 from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import reload as api_reload
+from call.lib.api import models as api_models
 
 
 @asynccontextmanager
@@ -121,11 +122,27 @@ def mcp_call(
     echo: bool = False,
     session_id: Optional[str] = None,
     event: Optional[str] = None,
+    model: Optional[str] = None,
     ctx: Context | None = None,
 ) -> Any:
     """Invoke a single agent/prompt selection by name (uses same rules as /call)."""
 
-    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, event=event, session_id=session_id, echo=echo)
+    attrs = None
+    if model is not None:
+        model_str = str(model).strip()
+        if model_str:
+            attrs = {"model": model_str}
+    res = api_call(
+        project=None,
+        agent=None,
+        prompt=None,
+        target=name,
+        input=input,
+        event=event,
+        session_id=session_id,
+        echo=echo,
+        attributes=attrs,
+    )
     return res
 
 
@@ -133,6 +150,13 @@ def mcp_call(
 def reload(ctx: Context | None = None) -> Any:
     """Reload repository indices (agent/prompt) from .env configuration."""
     return api_reload()
+
+
+@mcp.tool()
+def models(ctx: Context | None = None) -> Any:
+    """List available OpenAI models."""
+
+    return api_models()
 
 
 async def main():
