@@ -1674,32 +1674,9 @@ async def call_async(
                 pass
 
             # Use the app layer context manager to build and run the agent once with a ready config.
-            # Prefer new signature (cfg, user_input=...), but fall back to legacy signature
-            # when a monkeypatched test function expects (name, samples_dir, ...).
             cm = app_call.build_and_run_agent
-            try:
-                async with cm(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
-                    final_output = getattr(_cfg, "_last_final_output", None)
-                    try:
-                        actual_sid = getattr(_session, "id", None)
-                    except Exception:
-                        actual_sid = None
-            except TypeError:
-                # Legacy compatibility: (name, samples_dir, user_input, prompt_override, project_name)
-                async with cm(
-                    ((getattr(cfg, "agent", None) if cfg else None) or (agent or "") or (chosen_id or "")),
-                    None,
-                    user_input=(input or ""),
-                    prompt_override=((getattr(cfg, "prompt", None) if cfg else None) or (prompt or None)),
-                    project_name=((getattr(cfg, "project", None) if cfg else None) or (project or None)),
-                ) as (agent_obj, _cfg, _session):
-                    final_output = getattr(_cfg, "_last_final_output", None)
-                    try:
-                        actual_sid = getattr(_session, "id", None)
-                    except Exception:
-                        actual_sid = None
+            async with cm(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
                 final_output = getattr(_cfg, "_last_final_output", None)
-                # Try to read actual session id from session object
                 try:
                     actual_sid = getattr(_session, "id", None)
                 except Exception:
