@@ -5,9 +5,11 @@ Welcome! This document provides house rules and quick references for agents work
 ## Environment & Tooling
 
 - **Python virtual environment**: The bootstrap script `tools/repos.sh --codex` provisions a shared virtual environment at `/workspace/.venv`. Always activate it before running Python commands:
+
   ```bash
   source /workspace/.venv/bin/activate
   ```
+
   Install any additional dependencies into this environment.
 - **Sibling repositories**: The same script clones or fast-forwards the companion repositories (`agent`, `prompt`, `voice`, `rms`, `server`) under `/workspace/`. When you need cross-repo context, look for them alongside this checkout.
 - **Testing**: Prefer `pytest` for unit/integration tests. The repo root contains `pytest.ini`; invoke tests via `pytest` (optionally with `-k` filters).
