@@ -363,13 +363,14 @@ repo() {
     dir="${last_component%.git}"
   fi
 
-  if [ "$dir" = "call" ] && [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
-    clone_url="https://x-access-token:${GITHUB_TOKEN_PROMPT}@github.com/strato-space/call/"
+  if [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
+    clone_url="https://x-access-token:${GITHUB_TOKEN_PROMPT}@github.com/${url#https://github.com/}"
   fi
 
   if [ -d "$dir/.git" ]; then
     echo "Updating $dir..."
-    if [ "$dir" = "call" ] && [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
+    git -C "$dir" remote get-url origin >/dev/null 2>&1 || git -C "$dir" remote add origin "$clone_url"
+    if [ -n "${GITHUB_TOKEN_PROMPT:-}" ]; then
       git -C "$dir" remote set-url origin "$clone_url"
     fi
     git -C "$dir" pull --ff-only
