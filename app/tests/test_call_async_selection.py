@@ -66,8 +66,8 @@ def test_call_success_with_prompt_override(monkeypatch):
             return _DummyAgent(), _Cfg(self.out), _DummySession()
         async def __aexit__(self, exc_type, exc, tb):
             return False
-    def fake_build_and_run_agent(cli_agent_name, samples_dir, user_input="", prompt_override=None, project_name=None):
-        return _CM(f"ok:{cli_agent_name}:{prompt_override}:{project_name}")
+    def fake_build_and_run_agent(*, cfg, user_input=""):
+        return _CM(f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{user_input}")
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
 
@@ -75,7 +75,7 @@ def test_call_success_with_prompt_override(monkeypatch):
     assert res.get("ok") is True
     assert res.get("final_output", "").startswith("ok:NewsAggr:Draft:UxFab")
     resolved = res.get("resolved") or {}
-    assert resolved.get("name") == "NewsAggr"
+    assert resolved.get("agent") == "NewsAggr"
     assert resolved.get("project") == "UxFab"
 
 
