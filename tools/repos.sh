@@ -144,6 +144,15 @@ setup_pip() {
     "server/mcp/requirements.txt"
 }
 
+run_pip_workflow() {
+  log_section "Running --pip workflow"
+  if setup_pip; then
+    echo "Python dependencies installed successfully."
+  else
+    echo "Python dependency setup encountered issues; review the logs above." >&2
+  fi
+}
+
 install_uv_linux() {
   if command_exists uv; then
     return 0
@@ -338,6 +347,10 @@ set +a
 
 echo "Working in: $PWD"
 
+if [ "$DO_PIP" = true ]; then
+  run_pip_workflow
+fi
+
 # If running under a Windows-like shell (Git Bash/MSYS/Cygwin), set consistent EOL in the main workspace.
 # This matches the user's desired config:
 #   git -C "<path>" config core.autocrlf false
@@ -420,15 +433,6 @@ if [ "$DO_PULL" = true ]; then
   if [ "$DO_CODEX" != true ] && command_exists systemctl; then
     log_section "Restarting call services"
     sudo systemctl restart actions@call.service mcp@call.service
-  fi
-fi
-
-if [ "$DO_PIP" = true ]; then
-  log_section "Running --pip workflow"
-  if setup_pip; then
-    echo "Python dependencies installed successfully."
-  else
-    echo "Python dependency setup encountered issues; review the logs above." >&2
   fi
 fi
 
