@@ -129,3 +129,15 @@ def test_api_interpret_exec_payload_event_with_multiple_selectors_error():
     assert kwargs == {}
     assert err is not None
     assert err.get("error_code") == 400
+
+
+def test_api_interpret_exec_payload_includes_model_override():
+    api = importlib.import_module("call.lib.api")
+
+    payload = {"agent": "DialogPostAnalysis", "model": "gpt-special"}
+    kwargs, err = api.api_interpret_exec_payload(payload)
+    assert err is None
+    assert kwargs.get("agent") == "DialogPostAnalysis"
+    attrs = kwargs.get("attributes")
+    assert isinstance(attrs, dict)
+    assert attrs.get("model") == "gpt-special"

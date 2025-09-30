@@ -13,6 +13,7 @@ from .deps import bearer_guard
 from call.lib.api import call as api_call
 from call.lib.api import list as api_list
 from call.lib.api import list_prompts as api_list_prompts
+from call.lib.api import models as api_models
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
 
@@ -118,8 +119,24 @@ def call(
     echo: bool = Query(False, description="If true, return structured JSON from library"),
     session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
     event: str | None = Query(None, description="Optional event name to acknowledge without pipeline execution"),
+    model: str | None = Query(None, description="Override model for this call"),
 ):
-    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, event=event, session_id=session_id, echo=echo)
+    attrs = None
+    if model is not None:
+        model_str = str(model).strip()
+        if model_str:
+            attrs = {"model": model_str}
+    res = api_call(
+        project=None,
+        agent=None,
+        prompt=None,
+        target=name,
+        input=input,
+        event=event,
+        session_id=session_id,
+        echo=echo,
+        attributes=attrs,
+    )
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -137,6 +154,7 @@ class ExecPayload(BaseModel):
     context: Optional[Any] = None
     echo: Optional[bool] = False
     session_id: Optional[str] = None
+    model: Optional[str] = None
 
 
 class NotifyPayload(BaseModel):
@@ -206,6 +224,16 @@ def prompts(
         return JSONResponse(content=err, status_code=400)
     items = list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
     return items if isinstance(items, list) else ([items] if items else [])
+
+
+@app.get(
+    "/models",
+    dependencies=[Depends(bearer_guard)],
+    operation_id="models",
+    summary="List available OpenAI models",
+)
+def models_endpoint():
+    return api_models()
 
 
 @app.get(

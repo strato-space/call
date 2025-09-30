@@ -36,6 +36,18 @@ def test_builder_prompt_override_set():
     assert cfg and cfg.prompt == "33-Questioning"
 
 
+def test_builder_model_override_has_priority():
+    cfg, err = build_runnable_instructions_config(
+        project="UxFab",
+        agent="DialogPostAnalysis",
+        attributes_override={"model": "gpt-test-override"},
+    )
+    assert err is None
+    assert cfg is not None
+    assert cfg.model == "gpt-test-override"
+    assert cfg.attributes.get("model") == "gpt-test-override"
+
+
 def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     from call.lib import api as api_module
 
