@@ -175,6 +175,7 @@ python -m call.cli.main list --project UxFab
 python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-instructions
 # full card contents (metadata + prompt)
 python -m call.cli.main call --project UxFab --agent DialogPostAnalysis --prompt 33-Questioning --print-card
+python -m call.cli.main models --format yaml
 python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --content-item "https://docs.google.com/document/d/FILE_ID/edit"
 .
 # Reload repositories and print result as YAML
@@ -193,22 +194,24 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
   - Selectors are provided as flags: `--project`, `--agent`, `--prompt`, `--target`.
   - `--input` passes raw text; `--parse-input` uses the shared Telegram parser to build a JSON payload (tokens such as `@3-OnlineChunkSummarization` may resolve into `context`).
   - `--print-instructions` prints only the runnable instruction body (no metadata) and exits (no execution).
-  - `--print-card` prints the full card as stored in the prompts/agents repository (metadata + prompt body) and exits.
-  - `--echo` prints the payload preview and resolved selection snapshot.
-  - Project-only selections now report `"agent": null` in the `resolved` payload for clarity.
-  - `--format json|yaml|text` controls output format for previews and listings.
+- `--print-card` prints the full card as stored in the prompts/agents repository (metadata + prompt body) and exits.
+- `--echo` prints the payload preview and resolved selection snapshot.
+- `--model` overrides the effective model for the run (highest priority over cards and environment defaults).
+- Project-only selections now report `"agent": null` in the `resolved` payload for clarity.
+- `--format json|yaml|text` controls output format for previews and listings.
 
 - exec (payload-based)
   - Merges selectors and content items into a single JSON payload (best for content buckets and Actions/MCP).
   - If exactly one selector among `project|agent|prompt|target` is provided, the CLI uses the single-source-of-truth validator `interpret_exec_payload()`; otherwise it falls back to a backward-compatible path and calls using explicit selectors with the full payload JSON as input.
-  - `--echo` prints the payload and exits (no execution).
-  - `--format json|yaml|text` controls output format.
+- `--echo` prints the payload and exits (no execution).
+- `--model` embeds the override into the payload so downstream callers (Actions/MCP) use the requested model.
+- `--format json|yaml|text` controls output format.
 
 Examples (PowerShell):
 
 ```powershell
 # call with raw input
-python -m call.cli.main call --target AgentFab --input "as is text"
+python -m call.cli.main call --target AgentFab --input "as is text" --model gpt-4o-mini
 
 # call with parsed input (Telegram-identical payload)
 python -m call.cli.main call --target AgentFab --parse-input "@3-OnlineChunkSummarization" --echo --format yaml

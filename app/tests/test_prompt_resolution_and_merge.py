@@ -22,10 +22,23 @@ def test_list_includes_aliases_for_ainewsaggr():
     assert ai.get("name") == "AiNewsAggr"
 
 
-def test_scan_project_agents_prompts_from_agent_yaml():
+def test_scan_project_agents_prompts_from_agent_yaml(tmp_path):
     # DialogPostAnalysis defines prompts in its agent.yaml
     from call.lib import discovery as disc
-    base = Path("agent/UxFab")
+    base = tmp_path / "UxFab"
+    base.mkdir()
+    agent_dir = base / "DialogPostAnalysis"
+    agent_dir.mkdir()
+    (agent_dir / "agent.yaml").write_text(
+        """
+id: DialogPostAnalysis
+prompts:
+  - 33-Questioning
+  - 34-CollectUnresolvedEscalationItems
+""".strip(),
+        encoding="utf-8",
+    )
+
     items = disc.scan_project_agents(base)
     dpa = next(a for a in items if a.get("name") == "DialogPostAnalysis")
     assert set(dpa.get("prompts") or []) >= {"33-Questioning", "34-CollectUnresolvedEscalationItems"}

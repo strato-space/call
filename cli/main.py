@@ -1,23 +1,20 @@
 """
 CLI for the call subsystem.
 
-Command Reference (one-line):
-  # List projects/agents/prompts (hierarchical JSON)
-  python -m call.cli.main agents [--project UxFab] [--agent Agent*] [--prompt 10*]
+Quick reference:
+  • agents / list / projects  – browse the indexed repository (JSON/YAML/text output).
+  • models                     – fetch available OpenAI models via the public API.
+  • call                       – keyword API for single runs (supports --model override).
+  • exec                       – JSON payload API for batched context (also accepts --model).
+  • prompts                    – flat list of prompts (table/text/JSON).
+  • reload                     – rescan repositories and rebuild repo.db.
+  • clear-session              – purge cached chat/thread conversations.
 
-  # Call: keyword-based API (best for MCP/REST/Actions). Selectors via flags, optional echo/trace.
-  python -m call.cli.main call --agent BusinessAnalyticAgent --input "Analyze Q3" [--project UxFab]
-  python -m call.cli.main call --agent BusinessAnalyticAgent --prompt Draft --input "Analyze Q3" [--project UxFab]
-
-  # Exec: payload-based API (best for buckets of content items). All args merged into JSON payload.
-  python -m call.cli.main exec --target Name --content-item "{...}" --input "text" [--echo]
-
-Debug flags:
-  --debug              Force DEBUG logging (overrides CALL_DEBUG)
-  --json-logs          Emit logs as JSON lines
-  --trace SECONDS      Dump all thread stacks every N seconds
-  --trace-file PATH    Write stack dumps to a file instead of stderr
-  --echo               Include echo metadata in response
+Global diagnostics:
+  --debug                      Force DEBUG logging (overrides CALL_DEBUG).
+  --json-logs                  Emit logs as JSON lines.
+  --trace SECONDS              Dump Python stack traces every N seconds.
+  --trace-file PATH            Write stack dumps to a file instead of stderr.
 """
 from __future__ import annotations
 
@@ -95,6 +92,22 @@ def cmd_list(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_models(args: argparse.Namespace) -> int:
+    try:
+        items = call_api.models()
+        _emit_output(items, getattr(args, "format", "json"))
+        return 0
+    except Exception as e:
+        err = {
+            "ok": False,
+            "error_code": 500,
+            "description": str(e),
+            "code": "INTERNAL_ERROR",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+
+
 def _safe_print(s: str) -> None:
     try:
         print(s)
@@ -155,6 +168,8 @@ def cmd_call(args: argparse.Namespace) -> int:
     prompt = call_api.normalize_selector(getattr(args, 'prompt', None)) or None
     target = call_api.normalize_selector(getattr(args, 'target', None)) or None
     event = (getattr(args, "event", "") or "").strip() or None
+    model_override = (str(getattr(args, "model", "")) if hasattr(args, "model") else "").strip()
+    attributes_override = {"model": model_override} if model_override else None
     trace_fp = None
     try:
         # Optional: print instructions and exit
@@ -164,6 +179,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                 project=project,
                 agent=agent,
                 prompt=prompt,
+                attributes_override=attributes_override,
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
@@ -278,6 +294,7 @@ def cmd_call(args: argparse.Namespace) -> int:
                             prompt=prompt,
                             target=target,
                             input=None,
+                            attributes_override=attributes_override,
                         )
                         if not err and cfg:
                             agent_val = getattr(cfg, 'agent', None)
@@ -310,13 +327,15 @@ def cmd_call(args: argparse.Namespace) -> int:
                 # Flatten: print top-level payload fields; add resolved when requested
                 if resolved:
                     payload_obj["resolved"] = resolved
+                if attributes_override and isinstance(payload_obj, dict):
+                    payload_obj["attributes"] = dict(attributes_override)
                 _safe_print(json.dumps(payload_obj, ensure_ascii=False, indent=2))
                 return 0
             except Exception as e:
                 print(json.dumps({"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}, ensure_ascii=False), file=sys.stderr)
                 return 1
 
-        result = call_api.call(
+        call_kwargs = dict(
             project=project,
             agent=agent,
             prompt=prompt,
@@ -326,6 +345,9 @@ def cmd_call(args: argparse.Namespace) -> int:
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
         )
+        if attributes_override:
+            call_kwargs["attributes"] = attributes_override
+        result = call_api.call(**call_kwargs)
         # Honor --format for output (json|yaml|text)
         _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
@@ -370,11 +392,16 @@ def main() -> int:
     p_agents.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_agents.set_defaults(func=cmd_list)
 
+    p_models = sub.add_parser("models", help="List available OpenAI models via API")
+    p_models.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
+    p_models.set_defaults(func=cmd_models)
+
     p_call = sub.add_parser("call", help="Call an agent with input text")
     p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard). '@' and '.md' suffix are stripped")
     p_call.add_argument("--agent", default="", help="Agent name or @Alias (exact or with * wildcard). '@' and '.md' suffix are stripped")
     p_call.add_argument("--prompt", default="", help="Prompt override (exact or with *). '@' and '.md' suffix are stripped")
     p_call.add_argument("--target", default="", help="Unified selector (project|agent|prompt). '@' and '.md' suffix are stripped")
+    p_call.add_argument("--model", default="", help="Override model for this run (highest priority)")
     p_call.add_argument("--input", default="", help="Raw input text for the agent (passed as-is)")
     p_call.add_argument("--parse-input", default="", help="Parse input and build JSON payload identical to Telegram (uses shared builder)")
     p_call.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
@@ -509,6 +536,8 @@ def main() -> int:
     def cmd_exec(args: argparse.Namespace) -> int:
         # Build payload by merging all provided args (no strict mutual exclusivity).
         payload: dict = {}
+        model_override = (str(getattr(args, "model", "")) if hasattr(args, "model") else "").strip()
+        attributes_override = {"model": model_override} if model_override else None
         # Selectors: merged into payload only; interpretation is deferred to the library
         if args.target:
             payload["target"] = args.target
@@ -535,6 +564,8 @@ def main() -> int:
             payload["output-type"] = args.output_type
         if event_value:
             payload["event"] = event_value
+        if model_override:
+            payload["model"] = model_override
 
         # Optional parse-input: build payload identical to Telegram builder and merge
         if args.parse_input:
@@ -577,6 +608,7 @@ def main() -> int:
                 project=(args.project or None),
                 agent=(args.agent or None),
                 prompt=(args.prompt or None),
+                attributes_override=attributes_override,
             )
             if err:
                 _safe_print(json.dumps(err, ensure_ascii=False))
@@ -606,6 +638,7 @@ def main() -> int:
                         prompt=(args.prompt or None),
                         target=(args.target or None),
                         input=None,
+                        attributes_override=attributes_override,
                     )
                     if not err and cfg:
                         agent_val = getattr(cfg, "agent", None)
@@ -635,6 +668,7 @@ def main() -> int:
                 prompt=(args.prompt or None),
                 target=(args.target or None),
                 input=None,
+                attributes_override=attributes_override,
             )
             if err:
                 _emit_output(err, getattr(args, "format", "json"))
@@ -697,6 +731,7 @@ def main() -> int:
                 event=(event_value or None),
                 session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
                 echo=False,
+                attributes=attributes_override,
             )
         _emit_output(result, getattr(args, "format", "json"))
         return 0 if (isinstance(result, dict) and result.get("ok")) else 1
@@ -707,6 +742,7 @@ def main() -> int:
     p_exec.add_argument("--agent", default="", help="Agent name (merged into payload)")
     p_exec.add_argument("--prompt", default="", help="Prompt name (merged into payload)")
     p_exec.add_argument("--target", default="", help="Unified target (project|agent|prompt) merged into payload")
+    p_exec.add_argument("--model", default="", help="Override model and embed into payload")
     p_exec.add_argument("--input", default="", help="Plain LLM input text (merged into payload)")
     p_exec.add_argument("--parse-input", default="", help="Parse user text into payload (identical to Telegram builder)")
     p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")

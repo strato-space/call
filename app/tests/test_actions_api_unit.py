@@ -34,6 +34,24 @@ def test_call_ok(monkeypatch, client: TestClient, auth_headers):
     assert data.get("ok") is True
 
 
+def test_call_model_override(monkeypatch, client: TestClient, auth_headers):
+    def fake_api_call(**kwargs):
+        attrs = kwargs.get("attributes")
+        assert isinstance(attrs, dict)
+        assert attrs.get("model") == "gpt-unit"
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
+
+    r = client.get(
+        "/call",
+        params={"name": "TestAgent", "input": "hi", "model": "gpt-unit"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json().get("ok") is True
+
+
 def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_headers):
     def fake_api_call(**kwargs):
         # Context is serialized to JSON string by the handler
@@ -43,11 +61,14 @@ def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_header
         except Exception:
             payload = {}
         assert isinstance(payload, dict)
+        attrs = kwargs.get("attributes")
+        assert isinstance(attrs, dict)
+        assert attrs.get("model") == "gpt-exec"
         return {"ok": True, "agent": "DialogPostAnalysis"}
 
     monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
 
-    payload = {"agent": "DialogPostAnalysis", "context": {"text": "hello"}}
+    payload = {"agent": "DialogPostAnalysis", "context": {"text": "hello"}, "model": "gpt-exec"}
     r = client.post("/exec", params={"echo": "1"}, json=payload, headers=auth_headers)
     assert r.status_code == 200
     data = r.json()
@@ -90,3 +111,13 @@ def test_agents_ok(monkeypatch, client: TestClient, auth_headers):
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list) and data and data[0].get("name") == "UxFab"
+
+
+def test_models_endpoint(monkeypatch, client: TestClient, auth_headers):
+    monkeypatch.setattr(main, "api_models", lambda: [{"id": "gpt-4o-mini"}], raising=True)
+
+    r = client.get("/models", headers=auth_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    assert data[0].get("id") == "gpt-4o-mini"
