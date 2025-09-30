@@ -6,6 +6,7 @@ Quick reference:
   • models                     – fetch available OpenAI models via the public API.
   • call                       – keyword API for single runs (supports --model override).
   • exec                       – JSON payload API for batched context (also accepts --model).
+  • notify                     – acknowledge events without executing the pipeline.
   • prompts                    – flat list of prompts (table/text/JSON).
   • reload                     – rescan repositories and rebuild repo.db.
   • clear-session              – purge cached chat/thread conversations.
@@ -756,6 +757,59 @@ def main() -> int:
     p_exec.add_argument("--mcp-build-and-stop", dest="mcp_build_and_stop", action="store_true", help="Build runnable config, print and exit (no execution)")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)
+
+    def cmd_notify(args: argparse.Namespace) -> int:
+        payload: dict = {}
+        event_value = (getattr(args, "event", "") or "").strip()
+        if not event_value:
+            _emit_output({
+                "ok": False,
+                "error_code": 400,
+                "description": "--event is required",
+                "code": "BAD_REQUEST",
+            }, getattr(args, "format", "json"))
+            return 1
+        payload["event"] = event_value
+
+        if getattr(args, "session_id", ""):
+            payload["session_id"] = str(args.session_id)
+
+        if bool(getattr(args, "echo", False)):
+            payload["echo"] = True
+
+        ctx_items: list = []
+        for ci in (getattr(args, "content_item", None) or []):
+            try:
+                ctx_items.append(_parse_content_item(ci))
+            except Exception:
+                continue
+        context_raw = getattr(args, "context", "")
+        if ctx_items:
+            payload["context"] = ctx_items
+        elif context_raw:
+            raw = str(context_raw)
+            try:
+                payload["context"] = json.loads(raw)
+            except Exception:
+                payload["context"] = raw
+
+        kwargs, err = call_api.api_interpret_exec_payload(payload)
+        if err:
+            _emit_output(err, getattr(args, "format", "json"))
+            return 1
+
+        result = call_api.call(**kwargs)
+        _emit_output(result, getattr(args, "format", "json"))
+        return 0 if (isinstance(result, dict) and result.get("ok")) else 1
+
+    p_notify = sub.add_parser("notify", help="Acknowledge an event with optional context")
+    p_notify.add_argument("--event", required=True, help="Event name to acknowledge (required)")
+    p_notify.add_argument("--context", default="", help="Optional JSON context payload")
+    p_notify.add_argument("--content-item", action="append", help="Context item (JSON or URL or text). Repeat for multiple items.")
+    p_notify.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
+    p_notify.add_argument("--echo", action="store_true", help="Include echo flag in payload (no execution)")
+    p_notify.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
+    p_notify.set_defaults(func=cmd_notify)
 
     # clear-session subcommand (uses global handler defined above)
     p_clear = sub.add_parser("clear-session", help="Clear conversation session(s) for a chat/thread from SQLite")
