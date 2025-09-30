@@ -157,7 +157,7 @@ def cmd_call(args: argparse.Namespace) -> int:
     trace_fp = None
     try:
         # Optional: print instructions and exit
-        if getattr(args, "print_instructions", False):
+        if getattr(args, "print_instructions", False) or getattr(args, "print_card", False):
             # Build directly; this handles wildcard interpretation and strict validation (MD-only)
             cfg, err = call_api.build_runnable_instructions_config(
                 project=project,
@@ -174,7 +174,10 @@ def cmd_call(args: argparse.Namespace) -> int:
                 _dbg("[cli]", "[CFG]", json.dumps(_asdict(cfg) if cfg is not None else {}, ensure_ascii=False, indent=2))
             except Exception:
                 pass
-            _safe_print((cfg.instructions if cfg else "") or "")
+            if getattr(args, "print_card", False):
+                _safe_print((cfg.card_text if cfg else "") or "")
+            else:
+                _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 
         # Optional periodic stack dumps for debugging long runs
@@ -372,6 +375,7 @@ def main() -> int:
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
     p_call.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
+    p_call.add_argument("--print-card", action="store_true", help="Print full card text from the selected record")
     p_call.add_argument("--trace", type=int, default=0, metavar="SECONDS", help="Dump all thread stacks every N seconds (debug)")
     p_call.add_argument("--trace-file", type=str, default="", help="Write stack dumps to a file instead of stderr")
     p_call.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
@@ -557,7 +561,7 @@ def main() -> int:
                 pass
 
         # Optional: print instructions only (interprets selectors from args, not payload)
-        if getattr(args, "print_instructions", False):
+        if getattr(args, "print_instructions", False) or getattr(args, "print_card", False):
             cfg, err = call_api.build_runnable_instructions_config(
                 project=(args.project or None),
                 agent=(args.agent or None),
@@ -573,7 +577,10 @@ def main() -> int:
                 _dbg("[cli]", "[CFG]", json.dumps(snap, ensure_ascii=False, indent=2))
             except Exception:
                 pass
-            _safe_print((cfg.instructions if cfg else "") or "")
+            if getattr(args, "print_card", False):
+                _safe_print((getattr(cfg, "card_text", None) or ""))
+            else:
+                _safe_print((cfg.instructions if cfg else "") or "")
             return 0
 
         # Echo path: print payload JSON and exit (do not execute)
@@ -695,6 +702,7 @@ def main() -> int:
     p_exec.add_argument("--echo", action="store_true", help="Print the payload and exit (no execution)")
     p_exec.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
+    p_exec.add_argument("--print-card", action="store_true", help="Print full card text from the selected record")
     p_exec.add_argument("--mcp-build-and-stop", dest="mcp_build_and_stop", action="store_true", help="Build runnable config, print and exit (no execution)")
     p_exec.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_exec.set_defaults(func=cmd_exec)

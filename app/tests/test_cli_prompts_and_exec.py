@@ -85,12 +85,30 @@ def test_cli_call_print_instructions_dialogpostanalysis():
         "--project", "UxFab",
         "--agent", "DialogPostAnalysis",
         "--prompt", "33-Questioning",
-        "--print-instructions",
+        "--print-card",
     ], env=env)
     assert code == 0, err
     # Be less brittle: should include the prompt id and an <agent> block name
     assert "33-Questioning" in out
     assert "DialogPostAnalysis" in out
+
+
+def test_cli_call_print_instructions_body_only():
+    env = os.environ.copy()
+    env.update(essential_env)
+    code, out, err = _run_cli([
+        "call",
+        "--project", "UxFab",
+        "--agent", "DialogPostAnalysis",
+        "--prompt", "33-Questioning",
+        "--print-instructions",
+    ], env=env)
+    assert code == 0, err
+    # Should include body text but omit metadata markers/ids
+    assert "33-Questioning" not in out
+    assert "DialogPostAnalysis" not in out
+    assert "METADATA" not in out
+    assert "Ты — агент" in out
 
 
 def test_cli_call_print_instructions_infers_agent_from_prompt():
@@ -100,13 +118,13 @@ def test_cli_call_print_instructions_infers_agent_from_prompt():
         "call",
         "--project", "UxFab",
         "--prompt", "33-Questioning",
-        "--print-instructions",
+        "--print-card",
     ], env=env)
     # DB-only resolution can succeed; ensure printed instructions contain both prompt and agent block
     assert code == 0, err
     assert "33-Questioning" in out
     assert "DialogPostAnalysis" in out
-    assert "<agent>" in out and "DialogPostAnalysis" in out
+    assert "agent: DialogPostAnalysis" in out
 
 
 def test_cli_list_json_contains_aliases_and_prompts():
@@ -342,11 +360,11 @@ def test_cli_call_print_instructions_wrong_project_agent_not_found():
         "--project", "UxFab",
         "--agent", "UxCreator",
         "--prompt", "33-Questioning",
-        "--print-instructions",
+        "--print-card",
     ], env=env)
     # In DB-only mode, this agent exists under UxFab, so printing instructions should succeed
     assert code == 0, err
-    assert "UxCreator" in out
+    assert "agent: DialogPostAnalysis" in out
 
 
 def test_cli_exec_print_instructions_wrong_project_agent_not_found():
