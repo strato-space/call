@@ -62,6 +62,10 @@ def custom_openapi():
             ]
             # Hint for generators
             exec_schema["x-exactly-one"] = ["project", "agent", "prompt", "target"]
+        notify_schema = schemas.get("NotifyPayload")
+        if isinstance(notify_schema, dict):
+            notify_schema.setdefault("description", "Notify the system about an event. 'event' is required; project/agent/prompt/target selectors are not accepted.")
+            notify_schema.setdefault("required", ["event"])
     except Exception:
         # Schema patching best-effort only
         pass
@@ -113,8 +117,9 @@ def call(
     input: str = Query(..., description="Input text"),
     echo: bool = Query(False, description="If true, return structured JSON from library"),
     session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
+    event: str | None = Query(None, description="Optional event name to acknowledge without pipeline execution"),
 ):
-    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, session_id=session_id, echo=echo)
+    res = api_call(project=None, agent=None, prompt=None, target=name, input=input, event=event, session_id=session_id, echo=echo)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             status = int(res.get("error_code", 400))
@@ -134,14 +139,42 @@ class ExecPayload(BaseModel):
     session_id: Optional[str] = None
 
 
+class NotifyPayload(BaseModel):
+    event: str
+    context: Optional[Any] = None
+    echo: Optional[bool] = False
+    session_id: Optional[str] = None
+
+
 @app.post(
     "/exec",
     dependencies=[Depends(bearer_guard)],
     operation_id="exec_post",
-    summary="Execute with a JSON payload (target|prompt|agent + context)",
+    summary="Execute with a JSON payload (project|agent|prompt|target + optional context)",
 )
 def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
+    payload_dict = payload.model_dump(exclude_unset=True)
+    kwargs, err = api_interpret_exec_payload(payload_dict)
+    if err:
+        return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
+    res = api_call(**kwargs)
+    try:
+        if isinstance(res, dict) and res.get("ok") is False:
+            return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))
+    except Exception:
+        pass
+    return res
+
+
+@app.post(
+    "/notify",
+    dependencies=[Depends(bearer_guard)],
+    operation_id="notify_post",
+    summary="Acknowledge an event with a JSON payload (event required)",
+    description="Notify payloads must include an 'event' field and may not specify project/agent/prompt/target selectors.",
+)
+def notify_action_post(payload: NotifyPayload = Body(...)):
     payload_dict = payload.model_dump(exclude_unset=True)
     kwargs, err = api_interpret_exec_payload(payload_dict)
     if err:

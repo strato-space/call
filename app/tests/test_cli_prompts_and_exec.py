@@ -218,14 +218,35 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
         assert data.get("error_code") in (400, 404)
     except Exception:
         # Fallback: plain-text error message
-        assert ("no agent found matching criteria" in out.lower()) or ("no agent found matching criteria" in err.lower())
+        assert ("no agent found matching criteria" in err.lower())
+
+
+def test_cli_call_event_ack():
+    code, out, err = _run_cli([
+        "call",
+        "--event", "session_closed",
+    ])
+    assert code == 0, err
+    data = json.loads(out)
+    assert data.get("ok") is True
+    assert data.get("event") == "session_closed"
+
+
+def test_cli_exec_event_only_ack():
+    code, out, err = _run_cli([
+        "exec",
+        "--event", "session_closed",
+    ])
+    assert code == 0, err
+    data = json.loads(out)
+    assert data.get("ok") is True
+    assert data.get("event") == "session_closed"
 
 
 def test_cli_call_echo_resolved_project_agent_null():
     code, out, err = _run_cli([
         "call",
         "--target", "AgentFab",
-        "--parse-input", "50-DiscoveryAgent",
         "--echo",
         "--resolved",
     ])

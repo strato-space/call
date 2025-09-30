@@ -77,3 +77,55 @@ def test_call_success_with_prompt_override(monkeypatch):
     resolved = res.get("resolved") or {}
     assert resolved.get("name") == "NewsAggr"
     assert resolved.get("project") == "UxFab"
+
+
+def test_call_event_ack(monkeypatch):
+    api = importlib.import_module("call.lib.api")
+
+    # Ensure pipeline is not invoked by tracking import attempts
+    import sys
+    marker = object()
+    monkeypatch.setitem(sys.modules, "call.app.call", marker)
+
+    res = api.call(event="session_closed")
+    assert isinstance(res, dict)
+    assert res.get("ok") is True
+    assert res.get("event") == "session_closed"
+
+    # The marker should remain untouched (no attribute access on placeholder)
+    assert sys.modules["call.app.call"] is marker
+
+
+def test_api_interpret_exec_payload_event_only():
+    api = importlib.import_module("call.lib.api")
+
+    payload = {"event": "session_closed"}
+    kwargs, err = api.api_interpret_exec_payload(payload)
+    assert err is None
+    assert kwargs.get("event") == "session_closed"
+    assert kwargs.get("input").startswith("{")
+    assert kwargs.get("project") is None
+    assert kwargs.get("agent") is None
+    assert kwargs.get("prompt") is None
+    assert kwargs.get("target") is None
+
+
+def test_api_interpret_exec_payload_event_with_target():
+    api = importlib.import_module("call.lib.api")
+
+    payload = {"event": "session_closed", "target": "UxFab"}
+    kwargs, err = api.api_interpret_exec_payload(payload)
+    assert kwargs == {}
+    assert err is not None
+    assert err.get("error_code") == 400
+    assert "event" in (err.get("description") or "")
+
+
+def test_api_interpret_exec_payload_event_with_multiple_selectors_error():
+    api = importlib.import_module("call.lib.api")
+
+    payload = {"event": "session_closed", "project": "UxFab", "agent": "DialogPostAnalysis"}
+    kwargs, err = api.api_interpret_exec_payload(payload)
+    assert kwargs == {}
+    assert err is not None
+    assert err.get("error_code") == 400

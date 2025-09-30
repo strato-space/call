@@ -154,6 +154,7 @@ def cmd_call(args: argparse.Namespace) -> int:
     project = call_api.normalize_selector(getattr(args, 'project', None)) or None
     prompt = call_api.normalize_selector(getattr(args, 'prompt', None)) or None
     target = call_api.normalize_selector(getattr(args, 'target', None)) or None
+    event = (getattr(args, "event", "") or "").strip() or None
     trace_fp = None
     try:
         # Optional: print instructions and exit
@@ -301,6 +302,11 @@ def cmd_call(args: argparse.Namespace) -> int:
                     payload_obj = json.loads(payload_json) if payload_json else {}
                 except Exception:
                     payload_obj = payload_json or {}
+                if event:
+                    if isinstance(payload_obj, dict):
+                        payload_obj["event"] = event
+                    else:
+                        payload_obj = {"payload": payload_obj, "event": event}
                 # Flatten: print top-level payload fields; add resolved when requested
                 if resolved:
                     payload_obj["resolved"] = resolved
@@ -316,6 +322,7 @@ def cmd_call(args: argparse.Namespace) -> int:
             prompt=prompt,
             target=target if hasattr(args, "target") else None,
             input=(payload_json if payload_dict else (raw_input or None)),
+            event=event,
             session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
             echo=bool(getattr(args, "echo", False)),
         )
@@ -371,6 +378,7 @@ def main() -> int:
     p_call.add_argument("--input", default="", help="Raw input text for the agent (passed as-is)")
     p_call.add_argument("--parse-input", default="", help="Parse input and build JSON payload identical to Telegram (uses shared builder)")
     p_call.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
+    p_call.add_argument("--event", default="", help="Event name to acknowledge without executing the pipeline")
     p_call.add_argument("--download-context", action="store_true", help="Download/inline context by url/path (content for text, base64 for binaries)")
     p_call.add_argument("--echo", action="store_true", help="Return additional echo metadata from the run")
     p_call.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
@@ -510,6 +518,7 @@ def main() -> int:
             payload["prompt"] = args.prompt
         if args.project:
             payload["project"] = args.project
+        event_value = (args.event or "").strip()
 
         # Input and content/context
         if args.input:
@@ -524,6 +533,8 @@ def main() -> int:
             payload["context"] = ctx
         if args.output_type:
             payload["output-type"] = args.output_type
+        if event_value:
+            payload["event"] = event_value
 
         # Optional parse-input: build payload identical to Telegram builder and merge
         if args.parse_input:
@@ -667,7 +678,8 @@ def main() -> int:
         # Execute: prefer payload-only interpretation when exactly one selector is present.
         selectors = [str(getattr(args, k) or "").strip() for k in ("project", "agent", "prompt", "target")]
         sel_count = sum(1 for s in selectors if s)
-        if sel_count == 1:
+        event_present = bool(event_value)
+        if sel_count == 1 or event_present:
             kwargs, err = call_api.api_interpret_exec_payload(payload)
             if err:
                 _emit_output(err, getattr(args, "format", "json"))
@@ -682,6 +694,7 @@ def main() -> int:
                 prompt=(args.prompt or None),
                 target=(args.target or None),
                 input=_json.dumps(payload, ensure_ascii=False),
+                event=(event_value or None),
                 session_id=((args.session_id or None) if hasattr(args, "session_id") else None),
                 echo=False,
             )
@@ -699,6 +712,7 @@ def main() -> int:
     p_exec.add_argument("--content-item", action="append", help="Content item (JSON or URL or text). Repeat for multiple items.")
     p_exec.add_argument("--output-type", default="", help="Desired output type (e.g., html)")
     p_exec.add_argument("--session-id", default="", help="Override session id (format: chat or chat:thread)")
+    p_exec.add_argument("--event", default="", help="Event name to include in the payload (short-circuits execution)")
     p_exec.add_argument("--echo", action="store_true", help="Print the payload and exit (no execution)")
     p_exec.add_argument("--resolved", action="store_true", help="Include resolved selection snapshot in echo output")
     p_exec.add_argument("--print-instructions", action="store_true", help="Print the instructions for the selection and exit")
