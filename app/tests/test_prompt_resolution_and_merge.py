@@ -25,7 +25,7 @@ def test_list_includes_aliases_for_ainewsaggr():
 def test_scan_project_agents_prompts_from_agent_yaml():
     # DialogPostAnalysis defines prompts in its agent.yaml
     from call.lib import discovery as disc
-    base = Path("c:/home/strato-space/agent/UxFab")
+    base = Path("agent/UxFab")
     items = disc.scan_project_agents(base)
     dpa = next(a for a in items if a.get("name") == "DialogPostAnalysis")
     assert set(dpa.get("prompts") or []) >= {"33-Questioning", "34-CollectUnresolvedEscalationItems"}

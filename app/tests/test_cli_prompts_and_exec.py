@@ -9,7 +9,7 @@ from pathlib import Path
 
 def _repo_root() -> str:
     # this file: call/app/tests/test_cli_prompts_and_exec.py
-    # repo root is three levels up from call/app/tests -> c:/home/strato-space
+    # repo root is three levels up from call/app/tests -> .
     return str(Path(__file__).resolve().parents[3])
 
 

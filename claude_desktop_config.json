@@ -5,7 +5,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "D:/home/strato-space"
+        "~"
       ],
       "env": {}
     },
@@ -21,7 +21,7 @@
       "command": "uv",
       "args": [
         "--directory",
-        "D:/home/strato-space/telegram-mcp",
+        "telegram-mcp",
         "run",
         "main.py"
       ]
@@ -30,7 +30,7 @@
       "command": "uv",
       "args": [
         "--directory",
-        "D:/home/strato-space/voice",
+        "voice",
         "run",
         "-m",
         "mcp_voicebot.server"
@@ -40,7 +40,7 @@
       "command": "uvx",
       "args": [
         "--env-file",
-        "/home/strato-space/call/.env",
+        "call/.env",
         "--from",
         "git+https://github.com/strato-space/mcp-google-sheets@main",
         "mcp-google-sheets"

@@ -3,16 +3,16 @@ mcpServers:
   # How to update Claude Desktop config from this file
   # 1) Take only entries with 'enabled: true' below.
   # 2) Build JSON with `mcpServers` entries mapping command/args/serverUrl.
-  # 3) Replace all '/home/strato-space' with 'D:/home/strato-space' (Windows).
+  # 3) Script uses current directory as mcp filesystem root.
   # 4) Save to %APPDATA%\Claude\claude_desktop_config.json
   # 5) Optionally keep a local copy at call/claude_desktop_config.json
   # ---------------------------------------------------------------------------
   
-  # npx -y @modelcontextprotocol/server-filesystem /home/strato-space
+  # npx -y @modelcontextprotocol/server-filesystem .
   fs:
     enabled: true
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/strato-space"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
     env: {}
 
   # npx -y @modelcontextprotocol/server-sequential-thinking
@@ -22,29 +22,29 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
-  # uv --directory /home/strato-space/telegram-mcp run main.py
-  # note: the app should load /home/strato-space/call/.env itself (e.g., via python-dotenv)
+  # uv --directory telegram-mcp run main.py
+  # note: the app should load call/.env itself (e.g., via python-dotenv)
   telegram-mcp:
     enabled: false
     command: uv
     args:
       - --directory
-      - /home/strato-space/telegram-mcp
+      - telegram-mcp
       - run
       - main.py
 
-  # uv --directory /home/strato-space/voice run -m mcp_voicebot.server
+  # uv --directory voice run -m mcp_voicebot.server
   voice:
     enabled: true
     command: uv
     args:
       - --directory
-      - /home/strato-space/voice
+      - voice
       - run
       - -m
       - mcp_voicebot.server
 
-  # uvx --env-file /home/strato-space/call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
+  # uvx --env-file call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
   gsh:
     # Google Sheets MCP (remote or local)
     # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
@@ -53,7 +53,7 @@ mcpServers:
     command: uvx
     args:
       - --env-file
-      - /home/strato-space/call/.env
+      - call/.env
       - --from
       - git+https://github.com/strato-space/mcp-google-sheets@main
       - mcp-google-sheets
@@ -70,15 +70,15 @@ mcpServers:
     command: python
     args: ["-m", "voice.src.mcp_voicebot.server"]
 
-  # uvx --env-file D:/home/strato-space/prompt/.env mcp-server-git --repository D:/home/strato-space/server
+  # uvx --env-file D:prompt/.env mcp-server-git --repository D:server
   git-server-local:
     command: uvx
-    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/server"]
+    args: ["--env-file", "D:prompt/.env", "mcp-server-git", "--repository", "D:server"]
 
-  # uvx --env-file D:/home/strato-space/prompt/.env mcp-server-git --repository D:/home/strato-space/rms
+  # uvx --env-file D:prompt/.env mcp-server-git --repository D:rms
   git-rms-local:
     command: uvx
-    args: ["--env-file", "D:/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "D:/home/strato-space/rms"]
+    args: ["--env-file", "D:prompt/.env", "mcp-server-git", "--repository", "D:rms"]
 
   # npx -y @modelcontextprotocol/server-memory
   memory-local:
@@ -100,15 +100,15 @@ mcpServers:
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "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"
 
-  # uvx --env-file /home/strato-space/prompt/.env mcp-server-git --repository /home/strato-space/empty
+  # uvx --env-file prompt/.env mcp-server-git --repository empty
   git-empty-local:
     command: uvx
-    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/empty"]
+    args: ["--env-file", "prompt/.env", "mcp-server-git", "--repository", "empty"]
 
-  # uvx --env-file /home/strato-space/prompt/.env mcp-server-git --repository /home/strato-space/prompt
+  # uvx --env-file prompt/.env mcp-server-git --repository prompt
   git-prompt-local:
     command: uvx
-    args: ["--env-file", "/home/strato-space/prompt/.env", "mcp-server-git", "--repository", "/home/strato-space/prompt"]
+    args: ["--env-file", "prompt/.env", "mcp-server-git", "--repository", "prompt"]
 
   # docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
   github-mcp-server:

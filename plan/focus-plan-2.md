@@ -27,7 +27,7 @@
 
 - [x] UxCreator: все промпты переведены на плоский каталог `memories/` и Markdown‑выходы (`*.md`).
 - [x] Добавлены явные `input.files` и `output.files` для чейнинга между шагами.
-- [x] Framework (`AgentFab/framework.yaml`): стандарт памяти — `/home/strato-space/prompt/<Project>/<AgentName>/memories/`; контракт `files_contract` с `memories/*.md`.
+- [x] Framework (`AgentFab/framework.yaml`): стандарт памяти — `prompt/<Project>/<AgentName>/memories/`; контракт `files_contract` с `memories/*.md`.
 - [x] AgentFab (`AgentFab/agent.yaml`): рекомендации обновлены на `files_contract.inputs/outputs`.
 - [x] BusinessAnalyticAgent: путь памяти `/memories`, контракт `files_contract`, выходы ограничены `*.md`, диаграмма обновлена.
 - [x] PromptSpec шаблон: заменён `context.artifacts` → `context.files`, добавлены `input.files` и `output.files` с `memories/*.md`.

@@ -90,7 +90,7 @@ if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
 #   TELEGRAM_THREAD_ID   - topic thread id in supergroup (int)
 #
 # Run with: pytest -q call/app/tests/test_telegram_send.py -k send --maxfail=1
-# Ensure your venv is used: D:\home\strato-space\.venv\Scripts\python.exe -m pytest ...
+# Ensure your venv is used: .venv\Scripts\python.exe -m pytest ...
 
 def _env_token_chat_thread() -> tuple[str, str, Optional[int]]:
     token = os.getenv("TELEGRAM_BOT_TOKEN")

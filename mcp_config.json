@@ -5,9 +5,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:/home/strato-space",
-        "C:\\home\\strato-space",
-        "C:\\Users\\Leader\\PycharmProjects"
+        "C:/home/strato-space"
       ],
       "env": {}
       },
@@ -20,7 +18,7 @@
       "command": "uvx",
       "args": [
         "--env-file",
-        "D:\\home\\strato-space\\call\\.env",
+        "~\\call\\.env",
         "--from",
         "git+https://github.com/strato-space/mcp-google-sheets@main",
         "mcp-google-sheets"
@@ -34,20 +32,20 @@
       "command": "uvx",
       "args": [
         "--env-file",
-        "D:\\home\\strato-space\\prompt\\.env",
+        "~\\prompt\\.env",
         "mcp-server-git",
         "--repository",
-        "D:\\home\\strato-space\\server"
+        "~\\server"
       ]
     },
     "git-rms-local": {
       "command": "uvx",
       "args": [
         "--env-file",
-        "D:\\home\\strato-space\\prompt\\.env",
+        "~\\prompt\\.env",
         "mcp-server-git",
         "--repository",
-        "D:\\home\\strato-space\\rms"
+        "~\\rms"
       ]
     },
     
@@ -90,12 +88,12 @@
     
     "git-empty-local": {
       "command": "uvx",
-      "args": ["--env-file", "C:\\home\\strato-space\\prompt\\.env", "mcp-server-git", "--repository", "C:\\home\\strato-space\\empty"]
+      "args": ["--env-file", "~\\prompt\\.env", "mcp-server-git", "--repository", "~\\empty"]
     },
 
     "git-prompt-local": {
       "command": "uvx",
-      "args": ["--env-file", "C:\\home\\strato-space\\prompt\\.env", "mcp-server-git", "--repository", "C:\\home\\strato-space\\prompt"]
+      "args": ["--env-file", "~\\prompt\\.env", "mcp-server-git", "--repository", "~\\prompt"]
     },
 
 

@@ -217,7 +217,7 @@ py -m call.cli.main --
 usage: main.py [-h] [--json-logs] [--debug]
                {agents,list,projects,call,prompts,reload,exec,clear-session} ...
 main.py: error: the following arguments are required: cmd
-(.venv) PS C:\home\strato-space> py -m call.cli.main --help
+(.venv) PS #> py -m call.cli.main --help
 usage: main.py [-h] [--json-logs] [--debug]
                {agents,list,projects,call,prompts,reload,exec,clear-session} ...
 
@@ -508,7 +508,7 @@ pytest call
 ====================================== test session starts ======================================= 
 platform win32 -- Python 3.13.7, pytest-8.4.2, pluggy-1.6.0
 benchmark: 5.1.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
-rootdir: C:\home\strato-space\call
+rootdir: ~/call
 configfile: pytest.ini
 plugins: anyio-4.10.0, benchmark-5.1.0, cov-7.0.0
 collected 108 items
