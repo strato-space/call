@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-28
+
+- **Docs:** Added `AGENTS.md` with environment, repo layout, and workflow guidance for Codex-based automation.
+- **README:** Documented the `tools/repos.sh --codex` preset that provisions `/workspace/.venv` and ensures sibling repositories are available in `/workspace/`.
+- **Docs:** Expanded the contributor orientation to cover the Actions REST API, MCP server, Telegram bot, Windsurf settings, credentials wallet, pinned requirements, and MCP config presets.
+- **Docs:** Documented preferred engineering principles (KISS, SOLID with Dependency Injection, focused helpers, explicit failures) in `AGENTS.md` and summarized them in the README.
+- **Docs:** Clarified that every exception and I/O error must be logged even when execution continues, reinforcing observability expectations.
+
 ## 2025-09-27
 
 - **MCP config loader:** Renamed `_load_yaml` to `_load_mcp_yaml_config()` in `call/app/call.py` to scope its usage to MCP configuration parsing and updated callers/tests accordingly.
