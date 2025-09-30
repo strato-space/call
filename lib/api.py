@@ -1545,17 +1545,14 @@ async def call_async(
         pass
 
     # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
-    try:
-        cfg, cfg_err = build_runnable_instructions_config(
-            project=project,
-            agent=agent,
-            prompt=prompt,
-            target=target,
-            input=input,
-            attributes_override=(attribute_overrides or None),
-        )
-    except Exception:
-        cfg, cfg_err = None, None
+    cfg, cfg_err = build_runnable_instructions_config(
+        project=project,
+        agent=agent,
+        prompt=prompt,
+        target=target,
+        input=input,
+        attributes_override=(attribute_overrides or None),
+    )
     if isinstance(cfg_err, dict):
         # Preserve original error envelope (status/code) from resolve_agent
         try:
@@ -1569,10 +1566,9 @@ async def call_async(
     # cfg is ready; dump a normalized snapshot in DEBUG
     try:
         from dataclasses import asdict as _asdict
-        snap = _asdict(cfg) if cfg is not None else {}
-        if cfg is not None:
-            snap["instructions_len"] = len(cfg.instructions or "")
-            snap.pop("instructions", None)
+        snap = _asdict(cfg)
+        snap["instructions_len"] = len(cfg.instructions or "")
+        snap.pop("instructions", None)
         debug_print("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False, indent=2))
     except Exception:
         pass
@@ -1586,24 +1582,18 @@ async def call_async(
         pass
 
     # Proceed with cfg-driven run; build 'resolved' from cfg
-    chosen_id = (getattr(cfg, "id", None) if cfg else None) or ""
-    chosen_project = (getattr(cfg, "project", None) if cfg else None) or (project or "")
     # Resolved descriptor for response/echo (new schema)
     resolved = {
-        "project": chosen_project,
-        # Back-compat alias for tests expecting 'name'
-        "name": ((getattr(cfg, "agent", None) if cfg else None) or (agent or None) or (getattr(cfg, "id", None) if cfg else None)),
-        "id": (getattr(cfg, "id", None) if cfg else None),
-        "agent": (getattr(cfg, "agent", None) if cfg else None),
-        "prompt": (getattr(cfg, "prompt", None) if cfg else None),
+        "id": cfg.id,
+        "type": cfg.type,
+        "project": cfg.project,
+        "agent": cfg.agent,
+        "prompt": cfg.prompt,
         # path is repo-relative (e.g., 'agent/Proj/Agent/agent.md' or 'prompt/ready/...')
-        "path": (getattr(cfg, "path", None) if cfg else None),
+        "path": cfg.path,
         # Optional helpful fields
-        "url": (getattr(cfg, "url", None) if cfg else None),
-        "type": (getattr(cfg, "type", None) if cfg else None),
-        "goal": (getattr(cfg, "goal", None) if cfg else None),
-        "aliases": [],
-        "prompts": [],
+        "url": cfg.url,
+        "goal": cfg.goal,
     }
     # For project selections, resolved.agent should be null
     try:
@@ -1674,8 +1664,7 @@ async def call_async(
                 pass
 
             # Use the app layer context manager to build and run the agent once with a ready config.
-            cm = app_call.build_and_run_agent
-            async with cm(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
+            async with app_call.build_and_run_agent(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
                 final_output = getattr(_cfg, "_last_final_output", None)
                 try:
                     actual_sid = getattr(_session, "id", None)
@@ -1701,18 +1690,18 @@ async def call_async(
                     details = None
             if status == 403:
                 return _error_payload(
-                    agent=(chosen_id or ""),
+                    agent=(cfg.id or ""),
                     input=(input or ""),
                     exc="Tracing client request forbidden",
                     status=403,
                     echo=echo,
                     debug=debug,
                     code=err_code,
-                    project=chosen_project,
+                    project=cfg.project,
                     details=details,
                     session_id=(session_id or None),
                 )
-            return _error_payload(agent=(chosen_id or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=chosen_project, details=details, session_id=(session_id or None))
+            return _error_payload(agent=(cfg.id or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=cfg.project, details=details, session_id=(session_id or None))
     finally:
         if dump_task is not None:
             try:
@@ -1746,7 +1735,7 @@ async def call_async(
             echo=echo,
             debug=debug,
             code=err_code,
-            project=chosen_project,
+            project=cfg.project,
             session_id=(session_id or None),
         )
 
@@ -1766,11 +1755,11 @@ async def call_async(
 
     return {
         "ok": True,
-        "agent": (chosen_id if isinstance(chosen_id, str) else ""),
-        "agent_path": (getattr(cfg, "path", None) if cfg else None),
+        "agent": cfg.id,
+        "agent_path": cfg.path,
         "final_output": final_output,
         # echo flag included for callers that want to inspect behavior upstream
-        "echo": bool(echo),
+        "echo": echo,
         "resolved": resolved,
         **({"session_id": session_id_out} if session_id_out else {}),
     }
