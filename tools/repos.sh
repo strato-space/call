@@ -387,6 +387,8 @@ if [ "$DO_PULL" = true ]; then
       echo "Created cache directory: $CACHE_ROOT"
     fi
   fi
+
+  python -m call.cli.main reload
 fi
 
 if [ "$DO_PIP" = true ]; then
@@ -411,5 +413,3 @@ if [ "$DO_MCP" = true ]; then
     echo "After installing nvm, install Node.js (e.g., 'nvm install --lts' && 'nvm use --lts') and rerun with --mcp as needed."
   fi
 fi
-
-python -m call.cli.main reload
