@@ -290,13 +290,24 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Determine base directory (support Git Bash/WSL paths)
-BASE_DIR="/home/strato-space"
-if [ ! -d "$BASE_DIR" ]; then
-  BASE_DIR="/d/home/strato-space"
+# Determine base directory relative to this script (support symlinks)
+# Resolve the entry point, even if the script is sourced via a symlink.
+SOURCE="${BASH_SOURCE[0]}"
+# Follow symlinks repeatedly until we land on a real file.
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+# Canonical path to the directory containing the script file.
+if ! SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"; then
+  echo "Unable to determine script directory." >&2
+  exit 1
 fi
-if [ ! -d "$BASE_DIR" ]; then
-  BASE_DIR="$(pwd)"
+# Two levels up from call/tools -> repo root (call sits one level above).
+if ! BASE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"; then
+  echo "Unable to determine base directory from script path." >&2
+  exit 1
 fi
 cd "$BASE_DIR"
 
@@ -308,7 +319,11 @@ echo "Working in: $PWD"
 #   git -C "c:\\home\\strato-space" config core.eol lf
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    WIN_ROOT="c:/home/strato-space"
+    WIN_ROOT="$BASE_DIR"
+    if command_exists cygpath; then
+      # Convert POSIX path to Windows absolute path for Git commands.
+      WIN_ROOT="$(cygpath -am "$BASE_DIR")"
+    fi
     if [ -d "$WIN_ROOT/.git" ]; then
       git -C "$WIN_ROOT" config core.autocrlf false || true
       git -C "$WIN_ROOT" config core.eol lf || true
