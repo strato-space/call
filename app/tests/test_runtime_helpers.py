@@ -80,6 +80,74 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_tools_for_cfg_resolves_file_search_ids(monkeypatch):
+    created = {}
+
+    class DummyFileSearchTool:
+        def __init__(self, *, vector_store_ids):
+            created["ids"] = list(vector_store_ids)
+
+    async def fake_resolve(vs_val):
+        created["input"] = vs_val
+        return ["vs_123", "BusinessAnalyticAgent"]
+
+    monkeypatch.setattr(app_call, "FileSearchTool", DummyFileSearchTool, raising=False)
+    monkeypatch.setattr(app_call, "resolve_vector_stores", fake_resolve, raising=False)
+
+    cfg = SimpleNamespace(tools=["FileSearchTool[BusinessAnalyticAgent]"])
+
+    tools = await app_call.build_tools_for_cfg(cfg)
+
+    assert created["input"] == "BusinessAnalyticAgent"
+    assert len(tools) == 1
+    assert created["ids"] == ["vs_123"]
+
+
+def test_extract_file_search_payload_variants():
+    helper = app_call._extract_file_search_payload
+
+    assert helper("FileSearchTool[foo]") == "foo"
+    assert helper(" FileSearchTool[vs_1, vs_2] ") == ["vs_1", "vs_2"]
+    assert helper("FileSearchTool[  vs_9   ]") == "vs_9"
+    assert helper("FileSearchTool[]") is None
+    assert helper("OtherTool[vs_1]") is None
+
+
+def test_get_tool_by_name_direct_vector_ids(monkeypatch):
+    created = {}
+
+    class DummyFileSearchTool:
+        def __init__(self, *, vector_store_ids):
+            created["ids"] = list(vector_store_ids)
+
+    monkeypatch.setattr(app_call, "FileSearchTool", DummyFileSearchTool, raising=False)
+
+    tool = app_call.get_tool_by_name("FileSearchTool[vs_1, vs_2]")
+
+    assert isinstance(tool, DummyFileSearchTool)
+    assert created["ids"] == ["vs_1", "vs_2"]
+
+
+@pytest.mark.asyncio
+async def test_build_tools_for_cfg_skips_when_no_ids(monkeypatch):
+    class DummyFileSearchTool:
+        def __init__(self, *, vector_store_ids):  # pragma: no cover - should not be called
+            raise AssertionError("FileSearchTool should not be constructed")
+
+    async def fake_resolve(vs_val):
+        return ["NotAnId"]
+
+    monkeypatch.setattr(app_call, "FileSearchTool", DummyFileSearchTool, raising=False)
+    monkeypatch.setattr(app_call, "resolve_vector_stores", fake_resolve, raising=False)
+
+    cfg = SimpleNamespace(tools=["FileSearchTool[MissingStore]"])
+
+    tools = await app_call.build_tools_for_cfg(cfg)
+
+    assert tools == []
+
+
+@pytest.mark.asyncio
 async def test_embed_files_in_user_input_adds_base64(monkeypatch):
     calls = []
     content = b"file-bytes"
