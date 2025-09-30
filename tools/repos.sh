@@ -3,13 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./tools/repos.sh [--pull] [--pip] [--mcp] [--all]
+Usage: ./tools/repos.sh [--pull] [--pip] [--mcp] [--all] [--codex]
 
 Flags:
   --pull       Clone or update repositories listed in this script.
   --pip        Ensure .venv exists and install Python dependencies from requirements files.
   --mcp        Install uv and JavaScript MCP servers (filesystem, sequential-thinking).
   --all        Run all workflows: --pull, --pip, and --mcp.
+  --codex      Run all workflows but skip cloning/updating the call repo.
   -h, --help   Show this help message.
 EOF
 }
@@ -271,6 +272,7 @@ setup_mcp() {
 DO_PULL=false
 DO_PIP=false
 DO_MCP=false
+DO_CODEX=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -284,6 +286,12 @@ while [[ $# -gt 0 ]]; do
       DO_MCP=true
       ;;
     --all)
+      DO_PULL=true
+      DO_PIP=true
+      DO_MCP=true
+      ;;
+    --codex)
+      DO_CODEX=true
       DO_PULL=true
       DO_PIP=true
       DO_MCP=true
@@ -384,7 +392,11 @@ repo() {
 
 if [ "$DO_PULL" = true ]; then
   log_section "Running --pull workflow"
-  repo https://github.com/strato-space/call
+  if [ "$DO_CODEX" != true ]; then
+    repo https://github.com/strato-space/call
+  else
+    echo "Skipping call repository in --codex mode."
+  fi
   repo https://github.com/strato-space/agent
   repo https://github.com/strato-space/prompt
   repo https://github.com/strato-space/server
