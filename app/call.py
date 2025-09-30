@@ -389,17 +389,49 @@ async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict 
             pass
     return servers, cfg_yaml
 
+def _extract_file_search_payload(name: str) -> Any | None:
+    """Parse ``FileSearchTool[...]`` expressions into a payload."""
+
+    if not isinstance(name, str):
+        return None
+
+    tool_name = name.strip()
+    if not tool_name:
+        return None
+
+    if not (tool_name.startswith("FileSearchTool[") and tool_name.endswith("]")):
+        return None
+
+    inner = tool_name[len("FileSearchTool["):-1].strip()
+    if not inner:
+        return None
+
+    parts = [part.strip() for part in inner.split(",") if part.strip()]
+    if not parts:
+        return inner
+    if len(parts) == 1:
+        return parts[0]
+    return parts
+
+
 def get_tool_by_name(name: str) -> Any:
     tool_name = (name or "").strip()
     if not tool_name:
         return None
 
-    # Handle FileSearchTool[VectorStoreName]
-    if tool_name.startswith("FileSearchTool[") and tool_name.endswith("]"):
-        vs_name = tool_name[len("FileSearchTool["):-1].strip()
-        if vs_name:
+    payload = _extract_file_search_payload(tool_name)
+    if payload is not None:
+        if isinstance(payload, str):
+            ids = [payload]
+        else:
             try:
-                return FileSearchTool(vector_store_ids=[vs_name])
+                ids = list(payload)
+            except TypeError:
+                ids = []
+        valid_ids = [vs_id for vs_id in (id_.strip() for id_ in ids if isinstance(id_, str)) if vs_id.startswith("vs_")]
+        if valid_ids:
+            try:
+                return FileSearchTool(vector_store_ids=valid_ids)
             except Exception:
                 return None
         return None
@@ -435,6 +467,28 @@ async def build_tools_for_cfg(cfg) -> list[Any]:
     for name in configured_tools:
         if name in seen:
             continue
+        tool_obj = None
+
+        payload = _extract_file_search_payload(name)
+        if payload is not None:
+            resolved_ids = await resolve_vector_stores(payload)
+            valid_ids: list[str] = []
+            for vs_id in resolved_ids:
+                vs_id_str = (vs_id or "").strip()
+                if vs_id_str.startswith("vs_") and vs_id_str not in valid_ids:
+                    valid_ids.append(vs_id_str)
+
+            if valid_ids:
+                try:
+                    tool_obj = FileSearchTool(vector_store_ids=valid_ids)
+                except Exception:
+                    tool_obj = None
+            # Skip fallback to get_tool_by_name regardless of resolution result
+            if tool_obj is not None:
+                tool_instances.append(tool_obj)
+                seen.add(name)
+            continue
+
         tool_obj = get_tool_by_name(name)
         if tool_obj is not None:
             tool_instances.append(tool_obj)
