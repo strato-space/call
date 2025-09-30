@@ -402,6 +402,11 @@ if [ "$DO_PULL" = true ]; then
   fi
 
   python -m call.cli.main reload
+
+  if command_exists systemctl; then
+    log_section "Restarting call services"
+    sudo systemctl restart actions@call.service mcp@call.service
+  fi
 fi
 
 if [ "$DO_PIP" = true ]; then
