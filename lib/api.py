@@ -738,16 +738,26 @@ def build_runnable_instructions_config(
     elif isinstance(resolved_prompts, _bi.str) and resolved_prompts.strip():
         resolved_prompts_list = [resolved_prompts.strip()]
 
-    if resolved_prompt and prompt_row is None and resolved_prompt not in resolved_prompts_list:
-        return None, _error_payload(
-            agent=(resolved_agent or agent or ""),
-            input=(input or ""),
-            exc="No prompt found matching the provided filters",
-            status=404,
-            code="NO_DATA_FOUND",
-            project=resolved_project or project,
-            details={"prompt": resolved_prompt, "agent": resolved_agent or agent or "", "project": resolved_project or project or ""},
-        )
+    requested_prompt = resolved_prompt
+
+    if resolved_prompt and prompt_row is None:
+        if resolved_prompts_list:
+            if resolved_prompt not in resolved_prompts_list:
+                return None, _error_payload(
+                    agent=(resolved_agent or agent or ""),
+                    input=(input or ""),
+                    exc="No prompt found matching the provided filters",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=resolved_project or project,
+                    details={
+                        "prompt": resolved_prompt,
+                        "agent": resolved_agent or agent or "",
+                        "project": resolved_project or project or "",
+                    },
+                )
+        else:
+            resolved_prompt = ""
 
     resolved_has_agent_source = False
     if isinstance(resolved, dict) and resolved_agent:
@@ -809,9 +819,9 @@ def build_runnable_instructions_config(
             project=resolved_project or project,
         )
 
-    if resolved_prompt or prompt_row:
+    if prompt_row:
         selected_kind = "prompt"
-    elif resolved_agent or agent_row:
+    elif agent_row or resolved_agent:
         selected_kind = "agent"
     else:
         selected_kind = "project"
@@ -863,7 +873,7 @@ def build_runnable_instructions_config(
 
     project_value = _row_value(project_row, "project", resolved_project)
     agent_value = _row_value(agent_row, "agent", resolved_agent)
-    prompt_value = _row_value(prompt_row, "prompt", resolved_prompt)
+    prompt_value = _row_value(prompt_row, "prompt", requested_prompt)
 
     selected_id = selected_row.get("id") or selected_row.get("target") or ""
     path_hint = selected_row.get("rel_path") or selected_row.get("path") or ""
@@ -881,7 +891,7 @@ def build_runnable_instructions_config(
     elif selected_kind == "project":
         prompt_field = ""
     else:
-        prompt_field = str(resolved_prompt or prompt_value or "")
+        prompt_field = str(requested_prompt or prompt_value or "")
 
     cfg = RunnableConfig(
         id=str(selected_id or ""),
