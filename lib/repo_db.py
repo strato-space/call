@@ -160,8 +160,20 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
                 agent_entry = a
                 break
         if agent_entry is None:
-            agent_entry = {"type": "agent", "id": "", "name": ag, "aliases": [], "prompts": [], "path": path if ag and not pr else "", "card": card if ag and not pr else ""}
+            agent_entry = {
+                "type": "agent",
+                "id": tgt or ag or "",
+                "name": ag,
+                "aliases": [],
+                "prompts": [],
+                "path": path if ag and not pr else "",
+                "card": card if ag and not pr else "",
+            }
             agents_list.append(agent_entry)
+        current_id = agent_entry.get("id")
+        desired_id = tgt or current_id or ag
+        if desired_id and desired_id != current_id:
+            agent_entry["id"] = desired_id
         # Add prompt if present
         if pr:
             prompts: List[str] = agent_entry["prompts"]  # type: ignore
