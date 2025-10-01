@@ -1475,7 +1475,71 @@ def build_runnable_instructions_config(
                     pass
 
     return cfg, None
-    
+
+def _error_payload_event(
+    event: str,
+    exc: BaseException | str,
+    *,
+    status: int | None = None,
+    echo: bool = False,
+    debug: bool = False,
+    code: Optional[str] = None,
+    options: Optional[List[Dict[str, Any]]] = None,
+    project: Optional[str] = None,
+    session_id: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if isinstance(exc, BaseException):
+        msg_attr = getattr(exc, "message", None)
+        message = msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        code_attr = getattr(exc, "code", None)
+        if isinstance(code_attr, int):
+            effective_status = code_attr
+        elif isinstance(code_attr, str) and code_attr.isdigit():
+            effective_status = int(code_attr)
+        else:
+            effective_status = int(status or 400)
+        err_attr = getattr(exc, "error", None)
+        error_obj = err_attr if isinstance(err_attr, dict) else {"message": message}
+    else:
+        message = str(exc) if exc is not None else "Error"
+        effective_status = int(status or 400)
+        error_obj = {"message": message}
+
+    if isinstance(error_obj, dict):
+        err_msg = error_obj.get("message")
+        if isinstance(err_msg, str) and err_msg.strip():
+            message = err_msg.strip()
+
+    payload: Dict[str, Any] = {
+        "ok": False,
+        "event": event,
+        "error_code": effective_status,
+        "description": message,
+        "error": error_obj,
+    }
+    if session_id:
+        payload["session_id"] = session_id
+    if options is not None:
+        payload["options"] = options
+    if code is not None:
+        payload["code"] = code
+    if project is not None:
+        payload["project"] = project
+    payload["echo"] = bool(echo)
+
+    if debug:
+        try:
+            import traceback
+            payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
+        except Exception:
+            pass
+
+    if details is not None:
+        payload["details"] = details
+
+    return payload
+
 def _error_payload(
     agent: str,
     input: str,
@@ -1599,7 +1663,15 @@ async def call_async(
     """
     # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
     if event is not None:
-        return {"ok": True, "event": str(event), "targets": []}
+        event_str = str(event)
+        if event_str.strip().lower() == "error_test":
+            return _error_payload_event(
+                event = event_str,
+                exc="Synthetic test error",
+                status=500,
+                code="FAKE_EVENT_ERROR",
+            )
+        return {"ok": True, "event": event_str, "targets": []}
 
     attribute_overrides = _normalize_attribute_overrides(attributes)
     token_override = None

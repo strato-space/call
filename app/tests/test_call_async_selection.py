@@ -96,6 +96,24 @@ def test_call_event_ack(monkeypatch):
     assert sys.modules["call.app.call"] is marker
 
 
+def test_call_event_error_test(monkeypatch):
+    api = importlib.import_module("call.lib.api")
+
+    import sys
+    marker = object()
+    monkeypatch.setitem(sys.modules, "call.app.call", marker)
+
+    res = api.call(event="error_test", agent="DemoAgent", project="DemoProj")
+    assert isinstance(res, dict)
+    assert res.get("ok") is False
+    assert res.get("code") == "FAKE_EVENT_ERROR"
+    assert res.get("error_code") == 500
+    assert res.get("agent") == "DemoAgent"
+    assert res.get("project") == "DemoProj"
+
+    assert sys.modules["call.app.call"] is marker
+
+
 def test_api_interpret_exec_payload_event_only():
     api = importlib.import_module("call.lib.api")
 
