@@ -65,6 +65,7 @@ def _serialize_model_item(item: Any) -> Dict[str, Any]:
 
 _SNAPSHOT_ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 _TEXT_MODE_MARKERS = ("text", "chat", "completion")
+
 _NON_TEXT_IDENTIFIER_MARKERS = (
     "embedding",
     "embed",
@@ -137,6 +138,7 @@ def _model_supports_text_output(item: Dict[str, Any]) -> bool:
         normalized = type_value.strip().lower()
         if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
             return True
+
     identifier = item.get("id") or item.get("name")
     try:
         identifier_str = str(identifier).strip()
@@ -148,6 +150,7 @@ def _model_supports_text_output(item: Dict[str, Any]) -> bool:
             return False
         if any(marker in identifier_lower for marker in _TEXT_IDENTIFIER_MARKERS):
             return True
+
     return False
 
 

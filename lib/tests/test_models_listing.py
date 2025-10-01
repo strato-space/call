@@ -66,6 +66,7 @@ def test_models_filters_out_non_text_and_snapshot_entries(monkeypatch):
     assert ids == ["gpt-text", "gpt-chat"]
 
 
+
 def test_models_identifier_fallback_includes_text_like_ids(monkeypatch):
     from call.lib import api as call_api
 
@@ -99,3 +100,4 @@ def test_models_identifier_fallback_includes_text_like_ids(monkeypatch):
 
     ids = [item["id"] for item in items]
     assert ids == ["gpt-4o-mini", "o1-preview"]
+
