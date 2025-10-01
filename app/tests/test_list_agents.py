@@ -11,11 +11,11 @@ def test_list_hierarchical(monkeypatch):
         "list",
         lambda **kwargs: [
             {"name": "AgentFab", "agents": [
-                {"type": "agent", "id": "", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"}
+                {"type": "agent", "id": "AgentFab", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"}
             ]},
             {"name": "UxFab", "agents": [
-                {"type": "agent", "id": "", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
-                {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": [], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+                {"type": "agent", "id": "NewsAggr", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+                {"type": "agent", "id": "DialogSummary", "name": "DialogSummary", "aliases": [], "prompts": [], "path": "/p/UxFab/DialogSummary/agent.yaml"},
             ]},
         ],
         raising=True,
@@ -36,8 +36,8 @@ def test_list_filters_and_wildcards(monkeypatch):
 
     def _list(**kwargs):
         agents = [
-            {"type": "agent", "id": "", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
-            {"type": "agent", "id": "", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+            {"type": "agent", "id": "NewsAggr", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
+            {"type": "agent", "id": "DialogSummary", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
         ]
         agent_pat = (kwargs.get("agent") or "").strip()
         prompt_pat = (kwargs.get("prompt") or "").strip()
@@ -116,11 +116,11 @@ def test_list_agentfab_contains_core_agents(monkeypatch):
         "list",
         lambda **kwargs: [
             {"name": "AgentFab", "agents": [
-                {"type": "agent", "id": "", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"},
-                {"type": "agent", "id": "", "name": "BusinessAnalyticAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"},
-                {"type": "agent", "id": "", "name": "SelfReflection", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/SelfReflection/agent.yaml"},
-                {"type": "agent", "id": "", "name": "DiscoveryAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/DiscoveryAgent/agent.yaml"},
-                {"type": "agent", "id": "", "name": "StratoFormatter", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.md"},
+                {"type": "agent", "id": "AgentFab", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"},
+                {"type": "agent", "id": "BusinessAnalyticAgent", "name": "BusinessAnalyticAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"},
+                {"type": "agent", "id": "SelfReflection", "name": "SelfReflection", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/SelfReflection/agent.yaml"},
+                {"type": "agent", "id": "DiscoveryAgent", "name": "DiscoveryAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/DiscoveryAgent/agent.yaml"},
+                {"type": "agent", "id": "StratoFormatter", "name": "StratoFormatter", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.md"},
             ]}
         ],
         raising=True,
