@@ -725,6 +725,83 @@ def build_runnable_instructions_config(
             details=details,
         )
 
+    requested_prompt_id = (resolved_prompt or "").strip()
+
+    if requested_prompt_id and prompt_row is None:
+        try:
+            fallback_candidates = call_repo.find_prompts(
+                project=resolved_project or None,
+                agent=None,
+                prompt=requested_prompt_id,
+                state=None,
+                target=None,
+            )
+        except Exception:
+            fallback_candidates = []
+
+        valid_fallbacks: List[Dict[str, Any]] = []
+        for row in fallback_candidates or []:
+            if not isinstance(row, dict):
+                continue
+            pj = str(row.get("project") or "").strip()
+            ag_name = str(row.get("agent") or "").strip()
+            if not (pj and ag_name):
+                continue
+            valid_fallbacks.append(row)
+
+        if len(valid_fallbacks) > 1:
+            return None, _error_payload(
+                agent=(resolved_agent or agent or ""),
+                input=(input or ""),
+                exc="Multiple prompts matched your criteria",
+                status=400,
+                code="TOO_MANY_ROWS",
+                project=resolved_project or project,
+                options=valid_fallbacks[:20],
+                details={"prompt": requested_prompt_id},
+            )
+
+        if len(valid_fallbacks) == 1:
+            prompt_row = valid_fallbacks[0]
+            resolved_agent = prompt_row.get("agent") or resolved_agent
+            resolved_project = prompt_row.get("project") or resolved_project
+
+            if agent_row is None:
+                agent_name = prompt_row.get("agent")
+                project_name = prompt_row.get("project") or resolved_project
+                try:
+                    agent_candidates = call_repo.find_agents(
+                        project=project_name or None,
+                        agent=agent_name or None,
+                        target=None,
+                    )
+                except Exception:
+                    agent_candidates = []
+                if len(agent_candidates) == 1:
+                    agent_row = agent_candidates[0]
+            if project_row is None:
+                project_name = prompt_row.get("project") or resolved_project
+                try:
+                    project_candidates = call_repo.find_projects(
+                        project=project_name or None,
+                        target=None,
+                    )
+                except Exception:
+                    project_candidates = []
+                if len(project_candidates) == 1:
+                    project_row = project_candidates[0]
+
+        elif fallback_candidates:
+            return None, _error_payload(
+                agent=(resolved_agent or agent or ""),
+                input=(input or ""),
+                exc="Prompt metadata could not be parsed",
+                status=400,
+                code="BAD_CARD_FORMAT",
+                project=resolved_project or project,
+                details={"prompt": requested_prompt_id},
+            )
+
     resolved_prompts = resolved.get("prompts") if isinstance(resolved, dict) else None
     resolved_prompts_list = []
     if isinstance(resolved_prompts, _bi.list):
