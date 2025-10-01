@@ -1599,7 +1599,7 @@ async def call_async(
     """
     # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
     if event is not None:
-        return {"ok": True, "event": str(event), "agents": []}
+        return {"ok": True, "event": str(event), "targets": []}
 
     attribute_overrides = _normalize_attribute_overrides(attributes)
     token_override = None
