@@ -261,7 +261,7 @@ python -m call.cli.main exec --target Vasil3
 - **List prompts (HTTPS via nginx)**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/prompts" \
+  curl -sS "https://call-actions.stratospace.fun/prompts" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     | jq
   ```
@@ -269,7 +269,7 @@ python -m call.cli.main exec --target Vasil3
 - **List prompts filtered by project**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/prompts?project=AgentFab" \
+  curl -sS "https://call-actions.stratospace.fun/prompts?project=AgentFab" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     | jq
   ```
@@ -288,7 +288,7 @@ python -m call.cli.main exec --target Vasil3
 - **List available models**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/models" \
+  curl -sS "https://call-actions.stratospace.fun/models" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     | jq
   ```
@@ -298,7 +298,7 @@ python -m call.cli.main exec --target Vasil3
 - **Override the model for a `/call` request**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/call?name=DialogPostAnalysis&input=hello&model=gpt-4o-mini" \
+  curl -sS "https://call-actions.stratospace.fun/call?name=DialogPostAnalysis&input=hello&model=gpt-4o-mini" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     | jq
   ```
@@ -308,7 +308,7 @@ python -m call.cli.main exec --target Vasil3
 - **Notify runtime about an event**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/notify" \
+  curl -sS "https://call-actions.stratospace.fun/notify" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     -H "Content-Type: application/json" \
     --data '{
@@ -321,7 +321,7 @@ python -m call.cli.main exec --target Vasil3
 - **Exec payload with explicit model override**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/exec" \
+  curl -sS "https://call-actions.stratospace.fun/exec" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     -H "Content-Type: application/json" \
     --data '{
@@ -336,7 +336,7 @@ python -m call.cli.main exec --target Vasil3
 - **Execute an agent with JSON payload**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/exec" \
+  curl -sS "https://call-actions.stratospace.fun/exec" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     -H "Content-Type: application/json" \
     --data '{
@@ -347,7 +347,7 @@ python -m call.cli.main exec --target Vasil3
 - **Exec payload with mixed context sources**
 
   ```bash
-  curl -v "https://call-actions.stratospace.fun/exec" \
+  curl -sS "https://call-actions.stratospace.fun/exec" \
     -H "Authorization: Bearer 123123142356365864895789678967" \
     -H "Content-Type: application/json" \
     --data '{
