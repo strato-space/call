@@ -108,8 +108,8 @@ def test_call_event_error_test(monkeypatch):
     assert res.get("ok") is False
     assert res.get("code") == "FAKE_EVENT_ERROR"
     assert res.get("error_code") == 500
-    assert res.get("agent") == "DemoAgent"
-    assert res.get("project") == "DemoProj"
+    assert "agent" not in res
+    assert "project" not in res
 
     assert sys.modules["call.app.call"] is marker
 

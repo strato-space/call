@@ -1481,12 +1481,9 @@ def _error_payload_event(
     exc: BaseException | str,
     *,
     status: int | None = None,
-    echo: bool = False,
     debug: bool = False,
     code: Optional[str] = None,
     options: Optional[List[Dict[str, Any]]] = None,
-    project: Optional[str] = None,
-    session_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if isinstance(exc, BaseException):
@@ -1518,15 +1515,10 @@ def _error_payload_event(
         "description": message,
         "error": error_obj,
     }
-    if session_id:
-        payload["session_id"] = session_id
     if options is not None:
         payload["options"] = options
     if code is not None:
         payload["code"] = code
-    if project is not None:
-        payload["project"] = project
-    payload["echo"] = bool(echo)
 
     if debug:
         try:
@@ -1666,7 +1658,8 @@ async def call_async(
         event_str = str(event)
         if event_str.strip().lower() == "error_test":
             return _error_payload_event(
-                event = event_str,
+                event=event_str,
+                debug=debug,
                 exc="Synthetic test error",
                 status=500,
                 code="FAKE_EVENT_ERROR",
