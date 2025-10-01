@@ -111,6 +111,7 @@ The script uses current directory as the workspace root, applies Git LF/CRLF set
   - Hierarchical: `call.lib.api.list(project?, agent?, prompt?, state?, target?)`
   - Flat prompts: `call.lib.api.list_prompts(project?, agent?, prompt?, state?, target?)`
   - CLI supports output formats: `json | yaml | text`.
+  - Agent records populate `id` from the stored `target`, falling back to the agent name when no explicit target exists. CLI, Actions `/agents`, and the MCP agents tool rely on this identifier for stable selection.
 
 - Find helpers (arrays):
   - `call.lib.repo.find_projects(project?, target?)`

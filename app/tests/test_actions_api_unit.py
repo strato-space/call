@@ -103,7 +103,7 @@ def test_prompts_ok(monkeypatch, client: TestClient, auth_headers):
 def test_agents_ok(monkeypatch, client: TestClient, auth_headers):
     monkeypatch.setattr(main, "api_list", lambda **kwargs: [
         {"name": "UxFab", "type": "project", "agents": [
-            {"name": "DialogPostAnalysis", "aliases": [], "prompts": ["33-Questioning"], "path": "..."}
+            {"id": "DialogPostAnalysis", "name": "DialogPostAnalysis", "aliases": [], "prompts": ["33-Questioning"], "path": "..."}
         ]}
     ], raising=True)
 
