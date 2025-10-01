@@ -413,3 +413,107 @@ def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
     assert cfg is not None
     assert "ВАЖНО" in cfg.instructions
     assert cfg.instructions.strip().startswith("ВАЖНО")
+
+
+def test_builder_agent_attributes_do_not_include_project_metadata():
+    cfg, err = build_runnable_instructions_config(project="FanFab", agent="Vasil3")
+
+    assert err is None
+    assert cfg is not None
+    assert cfg.agent == "Vasil3"
+    assert cfg.project == "FanFab"
+
+    attrs = cfg.attributes
+    assert isinstance(attrs, dict)
+    assert attrs.get("model") == "gpt-5"
+    assert attrs.get("id") == "Vasil3"
+    assert "agents" not in attrs
+    assert "aliases" not in attrs
+
+
+def test_builder_prompt_attributes_only_inherit_model(monkeypatch, tmp_path):
+    project_path = tmp_path / "proj.md"
+    agent_path = tmp_path / "agent.md"
+    prompt_path = tmp_path / "prompt.md"
+
+    def write_card(path: Path, meta: str, prompt_body: str = ""):
+        path.write_text(
+            textwrap.dedent(
+                f"""
+                <!-- METADATA:START -->
+                ```yaml
+                {meta}
+                ```
+                <!-- METADATA:END -->
+                <!-- PROMPT:START -->
+                {prompt_body}
+                <!-- PROMPT:END -->
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+    write_card(
+        project_path,
+        """
+        model: gpt-project
+        model-settings-gpt-project:
+          temperature: 0.3
+        project-only: keep-out
+        """,
+        "project body",
+    )
+    write_card(
+        agent_path,
+        """
+        model: gpt-agent
+        model-settings-gpt-agent:
+          reasoning:
+            effort: high
+        agent-only: keep-out
+        """,
+        "agent body",
+    )
+    write_card(
+        prompt_path,
+        """
+        id: PromptTest
+        prompt-only: keep
+        """,
+        "prompt body",
+    )
+
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_projects",
+        lambda **_: [{"project": "Proj", "path": str(project_path), "target": str(project_path), "id": str(project_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_agents",
+        lambda **_: [{"project": "Proj", "agent": "Agent", "path": str(agent_path), "target": str(agent_path), "id": str(agent_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_prompts",
+        lambda **_: [{"project": "Proj", "agent": "Agent", "prompt": "PromptTest", "path": str(prompt_path), "target": str(prompt_path), "id": str(prompt_path)}],
+        raising=True,
+    )
+
+    cfg, err = build_runnable_instructions_config(project="Proj", agent="Agent", prompt="PromptTest")
+
+    assert err is None
+    assert cfg is not None
+    assert cfg.model == "gpt-agent"
+
+    attrs = cfg.attributes
+    assert attrs.get("id") == "PromptTest"
+    assert attrs.get("prompt-only") == "keep"
+    assert "agent-only" not in attrs
+    assert "project-only" not in attrs
+    assert attrs.get("model") == "gpt-agent"
+    assert attrs.get("model-settings-gpt-agent") == {"reasoning": {"effort": "high"}}
+    assert attrs.get("model-settings-gpt-project") == {"temperature": 0.3}

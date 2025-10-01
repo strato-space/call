@@ -920,15 +920,15 @@ def build_runnable_instructions_config(
                 instructions = candidate
                 break
 
-    combined_meta: Dict[str, Any] = {}
-    for bundle in (project_card, agent_card, prompt_card):
-        combined_meta.update(bundle.metadata)
+    meta_chain: list[Dict[str, Any]] = []
+    for bundle in (prompt_card, agent_card, project_card):
+        if isinstance(bundle.metadata, dict):
+            meta_chain.append(bundle.metadata)
+        else:
+            meta_chain.append({})
 
     def _meta_value(key: str) -> Any:
-        for bundle in (prompt_card, agent_card, project_card):
-            meta = bundle.metadata
-            if not isinstance(meta, dict):
-                continue
+        for meta in meta_chain:
             if key in meta and meta[key] not in (None, "", [], {}):
                 return meta[key]
         return None
@@ -970,6 +970,64 @@ def build_runnable_instructions_config(
     else:
         prompt_field = str(requested_prompt or prompt_value or "")
 
+    primary_attributes: Dict[str, Any] = dict(primary_card.metadata)
+
+    def _collect_model_settings() -> Dict[str, Any]:
+        collected: Dict[str, Any] = {}
+        for meta in meta_chain:
+            for meta_key, meta_value in meta.items():
+                if not isinstance(meta_key, _bi.str):
+                    continue
+                if meta_key == "model" or meta_key.startswith("model-settings"):
+                    if meta_key not in collected and meta_value not in (None, "", [], {}):
+                        collected[meta_key] = meta_value
+        return collected
+
+    model_override = None
+    if attribute_overrides:
+        model_override = attribute_overrides.get("model")
+        if isinstance(model_override, _bi.str) and not model_override.strip():
+            model_override = None
+
+    model_from_chain: Optional[str] = None
+    if isinstance(model_override, _bi.str) and model_override.strip():
+        model_from_chain = model_override.strip()
+    else:
+        for meta in meta_chain:
+            candidate = _model_from(meta)
+            if candidate:
+                model_from_chain = candidate
+                break
+
+    model_settings = _collect_model_settings()
+
+    for key, value in model_settings.items():
+        if key == "model":
+            continue
+        if key not in primary_attributes:
+            primary_attributes[key] = value
+
+    if "model" not in primary_attributes and model_from_chain:
+        primary_attributes["model"] = model_from_chain
+
+    if attribute_overrides:
+        for key, value in attribute_overrides.items():
+            if value is None:
+                primary_attributes.pop(key, None)
+            else:
+                primary_attributes[key] = value
+
+    model_candidate = primary_attributes.get("model")
+    if isinstance(model_candidate, _bi.str) and model_candidate.strip():
+        final_model = model_candidate.strip()
+    elif model_candidate not in (None, "", [], {}):
+        final_model = str(model_candidate)
+    else:
+        try:
+            final_model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
+        except Exception:
+            final_model = "gpt-5"
+
     cfg = RunnableConfig(
         id=str(selected_id or ""),
         type=selected_kind,
@@ -985,36 +1043,12 @@ def build_runnable_instructions_config(
         prompt_text=primary_card.prompt,
         instructions=str(instructions or ""),
         card_text=primary_card.raw,
-        model=
-        _model_from(prompt_card.metadata)
-        or _model_from(agent_card.metadata)
-        or _model_from(project_card.metadata)
-        or "",
-        attributes=combined_meta,
+        model=final_model,
+        attributes=primary_attributes,
         mcp=mcp_list,
         tools=tools_list,
         base_dir=base_dir,
     )
-
-    if not cfg.model:
-        try:
-            cfg.model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
-        except Exception:
-            cfg.model = "gpt-5"
-
-    if attribute_overrides:
-        attrs = dict(cfg.attributes or {})
-        for key, value in attribute_overrides.items():
-            if value is None:
-                continue
-            if key == "model":
-                override_model = str(value).strip() if isinstance(value, str) else str(value)
-                if override_model:
-                    cfg.model = override_model
-                    attrs["model"] = override_model
-                continue
-            attrs[key] = value
-        cfg.attributes = attrs
 
     try:
         setattr(cfg, "name", cfg.prompt or cfg.agent or cfg.project or cfg.id or "")
