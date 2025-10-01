@@ -285,6 +285,29 @@ python -m call.cli.main exec --target Vasil3
 
   When you are unsure whether an identifier refers to a project, agent, or prompt, send it via the `target` parameter. The API resolves the name against all supported scopes, so a single call works even if the type is unknown.
 
+- **List available models**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/models" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    | jq
+  ```
+
+  `GET /models` returns the catalog published by `call.lib.api.models()` (request bodies are ignored).
+
+- **Notify runtime about an event**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/notify" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    -H "Content-Type: application/json" \
+    --data '{
+      "event": "session_transcription_done"
+    }'
+  ```
+
+  `POST /notify` expects a minimal JSON object with the required `event` field. Selector fields (`project`, `agent`, `prompt`, `target`) are not accepted and will be ignored by design.
+
 - **Execute an agent with JSON payload**
 
   ```bash
