@@ -543,6 +543,7 @@ def build_runnable_instructions_config(
     from pathlib import Path as _Path
 
     missing_card_exc = getattr(call_repo, "CardNotFoundError", FileNotFoundError)
+    malformed_card_exc = getattr(call_repo, "CardFormatError", ValueError)
 
     @dataclass
     class _CardBundle:
@@ -646,8 +647,20 @@ def build_runnable_instructions_config(
             pass
         return cfg, None
 
+    resolved_project = project_sel or project or ""
+    resolved_agent = agent_sel or agent or ""
+    resolved_prompt = prompt_sel or prompt or ""
+    resolved: dict[str, Any] = {}
+
+    needs_agent_resolution = bool(str(resolved_agent).strip() or str(resolved_prompt).strip())
+
     try:
-        env = resolve_agent(project=project_sel, agent=agent_sel, prompt=prompt_sel, target=target)
+        env = resolve_agent(
+            project=project_sel,
+            agent=agent_sel,
+            prompt=prompt_sel,
+            target=target,
+        )
     except Exception as exc:
         return None, _error_payload(
             agent=(agent_sel or agent or ""),
@@ -668,13 +681,22 @@ def build_runnable_instructions_config(
             project=project_sel or project,
         )
 
-    if not env.get("ok"):
-        return None, env
-
-    resolved = env.get("resolved") or {}
-    resolved_project = resolved.get("project") or project_sel or project or ""
-    resolved_agent = resolved.get("name") or agent_sel or agent or ""
-    resolved_prompt = prompt_sel or prompt or ""
+    if env.get("ok"):
+        resolved = env.get("resolved") or {}
+        resolved_project = resolved.get("project") or resolved_project
+        resolved_agent = resolved.get("name") or resolved_agent
+    else:
+        code_val = str(env.get("code") or "").upper()
+        original_project_requested = isinstance(project, str) and project.strip()
+        if (
+            not needs_agent_resolution
+            and code_val == "TOO_MANY_ROWS"
+            and not original_project_requested
+            and (target or "").strip()
+        ):
+            resolved = {}
+        else:
+            return None, env
 
     try:
         project_row, agent_row, prompt_row = call_repo.select_unique_rows(
@@ -768,6 +790,15 @@ def build_runnable_instructions_config(
         project_card = _load(project_row)
         agent_card = _load(agent_row)
         prompt_card = _load(prompt_row)
+    except malformed_card_exc as exc:
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc=str(exc),
+            status=400,
+            code="BAD_CARD_FORMAT",
+            project=resolved_project or project,
+        )
     except missing_card_exc as exc:
         return None, _error_payload(
             agent=(resolved_agent or agent or ""),
@@ -1369,20 +1400,88 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
     """
     try:
         # 1) Resolve by agent name
-        if isinstance(agent, str) and agent.strip():
+        agent_filter = isinstance(agent, str) and agent.strip()
+        if agent_filter:
             rows = call_repo.find_agents(project=(project or None), agent=agent)
-            if not rows:
-                return _error_payload(agent=agent, input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
-            if len(rows) > 1:
-                return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
-            r = rows[0]
-            return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+            if rows:
+                if len(rows) > 1:
+                    return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
+                r = rows[0]
+                return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+            if not (isinstance(prompt, str) and prompt.strip()):
+                return _error_payload(
+                    agent=agent,
+                    input="",
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                    options=[],
+                )
 
         # 2) Resolve by prompt
         if isinstance(prompt, str) and prompt.strip():
             recs = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=prompt)
             if not recs:
-                return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+                alt_recs: list[dict] = []
+                try:
+                    alt_recs = call_repo.list_prompts(project=None, agent=None, prompt=prompt)
+                except Exception:
+                    alt_recs = []
+                if alt_recs:
+                    valid_alt = [r for r in alt_recs if (str(r.get("project") or "").strip() and str(r.get("agent") or "").strip())]
+                    if not valid_alt:
+                        return _error_payload(
+                            agent=(agent or ""),
+                            input="",
+                            exc="Prompt metadata could not be parsed",
+                            status=400,
+                            code="BAD_CARD_FORMAT",
+                            project=project,
+                            options=alt_recs[:20],
+                        )
+                    project_norm = (project or "").strip().lower()
+                    candidates = []
+                    for row in valid_alt:
+                        pj = str(row.get("project") or "").strip()
+                        if project_norm and pj.lower() != project_norm:
+                            continue
+                        candidates.append(row)
+                    if candidates:
+                        chosen = candidates[0]
+                        pj = chosen.get("project") or project
+                        ag = chosen.get("agent") or agent
+                        arows = call_repo.find_agents(project=pj, agent=ag)
+                        if len(arows) == 1:
+                            ar = arows[0]
+                            return {
+                                "ok": True,
+                                "resolved": {
+                                    "project": ar.get("project"),
+                                    "name": ar.get("agent"),
+                                    "path": ar.get("path"),
+                                    "aliases": [],
+                                    "prompts": [],
+                                },
+                            }
+                    return _error_payload(
+                        agent=(agent or ""),
+                        input="",
+                        exc="No agent found matching criteria",
+                        status=404,
+                        code="NO_DATA_FOUND",
+                        project=project,
+                        options=valid_alt[:20],
+                    )
+                return _error_payload(
+                    agent=(agent or ""),
+                    input="",
+                    exc="No prompt found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                    options=[],
+                )
             if len(recs) > 1:
                 return _error_payload(agent=(agent or ""), input="", exc="Multiple prompts matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=recs[:20])
             pr = recs[0]
@@ -1391,7 +1490,15 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             # Agent row must exist
             arows = call_repo.find_agents(project=pj, agent=ag)
             if len(arows) != 1:
-                return _error_payload(agent=str(ag or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=pj, options=(arows or []))
+                return _error_payload(
+                    agent=str(ag or ""),
+                    input="",
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=pj,
+                    options=(arows or []),
+                )
             ar = arows[0]
             return {"ok": True, "resolved": {"project": ar.get("project"), "name": ar.get("agent"), "path": ar.get("path"), "aliases": [], "prompts": []}}
 
@@ -1401,10 +1508,26 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             if len(opts) == 1:
                 r = opts[0]
                 return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
-            return _error_payload(agent=(agent or ""), input="", exc=("not found" if not opts else "Multiple agents matched your criteria"), status=(404 if not opts else 400), code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"), project=project, options=opts[:20] if opts else [])
+            return _error_payload(
+                agent=(agent or ""),
+                input="",
+                exc=("No agent found matching criteria" if not opts else "Multiple agents matched your criteria"),
+                status=(404 if not opts else 400),
+                code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"),
+                project=project,
+                options=opts[:20] if opts else [],
+            )
 
         # Nothing to resolve
-        return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+        return _error_payload(
+            agent=(agent or ""),
+            input="",
+            exc="No agent found matching criteria",
+            status=404,
+            code="NO_DATA_FOUND",
+            project=project,
+            options=[],
+        )
     except Exception as e:
         return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
