@@ -347,22 +347,31 @@ def _parse_card_text(text: str, *, hint: str = "") -> tuple[Dict[str, object], s
     raw = text or ""
     if not raw.strip():
         return {}, "", ""
+
+    def _format_error(message: str, cause: Exception | None = None) -> CardFormatError:
+        detail = message.strip() or "card metadata could not be parsed"
+        identifier = (hint or "").strip()
+        if identifier:
+            detail = f"card '{identifier}' {detail}"
+        err = CardFormatError(detail)
+        if cause is not None:
+            err.__cause__ = cause  # type: ignore[attr-defined]
+        return err
+
     try:
         from call.lib.utils import parse_metadata_and_prompt as _parse
 
         parsed = _parse(raw, path=hint or None)
-    except ValueError:
+    except Exception as exc:
         try:
             import yaml as _yaml
 
             data = _yaml.safe_load(raw)
         except Exception:
-            return {}, "", raw
+            raise _format_error("metadata could not be parsed", exc)
         if isinstance(data, dict):
             return data, "", raw
-        return {}, "", raw
-    except Exception:
-        return {}, "", raw
+        raise _format_error("metadata could not be parsed", exc)
     meta = dict(parsed or {})
     body = str(meta.get("prompt") or "")
     meta.pop("prompt", None)
@@ -371,6 +380,10 @@ def _parse_card_text(text: str, *, hint: str = "") -> tuple[Dict[str, object], s
 
 class CardNotFoundError(FileNotFoundError):
     """Raised when a card record cannot be located in repo.db or on disk."""
+
+
+class CardFormatError(ValueError):
+    """Raised when a stored card cannot be parsed into metadata/prompt content."""
 
 
 def get_card(card_id: str) -> tuple[Dict[str, object], str, str]:
