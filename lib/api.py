@@ -11,6 +11,9 @@ from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
 from call.lib.logging import debug_print
 import builtins as _bi
+import re
+from collections import deque
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 
 
 _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
@@ -58,6 +61,105 @@ def _serialize_model_item(item: Any) -> Dict[str, Any]:
     except Exception:
         identifier = None
     return {"id": identifier}
+
+
+_SNAPSHOT_ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TEXT_MODE_MARKERS = ("text", "chat", "completion")
+_NON_TEXT_IDENTIFIER_MARKERS = (
+    "embedding",
+    "embed",
+    "whisper",
+    "speech",
+    "voice",
+    "audio",
+    "image",
+    "vision-only",
+    "vision",
+    "realtime-audio",
+    "realtime",
+    "dall-e",
+    "dalle",
+)
+_TEXT_IDENTIFIER_MARKERS = (
+    "gpt",
+    "davinci",
+    "curie",
+    "babbage",
+    "ada",
+    "o1",
+    "o3",
+)
+
+
+def _iter_string_values(value: Any):
+    queue: deque[Any] = deque([value])
+    while queue:
+        current = queue.popleft()
+        if isinstance(current, str):
+            yield current
+            continue
+        if isinstance(current, (bytes, bytearray)):
+            try:
+                queue.append(current.decode())
+            except Exception:
+                continue
+            continue
+        if isinstance(current, Mapping):
+            queue.extend(current.values())
+            continue
+        if isinstance(current, (Sequence, AbstractSet)):
+            queue.extend(current)
+
+
+def _model_supports_text_output(item: Dict[str, Any]) -> bool:
+    for key in ("modes", "modalities", "response_types"):
+        for raw in _iter_string_values(item.get(key)):
+            normalized = raw.strip().lower()
+            if not normalized:
+                continue
+            if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+                return True
+    capabilities = item.get("capabilities")
+    if isinstance(capabilities, dict):
+        for cap_name, enabled in capabilities.items():
+            if not enabled:
+                continue
+            if not isinstance(cap_name, str):
+                try:
+                    cap_name = str(cap_name)
+                except Exception:
+                    continue
+            normalized = cap_name.strip().lower()
+            if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+                return True
+    type_value = item.get("type")
+    if isinstance(type_value, str):
+        normalized = type_value.strip().lower()
+        if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+            return True
+    identifier = item.get("id") or item.get("name")
+    try:
+        identifier_str = str(identifier).strip()
+    except Exception:
+        identifier_str = ""
+    identifier_lower = identifier_str.lower()
+    if identifier_lower:
+        if any(marker in identifier_lower for marker in _NON_TEXT_IDENTIFIER_MARKERS):
+            return False
+        if any(marker in identifier_lower for marker in _TEXT_IDENTIFIER_MARKERS):
+            return True
+    return False
+
+
+def _model_is_snapshot(item: Dict[str, Any]) -> bool:
+    identifier = item.get("id")
+    try:
+        identifier_str = str(identifier) if identifier is not None else ""
+    except Exception:
+        return False
+    if not identifier_str:
+        return False
+    return bool(_SNAPSHOT_ID_PATTERN.search(identifier_str))
 
 
 def _compile_wildcard_regex(pattern: str | None):
@@ -1820,9 +1922,16 @@ def models() -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for entry in data or []:
         try:
-            items.append(_serialize_model_item(entry))
+            serialized = _serialize_model_item(entry)
         except Exception:
             continue
+        if not isinstance(serialized, dict):
+            continue
+        if _model_is_snapshot(serialized):
+            continue
+        if not _model_supports_text_output(serialized):
+            continue
+        items.append(serialized)
     return items
 
 
