@@ -64,3 +64,39 @@ def test_models_filters_out_non_text_and_snapshot_entries(monkeypatch):
 
     ids = [item["id"] for item in items]
     assert ids == ["gpt-text", "gpt-chat"]
+
+
+def test_models_identifier_fallback_includes_text_like_ids(monkeypatch):
+    from call.lib import api as call_api
+
+    class DummyModel:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def model_dump(self):
+            return dict(self._payload)
+
+    response_items = [
+        DummyModel({"id": "gpt-4o-mini"}),
+        DummyModel({"id": "text-embedding-3-large"}),
+        DummyModel({"id": "whisper-1"}),
+        DummyModel({"id": "o1-preview"}),
+        DummyModel({"id": "o4-mini"}),
+    ]
+
+    class DummyModels:
+        def list(self):
+            return type("Resp", (), {"data": response_items})()
+
+    class DummyClient:
+        def __init__(self):
+            self.models = DummyModels()
+
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", DummyClient, raising=True)
+
+    items = call_api.models()
+
+    ids = [item["id"] for item in items]
+    assert ids == ["gpt-4o-mini", "o1-preview", "o4-mini"]

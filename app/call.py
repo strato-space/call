@@ -34,6 +34,7 @@ from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
 import re
 import shlex
+import time
 from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
 import urllib.parse
 from pathlib import Path
@@ -947,6 +948,8 @@ def _create_session_if_any(selected_chat_id: int | None, selected_thread_id: int
         session_id = f"{selected_chat_id}:{selected_thread_id}"
     else:
         session_id = f"{selected_chat_id}"
+
+    session_id = f"{session_id}:{int(time.time())}"
 
     db_path = os.getenv("CALL_DB", "call/call.db")
     try:
