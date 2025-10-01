@@ -8,6 +8,46 @@ import pytest
 
 from call.lib import api as api_module
 from call.lib.api import build_runnable_instructions_config
+from call.lib import repo_db as repo_db_module
+
+
+@pytest.fixture(autouse=True)
+def _repo_card_loader(monkeypatch):
+    original_get_card = repo_db_module.get_card
+
+    def _fake_get_card(card_id: str):
+        path = Path(str(card_id))
+        if path.exists():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:
+                text = ""
+            if not text:
+                return {}, "", ""
+            suffix = path.suffix.lower()
+            if suffix in (".md", ".markdown"):
+                from call.lib.utils import parse_metadata_and_prompt
+
+                try:
+                    parsed = parse_metadata_and_prompt(text, path=str(path))
+                except ValueError:
+                    return {}, "", text
+                except Exception:
+                    return {}, "", text
+                meta = dict(parsed or {}) if isinstance(parsed, dict) else {}
+                body = str((parsed or {}).get("prompt") or "")
+                meta.pop("prompt", None)
+                return meta, body, text
+            if suffix in (".yaml", ".yml"):
+                import yaml as _yaml
+
+                data = _yaml.safe_load(text) or {}
+                if isinstance(data, dict):
+                    return data, "", text
+                return {}, "", text
+        return original_get_card(card_id)
+
+    monkeypatch.setattr(repo_db_module, "get_card", _fake_get_card, raising=True)
 
 
 @pytest.mark.parametrize(
@@ -147,19 +187,27 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     monkeypatch.setattr(
         api_module.call_repo,
         "find_projects",
-        lambda **_: [{"project": "ProjX", "path": str(project_md)}],
+        lambda **_: [{"project": "ProjX", "path": str(project_md), "target": str(project_md)}],
         raising=True,
     )
     monkeypatch.setattr(
         api_module.call_repo,
         "find_agents",
-        lambda **kw: [{"project": "ProjX", "agent": "AgentY", "path": str(agent_md)}] if kw.get("agent") in (None, "AgentY") else [],
+        lambda **kw: [
+            {"project": "ProjX", "agent": "AgentY", "path": str(agent_md), "target": str(agent_md)}
+        ]
+        if kw.get("agent") in (None, "AgentY")
+        else [],
         raising=True,
     )
     monkeypatch.setattr(
         api_module.call_repo,
         "find_prompts",
-        lambda **kw: [{"project": "ProjX", "agent": "AgentY", "path": str(prompt_md)}] if kw.get("prompt") in (None, "PromptZ") else [],
+        lambda **kw: [
+            {"project": "ProjX", "agent": "AgentY", "path": str(prompt_md), "target": str(prompt_md)}
+        ]
+        if kw.get("prompt") in (None, "PromptZ")
+        else [],
         raising=True,
     )
 
@@ -223,9 +271,24 @@ def test_builder_model_prefers_prompt_over_agent_and_project(monkeypatch, tmp_pa
     write_card(agent_path, "model: gpt-4.1-mini", "Agent body")
     write_card(prompt_path, "model: gpt-4.1-large", "Prompt body")
 
-    monkeypatch.setattr(api_module.call_repo, "find_projects", lambda **_: [{"project": "AgentFab", "path": str(proj_path)}], raising=True)
-    monkeypatch.setattr(api_module.call_repo, "find_agents", lambda **_: [{"project": "AgentFab", "agent": "StratoFormatter", "path": str(agent_path)}], raising=True)
-    monkeypatch.setattr(api_module.call_repo, "find_prompts", lambda **_: [{"prompt": "33-Questioning", "path": str(prompt_path)}], raising=True)
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_projects",
+        lambda **_: [{"project": "AgentFab", "path": str(proj_path), "target": str(proj_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_agents",
+        lambda **_: [{"project": "AgentFab", "agent": "StratoFormatter", "path": str(agent_path), "target": str(agent_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_prompts",
+        lambda **_: [{"prompt": "33-Questioning", "path": str(prompt_path), "target": str(prompt_path)}],
+        raising=True,
+    )
 
     cfg, err = build_runnable_instructions_config(
         project="AgentFab",
@@ -269,9 +332,24 @@ def test_builder_model_falls_back_to_env(monkeypatch, tmp_path):
     write_card(agent_path, "title: Agent")
     write_card(prompt_path, "title: Prompt")
 
-    monkeypatch.setattr(api_module.call_repo, "find_projects", lambda **_: [{"project": "AgentFab", "path": str(proj_path)}], raising=True)
-    monkeypatch.setattr(api_module.call_repo, "find_agents", lambda **_: [{"project": "AgentFab", "agent": "StratoFormatter", "path": str(agent_path)}], raising=True)
-    monkeypatch.setattr(api_module.call_repo, "find_prompts", lambda **_: [{"prompt": "33-Questioning", "path": str(prompt_path)}], raising=True)
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_projects",
+        lambda **_: [{"project": "AgentFab", "path": str(proj_path), "target": str(proj_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_agents",
+        lambda **_: [{"project": "AgentFab", "agent": "StratoFormatter", "path": str(agent_path), "target": str(agent_path)}],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api_module.call_repo,
+        "find_prompts",
+        lambda **_: [{"prompt": "33-Questioning", "path": str(prompt_path), "target": str(prompt_path)}],
+        raising=True,
+    )
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
 
     cfg, err = build_runnable_instructions_config(
@@ -316,7 +394,7 @@ def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
     monkeypatch.setattr(
         api_module.call_repo,
         "find_agents",
-        lambda **_: [{"project": "FanFab", "agent": "Vasil3", "path": str(agent_path)}],
+        lambda **_: [{"project": "FanFab", "agent": "Vasil3", "path": str(agent_path), "target": str(agent_path)}],
         raising=True,
     )
     monkeypatch.setattr(
