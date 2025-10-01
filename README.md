@@ -295,6 +295,16 @@ python -m call.cli.main exec --target Vasil3
 
   `GET /models` returns the catalog published by `call.lib.api.models()` (request bodies are ignored).
 
+- **Override the model for a `/call` request**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/call?name=DialogPostAnalysis&input=hello&model=gpt-4o-mini" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    | jq
+  ```
+
+  Passing `model` as a query parameter injects `{"model": "..."}` into the runtime `attributes`. The library then applies precedence `prompt > agent > project > request attributes > $LLM_MODEL`. The same rule applies to MCP `call(name, input, model=...)`.
+
 - **Notify runtime about an event**
 
   ```bash
@@ -307,6 +317,21 @@ python -m call.cli.main exec --target Vasil3
   ```
 
   `POST /notify` expects a minimal JSON object with the required `event` field. Selector fields (`project`, `agent`, `prompt`, `target`) are not accepted and will be ignored by design.
+
+- **Exec payload with explicit model override**
+
+  ```bash
+  curl -v "https://call-actions.stratospace.fun/exec" \
+    -H "Authorization: Bearer 123123142356365864895789678967" \
+    -H "Content-Type: application/json" \
+    --data '{
+      "agent": "DialogPostAnalysis",
+      "context": {"text": "hi"},
+      "model": "gpt-4o-mini"
+    }'
+  ```
+
+  `POST /exec` forwards the JSON body to `api_interpret_exec_payload()` which normalizes selectors and copies `model` into `attributes`. CLI `call --model` and CLI/MCP `exec` follow the same path, so documentation applies across REST, MCP, and CLI surfaces.
 
 - **Execute an agent with JSON payload**
 
@@ -356,8 +381,7 @@ python -m call.cli.main exec --target Vasil3
         }
       ]
     }'
-
-```
+  ```
 
 ### Parsed vs raw input (New)
 
@@ -651,7 +675,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
   python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format yaml
 
-  # Reload repos and rebuild index 
+  # Reload repos and rebuild index
   python -m call.cli.main reload --repos agent,prompt --format json
 
   # Execute with structured context (content items). Extracts Google Docs file id from URLs.
