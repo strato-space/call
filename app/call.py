@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Dict, Any
+from agents.model_settings import ModelSettings
+from dataclasses import dataclass
 
 from call.lib.api import RunnableConfig
 
@@ -130,90 +132,6 @@ def get_or_create_agent(*, name: str, instructions: str, model: str, model_setti
     except Exception:
         pass
     return agent
-
-def _model_settings_from_attributes(attrs: Dict[str, Any] | Any | None) -> ModelSettings:
-    """
-    Build ModelSettings from either:
-      - a metadata attributes dict; or
-      - an object (cfg) that contains an 'attributes' dict.
-
-    Looks under the 'model-params' (and synonyms) key for:
-      - temperature, top_p, frequency_penalty, presence_penalty, max_tokens, verbosity
-      - reasoning: { effort: minimal|low|medium|high, summary?: auto|concise|detailed }
-    """
-    try:
-        # Accept either a plain dict or a cfg object with .attributes
-        _attrs: Dict[str, Any] | None
-        if isinstance(attrs, dict):
-            _attrs = attrs
-        else:
-            try:
-                _attrs = getattr(attrs, "attributes", None) if attrs is not None else None
-            except Exception:
-                _attrs = None
-
-        params: Dict[str, Any] = {}
-        # Prefer model-specific params: model-params-<model>
-        # Derive model from attributes or cfg object
-        model_name = None
-        try:
-            if isinstance(_attrs, dict):
-                model_name = (_attrs.get("model") or "") if _attrs else ""
-            if (not model_name) and attrs is not None:
-                model_name = getattr(attrs, "model", None)
-            model_name = (str(model_name).strip() or None)
-        except Exception:
-            model_name = None
-        if isinstance(_attrs, dict) and model_name:
-            # Only canonical hyphenated form is supported
-            key = f"model-params-{model_name}"
-            try:
-                val = _attrs.get(key)
-            except Exception:
-                val = None
-            if isinstance(val, dict):
-                params = val
-        # Fallback to generic keys when no model-specific params were found
-        if not isinstance(params, dict) or not params:
-            if isinstance(_attrs, dict):
-                params = _attrs.get("model-params") or {}
-        if not isinstance(params, dict):
-            params = {}
-        temp = params.get("temperature")
-        top_p = params.get("top_p") or params.get("top-p") or params.get("topp")
-        freq = params.get("frequency_penalty") or params.get("freq_penalty")
-        pres = params.get("presence_penalty") or params.get("presencePenalty")
-        max_toks = params.get("max_tokens") or params.get("max-tokens")
-        verbosity = params.get("verbosity")
-        if isinstance(verbosity, str):
-            verbosity = verbosity if verbosity in ("low", "medium", "high") else None
-        # Reasoning
-        reasoning_obj = None
-        r = params.get("reasoning")
-        if isinstance(r, dict):
-            effort = r.get("effort")
-            summary = r.get("summary") or r.get("generate_summary")
-            if isinstance(effort, str):
-                eff = effort.lower()
-                if eff in ("minimal", "low", "medium", "high"):
-                    try:
-                        if isinstance(summary, str) and summary in ("auto", "concise", "detailed"):
-                            reasoning_obj = OpenAIReasoning(effort=eff, summary=summary)
-                        else:
-                            reasoning_obj = OpenAIReasoning(effort=eff)
-                    except Exception:
-                        reasoning_obj = None
-        return ModelSettings(
-            temperature=float(temp) if temp is not None else None,
-            top_p=float(top_p) if top_p is not None else None,
-            frequency_penalty=float(freq) if freq is not None else None,
-            presence_penalty=float(pres) if pres is not None else None,
-            max_tokens=int(max_toks) if max_toks is not None else None,
-            reasoning=reasoning_obj,
-            verbosity=(verbosity if isinstance(verbosity, str) else None),
-        )
-    except Exception:
-        return ModelSettings()
 
 # Telegraph usage is handled via utils.telegraph_utils
 
@@ -514,9 +432,28 @@ async def _git_pull_prompt_repo() -> None:
             out, err = await proc.communicate()
             return proc.returncode, out, err
 
-        rc, _, _ = await _run_git(["git", "pull", "--rebase"])
+        debug_print("[git]", f"Pulling prompt repo at {prompt_repo} with --rebase")
+        rc, out_rebase, err_rebase = await _run_git(["git", "pull", "--rebase"])
         if rc != 0:
-            await _run_git(["git", "pull"])
+            debug_print("[git]", "--rebase failed; retrying plain pull")
+            rc_plain, out_plain, err_plain = await _run_git(["git", "pull"])
+            debug_print(
+                "[git]",
+                "plain pull rc=%s out=%s err=%s" % (
+                    rc_plain,
+                    out_plain.decode(errors="ignore")[:200],
+                    err_plain.decode(errors="ignore")[:200],
+                ),
+            )
+        else:
+            debug_print(
+                "[git]",
+                "rebase pull rc=%s out=%s err=%s" % (
+                    rc,
+                    out_rebase.decode(errors="ignore")[:200],
+                    err_rebase.decode(errors="ignore")[:200],
+                ),
+            )
     except Exception:
         pass
 
@@ -560,8 +497,39 @@ def _collect_tools(cfg) -> list[tuple[str, str]]:
     return entries
 
 
-def _canonical_and_sanitized_user_input(user_input: Any) -> tuple[str, str]:
-    """Return the original (canonical) user input string and sanitized string."""
+def _append_agent_tools_from_cfg(
+    *, cfg, tools: list[Any], mcp_servers: list[Any]
+) -> None:
+    """Populate `tools` with helper agents/prompts declared in the config."""
+
+    tools2append = _collect_tools(cfg)
+    if not tools2append:
+        return
+
+    base_tools_snapshot = list(tools)
+
+    for sub_name, sub_desc in tools2append:
+        tool = _build_agent_tool(
+            cfg=cfg,
+            sub_name=sub_name,
+            sub_desc=sub_desc,
+            base_tools_snapshot=base_tools_snapshot,
+            mcp_servers=mcp_servers,
+        )
+        if tool:
+            tools.append(tool)
+
+
+@dataclass
+class ProcessedUserInput:
+    canonical: str
+    sanitized: str
+    embedded: str
+    normalized: str
+
+
+async def process_user_input(user_input: Any) -> ProcessedUserInput:
+    """Normalize user input: sanitize target, embed files, and provide canonical strings."""
 
     if isinstance(user_input, str):
         canonical = user_input
@@ -571,7 +539,8 @@ def _canonical_and_sanitized_user_input(user_input: Any) -> tuple[str, str]:
         except Exception:
             canonical = str(user_input)
 
-    sanitized = canonical
+    sanitized_dict: dict | None = None
+    sanitized_str = canonical
 
     if isinstance(user_input, str):
         try:
@@ -580,27 +549,34 @@ def _canonical_and_sanitized_user_input(user_input: Any) -> tuple[str, str]:
             parsed = None
 
         if isinstance(parsed, dict):
-            parsed = dict(parsed)
-            parsed.pop("target", None)
-            try:
-                sanitized = json.dumps(parsed, ensure_ascii=False)
-            except Exception:
-                sanitized = json.dumps(parsed)
+            sanitized_dict = dict(parsed)
     elif isinstance(user_input, dict):
-        parsed = dict(user_input)
-        parsed.pop("input", None)
-        parsed.pop("target", None)
-        try:
-            sanitized = json.dumps(parsed, ensure_ascii=False)
-        except Exception:
-            sanitized = json.dumps(parsed)
+        sanitized_dict = dict(user_input)
 
-    return canonical, sanitized
+    if isinstance(sanitized_dict, dict):
+        sanitized_dict.pop("target", None)
+        try:
+            sanitized_str = json.dumps(sanitized_dict, ensure_ascii=False)
+        except Exception:
+            sanitized_str = json.dumps(sanitized_dict)
+
+    if isinstance(sanitized_str, str) and sanitized_str.strip().startswith(("{", "[")):
+        embedded = await _embed_files_in_user_input(sanitized_str)
+    else:
+        embedded = sanitized_str
+
+    normalized = embedded if embedded not in (None, "", {}, "{}") else "go"
+
+    return ProcessedUserInput(
+        canonical=canonical,
+        sanitized=sanitized_str,
+        embedded=embedded,
+        normalized=normalized,
+    )
 
 
 def _merge_tool_input_into_canonical(canonical_json: str | None, input_json: str | None) -> str | None:
     """Replace the `input` key inside canonical JSON (if dict) with the latest tool input string."""
-
     if not canonical_json:
         return canonical_json
 
@@ -743,7 +719,7 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     except Exception:
         pass
 
-    project_scope = None if (str(getattr(cfg, "id", "")).strip() == "AgentFab") else (getattr(cfg, "project", None) or None)
+    project_scope = None if cfg.id.strip() == "AgentFab" else (cfg.project or None)
     try:
         # Resolve at call-time so tests can monkeypatch call_api.build_runnable_instructions_config
         sub_cfg, sub_err = call_api.build_runnable_instructions_config(
@@ -766,8 +742,8 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
         return None
 
     try:
-        if getattr(sub_cfg, "id", None) and getattr(cfg, "id", None) and (str(getattr(sub_cfg, "id", "")).strip() == str(getattr(cfg, "id", "")).strip()):
-            debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({getattr(cfg, 'id', '')})")
+        if sub_cfg.id and cfg.id and (sub_cfg.id.strip() == cfg.id.strip()):
+            debug_print("[tools]", f"Skip entry {sub_name}: resolved to self ({cfg.id})")
             return None
     except Exception:
         pass
@@ -775,46 +751,46 @@ def _build_agent_tool(*, cfg, sub_name: str, sub_desc: str, base_tools_snapshot:
     try:
         debug_print(
             "[tools]",
-            f"Sub-cfg built: id={getattr(sub_cfg, 'id', None)} prompt={getattr(sub_cfg, 'prompt', None)} instr_len={len(getattr(sub_cfg, 'instructions', '') or '')}",
+            f"Sub-cfg built: id={sub_cfg.id} prompt={sub_cfg.prompt} instr_len={len(sub_cfg.instructions or '')}",
         )
     except Exception:
         pass
 
     try:
-        attrs_yaml = _attrs_to_yaml_text(getattr(sub_cfg, "attributes", None))
+        attrs_yaml = _attrs_to_yaml_text(sub_cfg.attributes)
         if attrs_yaml:
             debug_print("[tools]", f"Sub-cfg attributes (YAML) for {getattr(sub_cfg, 'id', None) or sub_name}:\n" + attrs_yaml)
     except Exception:
         pass
 
     try:
-        sub_attrs_has_instr = isinstance(getattr(sub_cfg, "attributes", None), dict) and ("instructions" in (getattr(sub_cfg, "attributes", {}) or {}))
+        sub_attrs_has_instr = isinstance(sub_cfg.attributes, dict) and ("instructions" in (sub_cfg.attributes or {}))
     except Exception:
         sub_attrs_has_instr = False
     if not sub_attrs_has_instr:
         try:
-            prev = (getattr(sub_cfg, "instructions", "") or "")
+            prev = (sub_cfg.instructions or "")
             if len(prev) > 2048:
                 prev = prev[:2045] + "..."
             debug_print("[tools]", f"Sub-cfg instructions preview for {getattr(sub_cfg, 'id', None) or sub_name}:\n" + prev)
         except Exception:
             pass
 
-    sub_agent = get_or_create_agent(
-        name=(getattr(sub_cfg, "id", None) or sub_name),
-        instructions=(getattr(sub_cfg, "instructions", "") or ""),
-        model=getattr(sub_cfg, "model", None),
-        model_settings=_model_settings_from_attributes(sub_cfg),
-        tools=base_tools_snapshot,
-        mcp_servers=mcp_servers,
-    )
+        sub_agent = get_or_create_agent(
+            name=(sub_cfg.id or sub_name),
+            instructions=(sub_cfg.instructions or ""),
+            model=sub_cfg.model,
+            model_settings=(sub_cfg.model_settings or ModelSettings()),
+            tools=base_tools_snapshot,
+            mcp_servers=mcp_servers,
+        )
     tool = sub_agent.as_tool(
         tool_name=sub_name,
         tool_description=(sub_desc or f"Invoke agent '{sub_name}'"),
     )
     _wrap_function_tool(tool, sub_cfg=sub_cfg, sub_name=sub_name, cfg=cfg)
     try:
-        debug_print("[tools]", f"Tool added: {sub_name} (resolved={getattr(sub_cfg, 'id', None) or '?'})")
+        debug_print("[tools]", f"Tool added: {sub_name} (resolved={sub_cfg.id or '?'})")
     except Exception:
         pass
     return tool
@@ -965,7 +941,6 @@ async def _notify_digest_if_applicable(
     *,
     cfg: RunnableConfig,
     user_input: str,
-    initial_input: str,
     step1_output: str | None,
     selected_chat_id: int | None,
     selected_thread_id: int | None,
@@ -982,7 +957,7 @@ async def _notify_digest_if_applicable(
             agent_name=(cfg.id or ""),
             agent_path=(cfg.path or None),
             buttons=((cfg.attributes or {}).get("buttons") if isinstance(cfg.attributes, dict) else None),
-            input_text=initial_input,
+            input_text=user_input,
             text=(step1_output or ""),
             chat_id=use_chat_id,
             message_thread_id=use_thread_id,
@@ -2711,7 +2686,7 @@ def image_genetation_tool(ctx: RunContextWrapper[Any], prompt: str,
 # )
 
 @asynccontextmanager
-async def build_and_run_agent(cfg, user_input: str = ""):
+async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     """Async context manager that builds an Agent from a ready-to-run cfg and runs one turn.
 
     Expected cfg attributes (duck-typed DTO):
@@ -2723,54 +2698,44 @@ async def build_and_run_agent(cfg, user_input: str = ""):
       - path: str | None (repo-relative path like 'agent/Proj/Agent/agent.md'; optional)
     """
     async with AsyncExitStack() as astack:
-        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
-        tools = await build_tools_for_cfg(cfg)
+        
+        debug_print("[call]", "user_input (raw): |-\n" + user_input)
+        debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
+        debug_dump_cfg_preview(cfg)
 
         await _git_pull_prompt_repo()
 
-        # Debug dump (helper)
-        debug_dump_cfg_preview(cfg)
+        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
+        tools = await build_tools_for_cfg(cfg)
 
-        # Agents-as-Tools: if the project card exposes 'agents' or 'prompts',
-        # create sub-agents as tools so the main agent can call them.
-        # Build helper tools declared in the agent card (sub-agents/prompts) so the
-        # main agent can call them within the same turn. Each helper starts from a
-        # snapshot of the already-prepared base tools to avoid mutating the live list
-        # during construction.
-        tools2append = _collect_tools(cfg)
-        if tools2append:
-            base_tools_snapshot = list(tools)
-            for sub_name, sub_desc in tools2append:
-                tool = _build_agent_tool(
-                    cfg=cfg,
-                    sub_name=sub_name,
-                    sub_desc=sub_desc,
-                    base_tools_snapshot=base_tools_snapshot,
-                    mcp_servers=mcp_servers,
-                )
-                if tool:
-                    tools.append(tool)
+        # Agents-as-Tools: populate helper tools declared in project/agent card.
+        _append_agent_tools_from_cfg(cfg=cfg, tools=tools, mcp_servers=mcp_servers)
 
-        debug_print("[call]", "cfg.instructions:", cfg.instructions)
-        debug_print("[call]", "user_input (raw):", user_input)
+        processed_input = await process_user_input(user_input)
+        sanitized_input = processed_input.sanitized 
+        normalized_input = processed_input.normalized
+        embedded_input = processed_input.embedded 
 
-        canonical_input, sanitized_input = _canonical_and_sanitized_user_input(user_input)
+        debug_print("[call]", "input (sanitized from target / repaced empty to go): |-" + str(normalized_input))
 
-        user_input = sanitized_input
+        context = {"embedded_input": embedded_input}
 
-        initial_input = user_input if user_input not in (None, "", {}, "{}") else "go"
-
-        debug_print("[call]", "canonical_input:", canonical_input)
-        debug_print("[call]", "initial_input (sanitized / repaced empty to go):", initial_input)
-
-        context = {"canonical_input": sanitized_input}
-        debug_print("[call]", "context 0:", context)
+        cfg_model_settings = getattr(cfg, "model_settings", None)
+        if isinstance(cfg_model_settings, ModelSettings):
+            agent_model_settings = cfg_model_settings
+        elif isinstance(cfg_model_settings, dict):
+            try:
+                agent_model_settings = ModelSettings(**cfg_model_settings)
+            except Exception:
+                agent_model_settings = ModelSettings()
+        else:
+            agent_model_settings = ModelSettings()
 
         agent = Agent(
-            name=(getattr(cfg, "id", None) or getattr(cfg, "agent", None) or getattr(cfg, "prompt", None) or "Agent"),
-            instructions=(cfg.instructions or ""),
+            name=cfg.id,
+            instructions=cfg.instructions,
             model=cfg.model,
-            model_settings=_model_settings_from_attributes(cfg),
+            model_settings=agent_model_settings,
             tools=tools,
             mcp_servers=mcp_servers,
         )
@@ -2782,67 +2747,16 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
         await _init_bot_safe(project_name=(cfg.project or None))
         
-        # Save globally for subsequent messages
-        global selected_chat_id, selected_thread_id, force_no_session
-        # Respect previously selected targets (e.g., set by lib.api from Telegram update).
-        # If current value equals env default, allow agent YAML/output to override.
-        # Otherwise, keep the explicit value set by the caller.
-        env_chat = TELEGRAM_CHAT_ID
-        env_thread = (TELEGRAM_THREAD_ID or None)
-
-        prompt_chat_id = None
-        prompt_thread_id = None
-        try:
-            attrs = getattr(cfg, "attributes", {})
-            if isinstance(attrs, dict):
-                tg_cfg = attrs.get("telegram")
-                if isinstance(tg_cfg, dict):
-                    prompt_chat_id = tg_cfg.get("chat_id")
-                    prompt_thread_id = tg_cfg.get("thread_id")
-                    # Normalize string ints to int where possible
-                    try:
-                        if isinstance(prompt_chat_id, str) and prompt_chat_id.strip():
-                            prompt_chat_id = int(prompt_chat_id.strip())
-                    except Exception:
-                        pass
-                    try:
-                        if isinstance(prompt_thread_id, str) and prompt_thread_id.strip():
-                            prompt_thread_id = int(prompt_thread_id.strip())
-                    except Exception:
-                        pass
-        except Exception:
-            prompt_chat_id = None
-            prompt_thread_id = None
-
-        no_session = bool(force_no_session)
-        if not no_session:
-            if selected_chat_id is None or selected_chat_id == env_chat:
-                selected_chat_id = (prompt_chat_id or env_chat)
-            if selected_thread_id is None or selected_thread_id == env_thread:
-                selected_thread_id = (prompt_thread_id or env_thread)
-        else:
-            # Explicitly disable routing and sessions
-            selected_chat_id = None
-            selected_thread_id = None
-
-        # If nothing selected yet, fall back to .env defaults (CLI without --chat-id)
-        if (selected_chat_id is None) and (TELEGRAM_CHAT_ID is not None):
-            try:
-                debug_print("[app]", f"No chat selected by config; falling back to TELEGRAM_CHAT_ID={TELEGRAM_CHAT_ID}")
-            except Exception:
-                pass
-            selected_chat_id = TELEGRAM_CHAT_ID
-        if (selected_thread_id is None) and (TELEGRAM_THREAD_ID is not None):
-            selected_thread_id = TELEGRAM_THREAD_ID
+        # Save globally for subsequent messages (defaults come from .env; Telegram bot may override)
+        global selected_chat_id, selected_thread_id
 
         # Now that selected_chat_id is finalized, create or skip SQLite session
         session = _create_session_if_any(selected_chat_id, selected_thread_id)
 
-        debug_print(f"[INFO] Agent path: {getattr(cfg, 'path', None)}")
-        debug_print(f"[INFO] Target: chat_id={selected_chat_id if selected_chat_id is not None else '(disabled)'}, thread_id={selected_thread_id if selected_thread_id is not None else '(disabled)'}")
+        
 
         # Send welcome message with agent link and run context (after config is ready)
-        welcome_html = await _send_welcome_banner(
+        await _send_welcome_banner(
             cfg=cfg,
             user_input=user_input,
             mcp_servers=mcp_servers,
@@ -2850,23 +2764,19 @@ async def build_and_run_agent(cfg, user_input: str = ""):
             selected_thread_id=selected_thread_id,
         )
 
-        if isinstance(user_input, str) and user_input.strip().startswith(('{','[')):
-            user_input = await _embed_files_in_user_input(user_input)
-        
-        # Run the main agent once with pure user_input string (session-enabled)
-        
-        debug_print("[call]", "user_input:", user_input)
+        # Run the main agent once with normalized input string (session-enabled)
 
         step1_output = ""
         try:
             result1 = await Runner.run(
                 agent,
-                initial_input,
+                embedded_input,
                 max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
                 session=session,
                 context=context,
             )
             step1_output += getattr(result1, "final_output", None)
+            debug_print("[call]", "step1_output: ", step1_output)
         except Exception as e:
             # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
             try:
@@ -2906,7 +2816,6 @@ async def build_and_run_agent(cfg, user_input: str = ""):
         await _notify_digest_if_applicable(
             cfg=cfg,
             user_input=user_input,
-            initial_input=initial_input,
             step1_output=step1_output,
             selected_chat_id=selected_chat_id,
             selected_thread_id=selected_thread_id,

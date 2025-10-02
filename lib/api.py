@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field
+from agents.model_settings import ModelSettings
+from dataclasses import dataclass, field, asdict
 from contextvars import ContextVar
 import os
 import sqlite3
 import asyncio
+import json
 from pathlib import Path as _Path
 from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
@@ -17,6 +19,19 @@ _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
     "call_attribute_overrides",
     default=None,
 )
+
+
+def _dict_with_str_keys(data: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    normalized: Dict[str, Any] = {}
+    for key, value in data.items():
+        try:
+            key_str = str(key)
+        except Exception:
+            continue
+        normalized[key_str] = value
+    return normalized
 
 
 def _normalize_attribute_overrides(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -474,8 +489,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     if ctx_items:
         ordered['context'] = ctx_items
     if ordered:
-        import json as _json
-        return (_json.dumps(ordered, ensure_ascii=False), ordered)
+        return (json.dumps(ordered, ensure_ascii=False), ordered)
     return ((main_text or ''), None)
 
 
@@ -518,6 +532,7 @@ class RunnableConfig:
 
     # Runtime configuration and attributes
     model: str = "gpt-5"
+    model_settings: ModelSettings = field(default_factory=ModelSettings)
     attributes: Dict[str, Any] = field(default_factory=dict)
     mcp: List[Dict[str, Any]] = field(default_factory=list)
     # Declared tools to enable for the run (e.g., ["WebSearchTool", "image_genetation_tool"]) 
@@ -578,7 +593,7 @@ def build_runnable_instructions_config(
         if isinstance(value, _bi.str) and value.strip():
             return value.strip()
         for key, val in meta.items():
-            if isinstance(key, str) and key.startswith("model-") and not key.startswith("model-params"):
+            if isinstance(key, str) and key.startswith("model-") and not key.startswith("model-settings"):
                 if isinstance(val, _bi.str) and val.strip():
                     return val.strip()
                 return str(val)
@@ -920,12 +935,7 @@ def build_runnable_instructions_config(
                 instructions = candidate
                 break
 
-    meta_chain: list[Dict[str, Any]] = []
-    for bundle in (prompt_card, agent_card, project_card):
-        if isinstance(bundle.metadata, dict):
-            meta_chain.append(bundle.metadata)
-        else:
-            meta_chain.append({})
+    meta_chain = [_dict_with_str_keys(bundle.metadata) if isinstance(bundle.metadata, dict) else {} for bundle in (prompt_card, agent_card, project_card)]
 
     def _meta_value(key: str) -> Any:
         for meta in meta_chain:
@@ -934,9 +944,7 @@ def build_runnable_instructions_config(
         return None
 
     role_val = _meta_value("role") or ""
-    goal_val = _meta_value("goal") or _meta_value("purpose") or _meta_value("title") or ""
-    if not goal_val:
-        goal_val = str(selected_row.get("goal") or "")
+    goal_val = _meta_value("goal") or ""
 
     mcp_list = _ensure_list(_meta_value("mcp"))
     tools_list = _string_items(_meta_value("tools"))
@@ -970,17 +978,21 @@ def build_runnable_instructions_config(
     else:
         prompt_field = str(requested_prompt or prompt_value or "")
 
-    primary_attributes: Dict[str, Any] = dict(primary_card.metadata)
+    primary_attributes: Dict[str, Any] = _dict_with_str_keys(primary_card.metadata)
 
-    def _collect_model_settings() -> Dict[str, Any]:
+    def _collect_model_settings_meta() -> Dict[str, Any]:
         collected: Dict[str, Any] = {}
         for meta in meta_chain:
+            if not isinstance(meta, dict):
+                continue
             for meta_key, meta_value in meta.items():
                 if not isinstance(meta_key, _bi.str):
                     continue
-                if meta_key == "model" or meta_key.startswith("model-settings"):
-                    if meta_key not in collected and meta_value not in (None, "", [], {}):
-                        collected[meta_key] = meta_value
+                if not meta_key.startswith("model-settings"):
+                    continue
+                if meta_value in (None, "", [], {}):
+                    continue
+                collected.setdefault(meta_key, meta_value)
         return collected
 
     model_override = None
@@ -999,11 +1011,9 @@ def build_runnable_instructions_config(
                 model_from_chain = candidate
                 break
 
-    model_settings = _collect_model_settings()
+    model_settings_meta = _collect_model_settings_meta()
 
-    for key, value in model_settings.items():
-        if key == "model":
-            continue
+    for key, value in model_settings_meta.items():
         if key not in primary_attributes:
             primary_attributes[key] = value
 
@@ -1017,16 +1027,44 @@ def build_runnable_instructions_config(
             else:
                 primary_attributes[key] = value
 
-    model_candidate = primary_attributes.get("model")
+    model_candidate = primary_attributes.get("model") if isinstance(primary_attributes.get("model"), _bi.str) else None
+
     if isinstance(model_candidate, _bi.str) and model_candidate.strip():
         final_model = model_candidate.strip()
-    elif model_candidate not in (None, "", [], {}):
-        final_model = str(model_candidate)
     else:
         try:
             final_model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
         except Exception:
             final_model = "gpt-5"
+
+    primary_attributes["model"] = final_model
+
+    def _build_model_settings(attrs: Dict[str, Any], model_name: Optional[str]) -> ModelSettings:
+        if not isinstance(attrs, dict):
+            return ModelSettings()
+        scoped: Dict[str, Any] = {}
+        if model_name:
+            try:
+                scoped_candidate = attrs.get(f"model-settings-{model_name}")
+            except Exception:
+                scoped_candidate = None
+            if isinstance(scoped_candidate, dict):
+                scoped = dict(scoped_candidate)
+        if not scoped:
+            try:
+                generic = attrs.get("model-settings")
+            except Exception:
+                generic = None
+            if isinstance(generic, dict):
+                scoped = dict(generic)
+        if not isinstance(scoped, dict):
+            scoped = {}
+        try:
+            return ModelSettings(**scoped)
+        except Exception:
+            return ModelSettings()
+
+    cfg_model_settings = _build_model_settings(primary_attributes, final_model)
 
     cfg = RunnableConfig(
         id=str(selected_id or ""),
@@ -1044,6 +1082,7 @@ def build_runnable_instructions_config(
         instructions=str(instructions or ""),
         card_text=primary_card.raw,
         model=final_model,
+        model_settings=cfg_model_settings,
         attributes=primary_attributes,
         mcp=mcp_list,
         tools=tools_list,
@@ -1052,6 +1091,12 @@ def build_runnable_instructions_config(
 
     try:
         setattr(cfg, "name", cfg.prompt or cfg.agent or cfg.project or cfg.id or "")
+    except Exception:
+        pass
+
+    try:
+        if isinstance(cfg.attributes, dict):
+            cfg.attributes["model"] = cfg.model
     except Exception:
         pass
 
@@ -1218,15 +1263,14 @@ async def call_async(
         _reset_override()
         return cfg_err
 
-    # cfg is ready; dump a normalized snapshot in DEBUG
     try:
-        from dataclasses import asdict as _asdict
-        snap = _asdict(cfg)
-        snap["instructions_len"] = len(cfg.instructions or "")
-        snap.pop("instructions", None)
-        debug_print("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False, indent=2))
+        cfg_payload = asdict(cfg)
     except Exception:
-        pass
+        cfg_payload = getattr(cfg, "__dict__", {})
+    try:
+        debug_print("[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2))
+    except Exception:
+        debug_print("[api]", "[CFG]", str(cfg_payload))
 
     # Initialize bot: if a project is provided, pass it; otherwise allow app layer
     # to prefer CALL_TELEGRAM_TOKEN or TELEGRAM_TOKEN per its own logic.
@@ -1330,10 +1374,9 @@ async def call_async(
                 status = 403
                 err_code = "REQUEST_FORBIDDEN"
                 try:
-                    import json as _json
                     brace = msg.find("{")
                     if brace != -1:
-                        details = _json.loads(msg[brace:])
+                        details = json.loads(msg[brace:])
                 except Exception:
                     details = None
             if status == 403:
@@ -1733,9 +1776,8 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
     """
     try:
         try:
-            import json
             debug_print(
-                "[api]", "interpret_exec_payload:|-\n",
+                "[api]", "interpret_exec_payload:|-\n" + 
                 json.dumps(payload, ensure_ascii=False, indent=2),
             )
         except Exception:
@@ -1762,9 +1804,8 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
                 "description": "When 'event' is provided, do not include project|agent|prompt|target selectors",
                 "code": "BAD_REQUEST",
             }
-        import json as _json
         # Always use full payload JSON as input
-        inp = _json.dumps(payload, ensure_ascii=False)
+        inp = json.dumps(payload, ensure_ascii=False)
         kwargs = {
             "project": None,
             "agent": None,

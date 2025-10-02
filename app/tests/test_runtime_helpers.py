@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+from agents.model_settings import ModelSettings
+
 import pytest
 
 from call.app import call as app_call
@@ -28,6 +30,7 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
         path="prompt/ready/FooAgent.md",
         attributes={},
         model="gpt-4.1-mini",
+        model_settings=ModelSettings(),
         tools=["FileSearchTool[ExampleStore]"],
     )
 
@@ -61,7 +64,7 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
     async def fake_send(**kwargs):  # pragma: no cover - should not be called
         calls.append("send")
 
-    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, tools=[])
+    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, model_settings=ModelSettings(), tools=[])
 
     monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
     monkeypatch.setattr(app_call, "send_telegram_welcome_message", fake_send, raising=False)
@@ -246,6 +249,7 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
         id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
+        model_settings=ModelSettings(),
         attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",
@@ -319,6 +323,7 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
         id="FooAgent",
         instructions="",
         model="gpt-4.1-mini",
+        model_settings=ModelSettings(),
         attributes={},
         path="prompt/ready/FooAgent.md",
         project="Proj",

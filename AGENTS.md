@@ -41,6 +41,7 @@ Review the relevant directory documentation before making changes; many subsyste
   - Keep helper functions small, cohesive, and readable. Extract utilities rather than allowing sprawling functions to accrete conditional branches.
   - Avoid fallback pathways that obscure control flow. Make failure explicit and surface structured errors instead of silent recovery.
   - Log every exception and every I/O error, even when execution can continue, so operational issues are always observable.
+  - Access dataclass and config attributes directly. Do not use `getattr` for fields like `cfg.id` or `sub_cfg.instructions`; rely on explicit attribute access so static analyzers (and tests) stay accurate.
 
 ## Contribution Workflow
 
