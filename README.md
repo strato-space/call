@@ -133,14 +133,13 @@ The script uses current directory as the workspace root, applies Git LF/CRLF set
 
 - Keys
   - `model`: the selected model id (e.g., `gpt-5`, `gpt-4.1`).
-  - `model-params`: generic settings applicable across models.
-  - `model-params-<model>`: model-specific settings. This is the recommended, canonical form.
+  - `model-settings`: generic settings applicable across models.
+  - `model-settings-<model>`: model-specific settings. This is the recommended, canonical form.
 - Runtime precedence: when a prompt, agent, and project each declare a `model`, the runtime now applies `prompt > agent > project > $LLM_MODEL` (environment default). Tests assert this ordering to prevent regressions.
 - Runtime helpers: the runtime now exposes `_send_welcome_banner()` and `_embed_files_in_user_input()` so the Telegram banner logic and JSON file embedding can be unit-tested. `test_runtime_helpers.py` covers both the units and how `build_and_run_agent()` wires them up.
 
 - Excluded (do not use in new cards)
-  - `model_params`, `modelParams` (generic) and `model_params_<model>`, `modelParams<model>` (model-suffixed) are not part of the documented schema and must be avoided. Use the hyphenated forms `model-params` and `model-params-<model>` instead.
-  - Backward-compatibility: the runtime may still recognize these legacy keys, but they are deprecated and will be removed. Prefer hyphenated keys in all new/updated cards.
+  - `model_params`, `modelParams` (generic) and `model_params_<model>`, `modelParams<model>` (model-suffixed) are not part of the documented schema and must be avoided. Use the hyphenated forms `model-settings` and `model-settings-<model>` instead.
 
 - Recognized fields in params
   - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `verbosity` (`low|medium|high`)
@@ -151,11 +150,11 @@ The script uses current directory as the workspace root, applies Git LF/CRLF set
 ```yaml
 model: gpt-5
 
-model-params-gpt-5:
+model-settings-gpt-5:
   reasoning:
     effort: low
 
-model-params-gpt-4.1:
+model-settings-gpt-4.1:
   temperature: 0.2
   top_p: 0.9
 ```

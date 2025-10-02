@@ -2,6 +2,7 @@
 
 import pytest
 from types import SimpleNamespace
+from agents.model_settings import ModelSettings
 from agents.tool import FunctionTool
 
 pytestmark = pytest.mark.anyio("asyncio")
@@ -85,6 +86,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         prompt="HelperPrompt",
         instructions="",
         model="gpt-4.1-mini",
+        model_settings=ModelSettings(),
         attributes={},
         tools=["FileSearchTool[foo]"] ,
         mcp=[],
@@ -101,6 +103,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         project="AgentFab",
         instructions="",
         model="gpt-4.1-mini",
+        model_settings=ModelSettings(),
         attributes={"agents": {"HelperAgent": "desc"}},
         path="agent/AgentFab/agent.md",
         tools=["WebSearchTool"],
