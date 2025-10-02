@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field
+from agents.model_settings import ModelSettings
+from dataclasses import dataclass, field, asdict
 from contextvars import ContextVar
 import os
 import sqlite3
 import asyncio
+import json
 from pathlib import Path as _Path
 from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
@@ -20,6 +22,19 @@ _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
     "call_attribute_overrides",
     default=None,
 )
+
+
+def _dict_with_str_keys(data: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    normalized: Dict[str, Any] = {}
+    for key, value in data.items():
+        try:
+            key_str = str(key)
+        except Exception:
+            continue
+        normalized[key_str] = value
+    return normalized
 
 
 def _normalize_attribute_overrides(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -577,8 +592,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     if ctx_items:
         ordered['context'] = ctx_items
     if ordered:
-        import json as _json
-        return (_json.dumps(ordered, ensure_ascii=False), ordered)
+        return (json.dumps(ordered, ensure_ascii=False), ordered)
     return ((main_text or ''), None)
 
 
@@ -621,6 +635,7 @@ class RunnableConfig:
 
     # Runtime configuration and attributes
     model: str = "gpt-5"
+    model_settings: ModelSettings = field(default_factory=ModelSettings)
     attributes: Dict[str, Any] = field(default_factory=dict)
     mcp: List[Dict[str, Any]] = field(default_factory=list)
     # Declared tools to enable for the run (e.g., ["WebSearchTool", "image_genetation_tool"]) 
@@ -630,6 +645,7 @@ class RunnableConfig:
     base_dir: str = ""
 
 # todo исключить обращение к файловой системе, использовать repo.db и радиально упростить код исключив взаимное влиние prompt / agent /project за исключением model и model-settings /  model-settings-${model}
+
 def build_runnable_instructions_config(
     *,
     project: Optional[str],
@@ -639,100 +655,52 @@ def build_runnable_instructions_config(
     input: Optional[str] = None,
     attributes_override: Optional[Dict[str, Any]] = None,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
-    """Build a minimal runnable configuration DTO from repository selection.
+    """Build a minimal runnable configuration DTO from repository selection."""
 
-    Returns (cfg, err) where:
-      - cfg is RunnableConfig when successful and err is None
-      - err is an error dict (same shape as _error_payload) when selection fails
-
-    Behavior:
-      - Uses resolve_agent(project, agent, prompt) to pick a single agent/prompt
-      - Fills id, project, agent, prompt, path, base_dir, instructions, attributes, mcp
-      - Best-effort parse of agent.md/prompt.md to populate attributes/instructions/model/tools if present
-    """
-    # Local helpers (avoid importing app layer):
     import os as _os
     from pathlib import Path as _Path
-    import yaml as _yaml
 
-    from call.lib.utils import parse_metadata_and_prompt
+    missing_card_exc = getattr(call_repo, "CardNotFoundError", FileNotFoundError)
+    malformed_card_exc = getattr(call_repo, "CardFormatError", ValueError)
 
-    def _read(p):
-        try:
-            return _Path(p).read_text(encoding="utf-8")
-        except Exception:
-            return ""
+    @dataclass
+    class _CardBundle:
+        metadata: Dict[str, Any]
+        prompt: str
+        raw: str
 
-    def _load_card(path: _Path | None) -> tuple[Dict[str, Any], str, str]:
-        """MD-only loader: returns (metadata_dict, body_text, raw_text) for Markdown cards.
-
-        For non-existent paths or non-MD files, returns empty values; caller enforces strictness.
-        """
-        if not path or not _Path(path).exists():
-            return {}, "", ""
-        text = _read(path)
-        if not text:
-            return {}, "", ""
-        suffix = str(path).lower()
-        if suffix.endswith(('.md', '.markdown')):
-            try:
-                parsed = parse_metadata_and_prompt(text, path=str(path))
-            except ValueError:
-                try:
-                    logging.getLogger("call.api").exception("Failed to parse metadata for card %s", path)
-                except Exception:
-                    pass
-                return {}, "", text
-            body = str((parsed or {}).get("prompt") or "")
-            meta = dict(parsed or {})
-            meta.pop("prompt", None)
-            return meta, body, text
-        # Non-MD: caller will error out if strict
-        if suffix.endswith(('.yaml', '.yml')):
-            import yaml as _yaml
-            data = _yaml.safe_load(text) or {}
-            if isinstance(data, dict):
-                return data, "", text
-            raise ValueError(f"Card YAML did not parse into a mapping ({path})")
-        raise ValueError(f"Unsupported card format ({path})")
-
-    def _listify(value: Any) -> List[Any]:
+    def _ensure_list(value: Any) -> List[Any]:
         if isinstance(value, _bi.list):
-            return [v for v in value if v is not None]
+            return [item for item in value if item is not None]
         if value is None:
             return []
         return [value]
 
-    def _norm_list(value: Any) -> List[str]:
-        out = []
-        for v in _listify(value):
-            if v is None:
-                continue
-            if isinstance(v, _bi.str):
-                val = v.strip()
-                if val:
-                    out.append(val)
+    def _string_items(value: Any) -> List[str]:
+        result: List[str] = []
+        for item in _ensure_list(value):
+            if isinstance(item, _bi.str):
+                text = item.strip()
+                if text:
+                    result.append(text)
             else:
-                out.append(str(v))
-        return out
-
-    def _normalize_id(value: Any) -> Optional[str]:
-        if value is None:
-            return None
-        try:
-            val = str(value).strip()
-        except Exception:
-            return None
-        return val or None
-
-    def _copy_attrs(src: Dict[str, Any] | None) -> Dict[str, Any]:
-        if not isinstance(src, dict):
-            return {}
-        result = dict(src)
-        result.pop("prompt", None)
+                text = str(item).strip()
+                if text:
+                    result.append(text)
         return result
 
-    resolved_env: Dict[str, Any] | None = None
+    def _model_from(meta: Dict[str, Any] | None) -> Optional[str]:
+        if not isinstance(meta, dict):
+            return None
+        value = meta.get("model")
+        if isinstance(value, _bi.str) and value.strip():
+            return value.strip()
+        for key, val in meta.items():
+            if isinstance(key, str) and key.startswith("model-") and not key.startswith("model-settings"):
+                if isinstance(val, _bi.str) and val.strip():
+                    return val.strip()
+                return str(val)
+        return None
 
     overrides_in = attributes_override
     if overrides_in is None:
@@ -742,737 +710,498 @@ def build_runnable_instructions_config(
             overrides_in = None
     attribute_overrides = _normalize_attribute_overrides(overrides_in)
 
-    # 0) Target interpretation (prompt > agent > project) and wildcard prompt resolution
     try:
-        proj2, agent2, prompt2, terr = interpret_target(project=project, agent=agent, prompt=prompt, target=target)
+        project_sel, agent_sel, prompt_sel, target_err = interpret_target(
+            project=project,
+            agent=agent,
+            prompt=prompt,
+            target=target,
+        )
     except Exception:
-        proj2, agent2, prompt2, terr = project, agent, prompt, None
-    if terr is not None:
-        err = _error_payload(
+        project_sel, agent_sel, prompt_sel, target_err = project, agent, prompt, None
+
+    if target_err is not None:
+        return None, _error_payload(
             agent=(agent or ""),
             input=(input or ""),
-            exc=terr.get("description", "bad target"),
-            status=int(terr.get("status", 400)),
-            code=str(terr.get("code")),
+            exc=target_err.get("description", "bad target"),
+            status=int(target_err.get("status", 400)),
+            code=str(target_err.get("code")),
             project=project,
-            options=terr.get("options") or [],
+            options=target_err.get("options") or [],
         )
-        return None, err
-    project, agent, prompt = proj2, agent2, prompt2
 
-    # Prompt wildcard: narrow to unique match using repository filters
-    try:
-        if isinstance(prompt, str) and ("*" in prompt):
-            import re as _re
-            rx = _re.compile("^" + _re.escape(prompt).replace("\\*", ".*") + "$", _re.IGNORECASE)
-            try:
-                items = call_repo.list_prompts(project=project, agent=agent)
-            except Exception:
-                items = []
-            matches = [x for x in (items or []) if rx.match(str(x.get("prompt") or ""))]
-            if not matches:
-                # Build fuzzy suggestions from available prompts in scope (then globally)
-                def _suggest(prj, ag, pat):
-                    try:
-                        pool = call_repo.list_prompts(project=prj, agent=ag)
-                    except Exception:
-                        pool = []
-                    pat_l = str(pat or "").lower()
-                    sugg = []
-                    for it in pool or []:
-                        pid = str(it.get("prompt") or "").lower()
-                        if (pat_l and (pat_l in pid)):
-                            sugg.append({"prompt": it.get("prompt"), "project": it.get("project"), "agent": it.get("agent")})
-                            if len(sugg) >= 12:
-                                break
-                    return sugg
-                suggestions = _suggest(project, agent, prompt)
-                if not suggestions:
-                    suggestions = _suggest(None, None, prompt)
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input=(input or ""),
-                    exc="not found",
-                    status=404,
-                    code="NO_DATA_FOUND",
-                    project=project,
-                    options=suggestions,
-                )
-            if len(matches) > 1:
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input=(input or ""),
-                    exc="Multiple prompts matched your criteria",
-                    status=400,
-                    code="TOO_MANY_ROWS",
-                    project=project,
-                    options=matches,
-                )
-            prompt = str(matches[0].get("prompt") or prompt)
-    except Exception:
-        pass
-
-    # Special case: blank selection (no project/agent/prompt/target) — build empty cfg
-    if not (str(project or "").strip() or str(agent or "").strip() or str(prompt or "").strip() or str(target or "").strip()):
-        return RunnableConfig(
-            id=None,
-            type=None,
-            path=None,
-            url=None,
-            goal=None,
-            role=None,
-            project=None,
-            agent=None,
-            prompt=None,
-            target=None,
-            input=(input or None),
-            prompt_text=None,
-            instructions="",
+    if not (str(project_sel or "").strip() or str(agent_sel or "").strip() or str(prompt_sel or "").strip()):
+        cfg = RunnableConfig(
+            id="",
+            type="",
+            path="",
+            url="",
+            goal="",
+            role="",
+            project="",
+            agent="",
+            prompt="",
+            target=target or "",
+            input=str(input or ""),
+            prompt_text="",
+            instructions=str(input or ""),
             card_text="",
             model=str(_os.environ.get("LLM_MODEL", "gpt-5")),
             attributes={},
             mcp=[],
             tools=[],
-            base_dir=None,
-        ), None
-
-    # Resolve selection to determine agent path and effective project/name
-    pr_path_override: _Path | None = None  # optional filesystem fallback for malformed prompts
-    path_p = None
-    if (project and not (agent or prompt)):
-        # If selection is project-only:
-        # - When coming from explicit target, always keep project-level runnable (security: prompt must not replace project/agent)
-        # - For preview/build (input is None), keep project-level
-        # - Otherwise (legacy path without target), attempt agent resolution to satisfy historical tests
-        if (target and str(target).strip()) or (input is None):
-            name = str(project or "")
-            proj = project
-            path_p = None
-        else:
-            try:
-                rows = call_repo.find_agents(project=project, agent=None)
-            except Exception:
-                rows = []
-            if not rows:
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input=(input or ""),
-                    exc="No agent found matching criteria — not found",
-                    status=404,
-                    code="NO_DATA_FOUND",
-                    project=project,
-                )
-            if len(rows) > 1:
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input=(input or ""),
-                    exc="Multiple agents matched your criteria",
-                    status=400,
-                    code="TOO_MANY_ROWS",
-                    project=project,
-                    options=rows[:20],
-                )
-            # Single agent; proceed as if explicitly selected
-            agent = rows[0].get("agent") or agent
-            try:
-                env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
-            except Exception as e:
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input="",
-                    exc=e,
-                    status=500,
-                    code="INTERNAL_ERROR",
-                    project=project,
-                )
-            if not isinstance(env, dict) or not env.get("ok"):
-                return None, _error_payload(
-                    agent=(agent or ""),
-                    input=(input or ""),
-                    exc="No agent found matching criteria — not found",
-                    status=404,
-                    code="NO_DATA_FOUND",
-                    project=project,
-                )
-            resolved = env.get("resolved") or {}
-            name = str(resolved.get("name") or "")
-            proj = resolved.get("project") or project
-            path = resolved.get("path")
-            from pathlib import Path as _Path
-            path_p = _Path(path) if path else None
-    else:
+            base_dir="",
+        )
+        if attribute_overrides:
+            attrs = dict(attribute_overrides)
+            model_override = attrs.get("model")
+            if isinstance(model_override, str) and model_override.strip():
+                cfg.model = model_override.strip()
+            cfg.attributes.update(attribute_overrides)
         try:
-            env = resolve_agent(project=project, agent=agent, prompt=prompt, target=target)
-        except Exception as e:
+            setattr(cfg, "name", cfg.prompt or cfg.agent or cfg.project or cfg.id or "")
+        except Exception:
+            pass
+        return cfg, None
+
+    resolved_project = project_sel or project or ""
+    resolved_agent = agent_sel or agent or ""
+    resolved_prompt = prompt_sel or prompt or ""
+    resolved: dict[str, Any] = {}
+
+    needs_agent_resolution = bool(str(resolved_agent).strip() or str(resolved_prompt).strip())
+
+    try:
+        env = resolve_agent(
+            project=project_sel,
+            agent=agent_sel,
+            prompt=prompt_sel,
+            target=target,
+        )
+    except Exception as exc:
+        return None, _error_payload(
+            agent=(agent_sel or agent or ""),
+            input=(input or ""),
+            exc=exc,
+            status=500,
+            code="INTERNAL_ERROR",
+            project=project_sel or project,
+        )
+
+    if not isinstance(env, dict):
+        return None, _error_payload(
+            agent=(agent_sel or agent or ""),
+            input=(input or ""),
+            exc="Agent resolution failed",
+            status=500,
+            code="INTERNAL_ERROR",
+            project=project_sel or project,
+        )
+
+    if env.get("ok"):
+        resolved = env.get("resolved") or {}
+        resolved_project = resolved.get("project") or resolved_project
+        resolved_agent = resolved.get("name") or resolved_agent
+    else:
+        code_val = str(env.get("code") or "").upper()
+        original_project_requested = isinstance(project, str) and project.strip()
+        if (
+            not needs_agent_resolution
+            and code_val == "TOO_MANY_ROWS"
+            and not original_project_requested
+            and (target or "").strip()
+        ):
+            resolved = {}
+        else:
+            return None, env
+
+    try:
+        project_row, agent_row, prompt_row = call_repo.select_unique_rows(
+            project=resolved_project or None,
+            agent=resolved_agent or None,
+            prompt=resolved_prompt or None,
+            require_project=False,
+            require_agent=False,
+            require_prompt=False,
+        )
+    except getattr(call_repo, "SelectionError", Exception) as exc:  # type: ignore[attr-defined]
+        status = getattr(exc, "status", 400)
+        code = getattr(exc, "code", "INTERNAL_ERROR")
+        options = getattr(exc, "options", None)
+        details = getattr(exc, "filters", None)
+        if not isinstance(details, dict):
+            details = None
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc=str(exc),
+            status=int(status or 400),
+            code=str(code) if code is not None else "INTERNAL_ERROR",
+            project=resolved_project or project,
+            options=options if isinstance(options, _bi.list) else None,
+            details=details,
+        )
+
+    requested_prompt_id = (resolved_prompt or "").strip()
+
+    if requested_prompt_id and prompt_row is None:
+        try:
+            fallback_candidates = call_repo.find_prompts(
+                project=resolved_project or None,
+                agent=None,
+                prompt=requested_prompt_id,
+                state=None,
+                target=None,
+            )
+        except Exception:
+            fallback_candidates = []
+
+        valid_fallbacks: List[Dict[str, Any]] = []
+        for row in fallback_candidates or []:
+            if not isinstance(row, dict):
+                continue
+            pj = str(row.get("project") or "").strip()
+            ag_name = str(row.get("agent") or "").strip()
+            if not (pj and ag_name):
+                continue
+            valid_fallbacks.append(row)
+
+        if len(valid_fallbacks) > 1:
             return None, _error_payload(
-                agent=(agent or ""),
-                input="",
-                exc=e,
-                status=500,
-                code="INTERNAL_ERROR",
-                project=project,
+                agent=(resolved_agent or agent or ""),
+                input=(input or ""),
+                exc="Multiple prompts matched your criteria",
+                status=400,
+                code="TOO_MANY_ROWS",
+                project=resolved_project or project,
+                options=valid_fallbacks[:20],
+                details={"prompt": requested_prompt_id},
             )
 
-        if not isinstance(env, dict) or not env.get("ok"):
-            # Agent resolution failed.
-            # 1) If no prompt is provided, return 404 (do NOT fall back to project-only).
-            if not (isinstance(prompt, str) and prompt.strip()):
+        if len(valid_fallbacks) == 1:
+            prompt_row = valid_fallbacks[0]
+            resolved_agent = prompt_row.get("agent") or resolved_agent
+            resolved_project = prompt_row.get("project") or resolved_project
+
+            if agent_row is None:
+                agent_name = prompt_row.get("agent")
+                project_name = prompt_row.get("project") or resolved_project
+                try:
+                    agent_candidates = call_repo.find_agents(
+                        project=project_name or None,
+                        agent=agent_name or None,
+                        target=None,
+                    )
+                except Exception:
+                    agent_candidates = []
+                if len(agent_candidates) == 1:
+                    agent_row = agent_candidates[0]
+            if project_row is None:
+                project_name = prompt_row.get("project") or resolved_project
+                try:
+                    project_candidates = call_repo.find_projects(
+                        project=project_name or None,
+                        target=None,
+                    )
+                except Exception:
+                    project_candidates = []
+                if len(project_candidates) == 1:
+                    project_row = project_candidates[0]
+
+        elif fallback_candidates:
+            return None, _error_payload(
+                agent=(resolved_agent or agent or ""),
+                input=(input or ""),
+                exc="Prompt metadata could not be parsed",
+                status=400,
+                code="BAD_CARD_FORMAT",
+                project=resolved_project or project,
+                details={"prompt": requested_prompt_id},
+            )
+
+    resolved_prompts = resolved.get("prompts") if isinstance(resolved, dict) else None
+    resolved_prompts_list = []
+    if isinstance(resolved_prompts, _bi.list):
+        for item in resolved_prompts:
+            try:
+                text = str(item).strip()
+            except Exception:
+                continue
+            if text:
+                resolved_prompts_list.append(text)
+    elif isinstance(resolved_prompts, _bi.str) and resolved_prompts.strip():
+        resolved_prompts_list = [resolved_prompts.strip()]
+
+    requested_prompt = resolved_prompt
+
+    if resolved_prompt and prompt_row is None:
+        if resolved_prompts_list:
+            if resolved_prompt not in resolved_prompts_list:
                 return None, _error_payload(
-                    agent=(agent or ""),
-                    input="",
-                    exc="No agent found matching criteria — not found",
+                    agent=(resolved_agent or agent or ""),
+                    input=(input or ""),
+                    exc="No prompt found matching the provided filters",
                     status=404,
                     code="NO_DATA_FOUND",
-                    project=project,
+                    project=resolved_project or project,
+                    details={
+                        "prompt": resolved_prompt,
+                        "agent": resolved_agent or agent or "",
+                        "project": resolved_project or project or "",
+                    },
                 )
-            # 2) Try DB prompt row (respect project filter first)
-            prompt_row = None
-            try:
-                recs = call_repo.find_prompts(project=project, agent=None, prompt=prompt)
-                prompt_row = recs[0] if recs else None
-            except Exception:
-                prompt_row = None
-            if (prompt_row is None) and (not project):
-                try:
-                    recs_any = call_repo.find_prompts(project=None, agent=None, prompt=prompt)
-                    prompt_row = recs_any[0] if recs_any else None
-                except Exception:
-                    prompt_row = None
-            if prompt_row is None:
-                # 3) With project specified, check filesystem for malformed prompt id only to emit 400; otherwise 404
-                if project:
-                    try:
-                        from call.lib.discovery import discover_prompt_repo as _dpr
-                        _base = _Path(_dpr())
-                        pr_fallback: _Path | None = None
-                        for p in (_base / "ready").rglob("*.md"):
-                            if p.stem == str(prompt).strip():
-                                pr_fallback = _Path(p); break
-                        if pr_fallback is None:
-                            for p in (_base / "draft").rglob("*.md"):
-                                if p.stem == str(prompt).strip():
-                                    pr_fallback = _Path(p); break
-                    except Exception:
-                        pr_fallback = None
-                    if pr_fallback is None:
-                        return None, _error_payload(
-                            agent=(agent or ""),
-                            input="",
-                            exc="No agent found matching criteria — not found",
-                            status=404,
-                            code="NO_DATA_FOUND",
-                            project=project,
-                        )
-                    # Load card text to detect malformed METADATA; if malformed, allow strict checks later (400); else return 404
-                    meta_chk, body_chk, raw_chk = _load_card(pr_fallback)
-                    if not (isinstance(meta_chk, dict) and meta_chk):
-                        # Malformed -> carry path to enforce BAD_CARD_FORMAT later
-                        name = str(prompt or "")
-                        proj = project
-                        pr_path_override = pr_fallback
-                        path_p = None
-                    else:
-                        # Valid card exists but DB row not in this project -> respect project filter and return 404
-                        return None, _error_payload(
-                            agent=(agent or ""),
-                            input="",
-                            exc="No agent found matching criteria — not found",
-                            status=404,
-                            code="NO_DATA_FOUND",
-                            project=project,
-                        )
-                else:
-                    # No project filter: allow filesystem fallback and continue strict validation path
-                    try:
-                        from call.lib.discovery import discover_prompt_repo as _dpr
-                        _base = _Path(_dpr())
-                        pr_fallback: _Path | None = None
-                        for p in (_base / "ready").rglob("*.md"):
-                            if p.stem == str(prompt).strip():
-                                pr_fallback = _Path(p); break
-                        if pr_fallback is None:
-                            for p in (_base / "draft").rglob("*.md"):
-                                if p.stem == str(prompt).strip():
-                                    pr_fallback = _Path(p); break
-                    except Exception:
-                        pr_fallback = None
-                    if pr_fallback is None:
-                        return None, _error_payload(
-                            agent=(agent or ""), input="", exc="No agent found matching criteria — not found",
-                            status=404, code="NO_DATA_FOUND", project=project
-                        )
-                    name = str(prompt or "")
-                    proj = project
-                    pr_path_override = pr_fallback
-                    path_p = None
-            else:
-                # Use prompt row to continue building config without agent resolution
-                name = str(prompt or "")
-                proj = prompt_row.get("project") or project
-                path_p = None
-            # Continue to card loading below; pr_path will be derived from DB row or override
         else:
-            # env ok
-            resolved = env.get("resolved") or {}
-            resolved_env = resolved
-            name = str(resolved.get("name") or "")
-            proj = resolved.get("project") or project
-            path = resolved.get("path")
-            from pathlib import Path as _Path
-            path_p = _Path(path) if path else None
+            resolved_prompt = ""
 
-    # Load cards using repo index hints (project.yaml/agent.yaml/prompt.md|yaml)
-    proj_yaml: _Path | None = None
+    resolved_has_agent_source = False
+    if isinstance(resolved, dict) and resolved_agent:
+        resolved_has_agent_source = bool(resolved.get("path") or resolved.get("id") or resolved.get("target"))
+
+    if resolved_agent and agent_row is None and not resolved_has_agent_source:
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc="No agent found matching the provided filters",
+            status=404,
+            code="NO_DATA_FOUND",
+            project=resolved_project or project,
+            details={"agent": resolved_agent, "project": resolved_project or project or ""},
+        )
+
+    if resolved_project and project_row is None and not (agent_row or prompt_row):
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc="No project found matching the provided filters",
+            status=404,
+            code="NO_DATA_FOUND",
+            project=resolved_project or project,
+            details={"project": resolved_project or project or ""},
+        )
+
+    def _load(row: Dict[str, Any] | None) -> _CardBundle:
+        if not row:
+            return _CardBundle({}, "", "")
+        card_id = row.get("id") or row.get("target")
+        if not card_id:
+            raise missing_card_exc("card id missing")
+        meta, body, raw = call_repo.get_card(card_id)
+        meta_dict = dict(meta or {}) if isinstance(meta, dict) else {}
+        meta_dict.pop("prompt", None)
+        return _CardBundle(meta_dict, str(body or ""), str(raw or ""))
+
     try:
-        if proj:
-            recs_proj = call_repo.find_projects(project=proj)
-            rec_proj = recs_proj[0] if recs_proj else None
-            if rec_proj:
-                _pv = rec_proj.get("path") or ""
-                _cv = rec_proj.get("card") or ""
-                _p: _Path | None = None
-                if _pv:
-                    _p = _Path(_pv)
-                elif _cv:
-                    # Convert repo-relative card to absolute
-                    card_s = str(_cv)
-                    try:
-                        if card_s.startswith("agent/"):
-                            from call.lib.discovery import discover_agent_repo as _dar
-                            _p = _Path(_dar()) / card_s.split("agent/", 1)[1]
-                        elif card_s.startswith("prompt/"):
-                            from call.lib.discovery import discover_prompt_repo as _dpr
-                            _p = _Path(_dpr()) / card_s.split("prompt/", 1)[1]
-                    except Exception:
-                        _p = None
-                if _p is not None:
-                    proj_yaml = _p if _p.exists() else _p
-    except Exception:
-        proj_yaml = None
-    # Filesystem fallback: locate project.md under agent or prompt repo when DB row is absent
-    if proj and proj_yaml is None:
-        try:
-            from call.lib.discovery import discover_agent_repo as _dar, discover_prompt_repo as _dpr
-            ar = None; pr = None
-            try:
-                ar = _dar()
-            except Exception:
-                ar = None
-            try:
-                pr = _dpr()
-            except Exception:
-                pr = None
-            if ar:
-                p = _Path(ar) / proj / "project.md"
-                if p.exists():
-                    proj_yaml = p
-            if (proj_yaml is None) and pr:
-                p = _Path(pr) / proj / "project.md"
-                if p.exists():
-                    proj_yaml = p
-        except Exception:
-            proj_yaml = None
+        project_card = _load(project_row)
+        agent_card = _load(agent_row)
+        prompt_card = _load(prompt_row)
+    except malformed_card_exc as exc:
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc=str(exc),
+            status=400,
+            code="BAD_CARD_FORMAT",
+            project=resolved_project or project,
+        )
+    except missing_card_exc as exc:
+        return None, _error_payload(
+            agent=(resolved_agent or agent or ""),
+            input=(input or ""),
+            exc=str(exc),
+            status=404,
+            code="NO_DATA_FOUND",
+            project=resolved_project or project,
+        )
 
-    pr_path: _Path | None = None
-    pr_meta: Dict[str, Any] | None = None
-    try:
-        if isinstance(prompt, str) and prompt.strip():
-            recs_pr = call_repo.find_prompts(project=proj, agent=None, prompt=prompt.strip())
-            rec_pr = recs_pr[0] if recs_pr else None
-            if rec_pr:
-                _pval = rec_pr.get("path") or ""
-                _cval = rec_pr.get("card") or rec_pr.get("rel_path") or ""
-                _pp: _Path | None = None
-                if _pval:
-                    _pp = _Path(_pval)  # type: ignore[index]
-                elif _cval:
-                    card_s = str(_cval)
-                    try:
-                        if card_s.startswith("agent/"):
-                            from call.lib.discovery import discover_agent_repo as _dar
-                            _pp = _Path(_dar()) / card_s.split("agent/", 1)[1]
-                        elif card_s.startswith("prompt/"):
-                            from call.lib.discovery import discover_prompt_repo as _dpr
-                            _pp = _Path(_dpr()) / card_s.split("prompt/", 1)[1]
-                    except Exception:
-                        _pp = None
-                if _pp is not None:
-                    pr_path = _pp if _pp.exists() else _pp
-            # Filesystem fallback: if DB row is missing (e.g., malformed METADATA stripped project/agent),
-            # attempt to locate a prompt file by stem under prompt repo, preferring 'ready' over 'draft'.
-            # IMPORTANT: only do this when no explicit project filter is provided. Otherwise we might cross projects.
-            if (pr_path is None) and (not proj):
-                try:
-                    from call.lib.discovery import discover_prompt_repo as _dpr
-                    base = _Path(_dpr())
-                    candidates: list[_Path] = []
-                    # Prefer ready
-                    try:
-                        for p in (base / "ready").rglob("*.md"):
-                            if p.stem == prompt.strip():
-                                candidates.append(_Path(p))
-                    except Exception:
-                        pass
-                    # Then draft
-                    try:
-                        for p in (base / "draft").rglob("*.md"):
-                            if p.stem == prompt.strip():
-                                candidates.append(_Path(p))
-                    except Exception:
-                        pass
-                    if candidates:
-                        # Choose the first match (ready-first order) for validation; we do not try to guess project/agent here
-                        pr_path = candidates[0]
-                except Exception:
-                    pr_path = None
-    except Exception as e:
-        return None, _error_payload(agent=(name or ""), input=(input or ""), exc=e, status=500, code="INTERNAL_ERROR", project=(proj or project))
-
-    # Parse cards
-    proj_attrs_raw, proj_instr, proj_raw = _load_card(proj_yaml)
-    ag_attrs_raw, ag_instr, ag_raw = _load_card(path_p)
-    _pr_src = (pr_path_override if pr_path_override is not None else (_Path(pr_path) if pr_path else None))
-    pr_attrs_raw, pr_instr, pr_raw = _load_card(_pr_src)
-
-    proj_attrs = _copy_attrs(proj_attrs_raw)
-    ag_attrs = _copy_attrs(ag_attrs_raw)
-    pr_attrs = _copy_attrs(pr_attrs_raw)
-
-    # Strict validation: cards must be Markdown; prompt MD must contain METADATA
-    def _is_md(p: _Path | None) -> bool:
-        try:
-            return bool(p and str(p).lower().endswith((".md", ".markdown")))
-        except Exception:
-            return False
-    # Agent card must be MD when present
-    if path_p and not _is_md(path_p):
-        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Agent card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
-    # Prompt card must be MD when present (use effective source)
-    if _pr_src and not _is_md(_pr_src):
-        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt card must be Markdown (.md) with METADATA", status=400, code="BAD_CARD_FORMAT", project=proj)
-    # Prompt MD must contain METADATA YAML
-    if _pr_src and _is_md(_pr_src) and not (isinstance(pr_attrs, dict) and pr_attrs):
-        return None, _error_payload(agent=(name or ""), input=(input or ""), exc="Prompt MD missing or invalid METADATA YAML", status=400, code="BAD_CARD_FORMAT", project=proj)
-
-    # Build instructions and attributes (prompt > agent > project)
-    attributes: Dict[str, Any] = {}
-    instr: str = ""
-    if pr_instr or pr_attrs or pr_raw:
-        # Prefer prompt attributes/body
-        attributes = pr_attrs if isinstance(pr_attrs, dict) else {}
-        instr = pr_instr or ""
-    elif ag_instr or ag_attrs:
-        attributes = ag_attrs if isinstance(ag_attrs, dict) else {}
-        instr = ag_instr
-    elif proj_instr or proj_attrs:
-        attributes = proj_attrs if isinstance(proj_attrs, dict) else {}
-        instr = proj_instr
+    if prompt_row:
+        selected_kind = "prompt"
+    elif agent_row or resolved_agent:
+        selected_kind = "agent"
     else:
-        attributes = {}
-        instr = ""
+        selected_kind = "project"
 
-    # Non-empty preview guarantee when agent/prompt provided
-    try:
-        if (agent or prompt) and not (instr or "").strip():
-            if pr_raw and str(pr_raw).strip():
-                instr = pr_raw
-            elif ag_raw and str(ag_raw).strip():
-                instr = ag_raw
-            elif proj_raw and str(proj_raw).strip():
-                instr = proj_raw
-    except Exception:
-        pass
+    selected_row = prompt_row or agent_row or project_row or {}
+    primary_card = (
+        prompt_card
+        if selected_kind == "prompt"
+        else agent_card
+        if selected_kind == "agent"
+        else project_card
+    )
+    fallbacks = [card for card in (prompt_card, agent_card, project_card) if card is not primary_card]
 
-    # Precedence for metadata extraction: prompt > agent > project
-    def _get(meta: Dict[str, Any] | None, key: str):
-        return meta.get(key) if isinstance(meta, dict) else None
+    instructions = primary_card.prompt or ""
+    if not instructions.strip():
+        for candidate in [c.prompt for c in fallbacks] + [primary_card.raw] + [c.raw for c in fallbacks]:
+            if isinstance(candidate, str) and candidate.strip():
+                instructions = candidate
+                break
 
-    role_val = _get(pr_attrs, "role") or _get(ag_attrs, "role") or _get(proj_attrs, "role")
-    mcp_val = _get(pr_attrs, "mcp") or _get(ag_attrs, "mcp") or _get(proj_attrs, "mcp")
+    meta_chain = [_dict_with_str_keys(bundle.metadata) if isinstance(bundle.metadata, dict) else {} for bundle in (prompt_card, agent_card, project_card)]
 
-    mcp_list = _listify(mcp_val)
-
-    def _model_from(attrs: Dict[str, Any] | None) -> str | None:
-        if not isinstance(attrs, dict):
-            return None
-        try:
-            if attrs.get("model"):
-                return str(attrs.get("model"))
-        except Exception:
-            pass
-        try:
-            for k, v in attrs.items():
-                if isinstance(k, str) and k.startswith("model-") and not k.startswith("model-params"):
-                    return str(v)
-        except Exception:
-            pass
+    def _meta_value(key: str) -> Any:
+        for meta in meta_chain:
+            if key in meta and meta[key] not in (None, "", [], {}):
+                return meta[key]
         return None
 
-    # Determine runnable kind and primary absolute path
-    selected_kind: str | None = None
-    selected_abs: _Path | None = None
-    if pr_path is not None:
-        selected_kind = "prompt"
-        selected_abs = _Path(pr_path)
-    elif path_p is not None:
-        selected_kind = "agent"
-        selected_abs = _Path(path_p)
-    elif proj_yaml is not None:
-        selected_kind = "project"
-        selected_abs = _Path(proj_yaml)
+    role_val = _meta_value("role") or ""
+    goal_val = _meta_value("goal") or ""
 
-    # Compute selected_agent based on selection (do not infer prompt->agent)
-    selected_agent: Optional[str] = None
-    if selected_kind == "agent":
-        selected_agent = str(name or agent or "") or None
-    elif selected_kind == "prompt":
-        selected_agent = str(agent or "") or None
-    else:
-        selected_agent = None
-    # Align display name with the selected kind
-    try:
-        if selected_kind == "prompt" and isinstance(prompt, str) and prompt.strip():
-            name = str(prompt)
-    except Exception:
-        pass
+    mcp_list = _ensure_list(_meta_value("mcp"))
+    tools_list = _string_items(_meta_value("tools"))
 
-    # Compute rel_path and url; prefer DB row values when present
-    rel_path_val: str | None = None
-    url_val: str | None = None
-    goal_val: str | None = None
-    try:
-        if selected_kind == "prompt":
-            # Use DB row if we have it
-            try:
-                if 'rec_pr' in locals() and isinstance(rec_pr, dict):
-                    rel_path_val = str(rec_pr.get("rel_path") or "") or None
-                    url_val = str(rec_pr.get("url") or "") or None
-                    goal_val = str(rec_pr.get("goal") or "") or None
-            except Exception:
-                pass
-            # Fallback compute from filesystem base
-            if (not rel_path_val) or (not url_val):
-                from call.lib.discovery import discover_prompt_repo as _dpr
-                prepo = _dpr()
-                repo_name = "prompt"
-                try:
-                    rel_inside = selected_abs.relative_to(_Path(prepo)).as_posix()
-                except Exception:
-                    rel_inside = selected_abs.name if selected_abs else ""
-                rel_path_val = rel_path_val or (f"{repo_name}/{rel_inside}" if rel_inside else None)
-                import os as _os
-                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
-                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
-                url_val = url_val or (f"{org}/{repo_name}/blob/{branch}/{rel_inside}" if (org and rel_inside) else None)
-        elif selected_kind == "agent":
-            # DB row
-            try:
-                recs_ag = call_repo.find_agents(project=proj, agent=name)
-                rec_ag = recs_ag[0] if recs_ag else None
-                if rec_ag:
-                    rel_path_val = str(rec_ag.get("rel_path") or "") or None
-                    url_val = str(rec_ag.get("url") or "") or None
-                    goal_val = str(rec_ag.get("goal") or "") or None
-            except Exception:
-                pass
-            if (not rel_path_val) or (not url_val):
-                from call.lib.discovery import discover_agent_repo as _dar
-                arepo = _dar()
-                repo_name = "agent"
-                try:
-                    rel_inside = selected_abs.relative_to(_Path(arepo)).as_posix()
-                except Exception:
-                    rel_inside = selected_abs.name if selected_abs else ""
-                rel_path_val = rel_path_val or (f"{repo_name}/{rel_inside}" if rel_inside else None)
-                import os as _os
-                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
-                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
-                url_val = url_val or (f"{org}/{repo_name}/blob/{branch}/{rel_inside}" if (org and rel_inside) else None)
-        elif selected_kind == "project":
-            try:
-                if isinstance(rec_proj, dict):
-                    rel_path_val = str(rec_proj.get("rel_path") or "") or None
-                    url_val = str(rec_proj.get("url") or "") or None
-                    goal_val = str(rec_proj.get("goal") or "") or None
-            except Exception:
-                pass
-            if (not rel_path_val) or (not url_val):
-                # Try both repos
-                import os as _os
-                org = (_os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "") or "").rstrip("/")
-                branch = _os.environ.get("GITHUB_BRANCH", "main") or "main"
-                rel_inside = ""
-                repo_name = ""
-                try:
-                    from call.lib.discovery import discover_agent_repo as _dar
-                    ar = _dar()
-                    rel_inside = selected_abs.relative_to(_Path(ar)).as_posix()
-                    repo_name = "agent"
-                except Exception:
-                    try:
-                        from call.lib.discovery import discover_prompt_repo as _dpr
-                        pr = _dpr()
-                        rel_inside = selected_abs.relative_to(_Path(pr)).as_posix()
-                        repo_name = "prompt"
-                    except Exception:
-                        rel_inside = selected_abs.name if selected_abs else ""
-                        repo_name = ""
-                rel_path_val = rel_path_val or ((f"{repo_name}/{rel_inside}") if (repo_name and rel_inside) else None)
-                url_val = url_val or ((f"{org}/{repo_name}/blob/{branch}/{rel_inside}") if (org and repo_name and rel_inside) else None)
-    except Exception:
-        rel_path_val, url_val = (rel_path_val or None), (url_val or None)
+    def _row_value(row: Dict[str, Any] | None, key: str, fallback: Any) -> Any:
+        if isinstance(row, dict):
+            value = row.get(key)
+            if value not in (None, ""):
+                return value
+        return fallback
 
-    # Goal from metadata preference order: prompt > agent > project
-    try:
-        def _goal_from(meta: Dict[str, Any] | None) -> str:
-            if isinstance(meta, dict):
-                g = meta.get("goal") or meta.get("purpose") or meta.get("title")
-                return str(g) if g is not None else ""
-            return ""
-        goal_val = (goal_val or "") or _goal_from(pr_attrs if isinstance(pr_attrs, dict) else None) or _goal_from(ag_attrs if isinstance(ag_attrs, dict) else None) or _goal_from(proj_attrs if isinstance(proj_attrs, dict) else None) or None
-    except Exception:
-        pass
+    project_value = _row_value(project_row, "project", resolved_project)
+    agent_value = _row_value(agent_row, "agent", resolved_agent)
+    prompt_value = _row_value(prompt_row, "prompt", requested_prompt)
 
-    project_id = _normalize_id((_get(proj_attrs, "id") or proj))
-    if project_id is None:
-        project_id = _normalize_id(proj)
+    selected_id = selected_row.get("id") or selected_row.get("target") or ""
+    path_hint = selected_row.get("rel_path") or selected_row.get("path") or ""
+    url_val = selected_row.get("url") or ""
 
-    agent_id = _normalize_id((_get(ag_attrs, "id") or agent or (resolved_env.get("name") if isinstance(resolved_env, dict) else None)))
-
-    prompt_id = _normalize_id((_get(pr_attrs, "id") or prompt))
-    target_id = _normalize_id(target) if isinstance(target, str) else None
-    # Fallback: when selecting a prompt via target (prompt may be None), derive from file stem
-    try:
-        if (not prompt_id) and target_id:
-            prompt_id = target_id
-        if (not prompt_id) and (_pr_src is not None):
-            prompt_id = _normalize_id(_Path(_pr_src).stem)
-        if (not prompt_id) and (selected_kind == "prompt") and (selected_abs is not None):
-            prompt_id = _normalize_id(selected_abs.stem)
-        if prompt_id and "-" in prompt_id:
-            prompt_id = prompt_id
-    except Exception:
-        pass
-
-    selected_id: Optional[str]
-    if selected_kind == "prompt":
-        if target_id and target_id != prompt_id and (not prompt_id or ("-" in target_id and "-" not in str(prompt_id))):
-            prompt_id = target_id
-            selected_id = prompt_id
-        else:
-            selected_id = prompt_id
-    elif selected_kind == "agent":
-        selected_id = agent_id or project_id
-    elif selected_kind == "project":
-        selected_id = project_id
-    else:
-        selected_id = project_id or agent_id or prompt_id
-
-    prompt_text_val: Optional[str]
-    card_text_val: Optional[str]
-    if selected_kind == "prompt":
-        prompt_text_val = pr_instr or ""
-        card_text_val = pr_raw or ""
-    elif selected_kind == "agent":
-        prompt_text_val = ag_instr or ""
-        card_text_val = ag_raw or ""
-    elif selected_kind == "project":
-        prompt_text_val = proj_instr or ""
-        card_text_val = proj_raw or ""
-    else:
-        prompt_text_val = pr_instr or ag_instr or proj_instr or ""
-        card_text_val = pr_raw or ag_raw or proj_raw or ""
-    if prompt_text_val:
-        prompt_text_val = prompt_text_val if prompt_text_val.strip() else ""
-    else:
-        prompt_text_val = None
-    if card_text_val:
-        card_text_val = card_text_val if str(card_text_val).strip() else ""
-    else:
-        card_text_val = ""
-
-    # Tools: prefer prompt > agent > project
-    try:
-        tools_list: List[str] = _norm_list(_get(pr_attrs, "tools") or _get(ag_attrs, "tools") or _get(proj_attrs, "tools"))
-    except Exception:
-        tools_list = []
-
-    cfg = RunnableConfig(
-        id=(selected_id or ""),
-        type=(selected_kind or ""),
-        path=(str(rel_path_val) if rel_path_val else (selected_abs.as_posix() if selected_abs else "")),
-        url=(str(url_val) if url_val else ""),
-        goal=(str(goal_val) if goal_val else ""),
-        role=(str(role_val) if role_val is not None else ""),
-        project=(project_id or ""),
-        agent=(selected_agent or ""),
-        prompt=(prompt_id or ""),
-        target=(target or ""),
-        input=(input or ""),
-        prompt_text=(prompt_text_val or ""),
-        instructions=str(instr or ""),
-        model=( _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs) or ""),
-        attributes=attributes if isinstance(attributes, dict) else {},
-        mcp=mcp_list,
-        tools=tools_list,
-        base_dir=(str(selected_abs.parent) if selected_abs and getattr(selected_abs, 'parent', None) else ""),
-        card_text=str(card_text_val or ""),
-    )
-
-    if attribute_overrides:
-        merged_attrs = dict(cfg.attributes or {})
-        for key, value in attribute_overrides.items():
-            if value is None:
-                continue
-            if key == "model":
-                try:
-                    model_value = str(value).strip()
-                except Exception:
-                    model_value = ""
-                if model_value:
-                    merged_attrs["model"] = model_value
-                continue
-            merged_attrs[key] = value
-        cfg.attributes = merged_attrs
-
-    # Back-compat: ensure .name exists for tests expecting it
-    try:
-        display = None
-        if isinstance(name, str) and name:
-            display = name
-        elif isinstance(selected_id, str) and selected_id:
-            display = selected_id
-        else:
-            display = (cfg.agent or cfg.prompt or cfg.project or "")
-        setattr(cfg, "name", display or "")
-    except Exception:
-        pass
-
-    # Determine model precedence: prompt attrs > agent attrs > project attrs
-    cfg.model = _model_from(pr_attrs) or _model_from(ag_attrs) or _model_from(proj_attrs)
-
-    # Fall back to environment default
-    if not cfg.model:
+    base_dir = ""
+    if selected_row.get("path"):
         try:
-            cfg.model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
+            base_dir = str(_Path(selected_row["path"]).parent)
         except Exception:
-            cfg.model = "gpt-5"
+            base_dir = ""
 
+    if selected_kind == "prompt":
+        prompt_field = str(prompt_value or "")
+    elif selected_kind == "project":
+        prompt_field = ""
+    else:
+        prompt_field = str(requested_prompt or prompt_value or "")
+
+    primary_attributes: Dict[str, Any] = _dict_with_str_keys(primary_card.metadata)
+
+    def _collect_model_settings_meta() -> Dict[str, Any]:
+        collected: Dict[str, Any] = {}
+        for meta in meta_chain:
+            if not isinstance(meta, dict):
+                continue
+            for meta_key, meta_value in meta.items():
+                if not isinstance(meta_key, _bi.str):
+                    continue
+                if not meta_key.startswith("model-settings"):
+                    continue
+                if meta_value in (None, "", [], {}):
+                    continue
+                collected.setdefault(meta_key, meta_value)
+        return collected
+
+    model_override = None
     if attribute_overrides:
         model_override = attribute_overrides.get("model")
-        if model_override is not None:
+        if isinstance(model_override, _bi.str) and not model_override.strip():
+            model_override = None
+
+    model_from_chain: Optional[str] = None
+    if isinstance(model_override, _bi.str) and model_override.strip():
+        model_from_chain = model_override.strip()
+    else:
+        for meta in meta_chain:
+            candidate = _model_from(meta)
+            if candidate:
+                model_from_chain = candidate
+                break
+
+    model_settings_meta = _collect_model_settings_meta()
+
+    for key, value in model_settings_meta.items():
+        if key not in primary_attributes:
+            primary_attributes[key] = value
+
+    if "model" not in primary_attributes and model_from_chain:
+        primary_attributes["model"] = model_from_chain
+
+    if attribute_overrides:
+        for key, value in attribute_overrides.items():
+            if value is None:
+                primary_attributes.pop(key, None)
+            else:
+                primary_attributes[key] = value
+
+    model_candidate = primary_attributes.get("model") if isinstance(primary_attributes.get("model"), _bi.str) else None
+
+    if isinstance(model_candidate, _bi.str) and model_candidate.strip():
+        final_model = model_candidate.strip()
+    else:
+        try:
+            final_model = str(_os.environ.get("LLM_MODEL", "gpt-5"))
+        except Exception:
+            final_model = "gpt-5"
+
+    primary_attributes["model"] = final_model
+
+    def _build_model_settings(attrs: Dict[str, Any], model_name: Optional[str]) -> ModelSettings:
+        if not isinstance(attrs, dict):
+            return ModelSettings()
+        scoped: Dict[str, Any] = {}
+        if model_name:
             try:
-                model_value = str(model_override).strip()
+                scoped_candidate = attrs.get(f"model-settings-{model_name}")
             except Exception:
-                model_value = ""
-            if model_value:
-                cfg.model = model_value
-                try:
-                    attrs = dict(cfg.attributes or {})
-                    attrs["model"] = model_value
-                    cfg.attributes = attrs
-                except Exception:
-                    pass
+                scoped_candidate = None
+            if isinstance(scoped_candidate, dict):
+                scoped = dict(scoped_candidate)
+        if not scoped:
+            try:
+                generic = attrs.get("model-settings")
+            except Exception:
+                generic = None
+            if isinstance(generic, dict):
+                scoped = dict(generic)
+        if not isinstance(scoped, dict):
+            scoped = {}
+        try:
+            return ModelSettings(**scoped)
+        except Exception:
+            return ModelSettings()
+
+    cfg_model_settings = _build_model_settings(primary_attributes, final_model)
+
+    cfg = RunnableConfig(
+        id=str(selected_id or ""),
+        type=selected_kind,
+        path=str(path_hint or ""),
+        url=str(url_val or ""),
+        goal=str(goal_val or ""),
+        role=str(role_val or ""),
+        project=str(project_value or ""),
+        agent=str(agent_value or "") if selected_kind != "project" else "",
+        prompt=prompt_field,
+        target=target or "",
+        input=str(input or ""),
+        prompt_text=primary_card.prompt,
+        instructions=str(instructions or ""),
+        card_text=primary_card.raw,
+        model=final_model,
+        model_settings=cfg_model_settings,
+        attributes=primary_attributes,
+        mcp=mcp_list,
+        tools=tools_list,
+        base_dir=base_dir,
+    )
+
+    try:
+        setattr(cfg, "name", cfg.prompt or cfg.agent or cfg.project or cfg.id or "")
+    except Exception:
+        pass
+
+    try:
+        if isinstance(cfg.attributes, dict):
+            cfg.attributes["model"] = cfg.model
+    except Exception:
+        pass
 
     return cfg, None
 
@@ -1531,6 +1260,7 @@ def _error_payload_event(
         payload["details"] = details
 
     return payload
+
 
 def _error_payload(
     agent: str,
@@ -1702,15 +1432,14 @@ async def call_async(
         _reset_override()
         return cfg_err
 
-    # cfg is ready; dump a normalized snapshot in DEBUG
     try:
-        from dataclasses import asdict as _asdict
-        snap = _asdict(cfg)
-        snap["instructions_len"] = len(cfg.instructions or "")
-        snap.pop("instructions", None)
-        debug_print("[api]", "[CFG]", __import__('json').dumps(snap, ensure_ascii=False, indent=2))
+        cfg_payload = asdict(cfg)
     except Exception:
-        pass
+        cfg_payload = getattr(cfg, "__dict__", {})
+    try:
+        debug_print("[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2))
+    except Exception:
+        debug_print("[api]", "[CFG]", str(cfg_payload))
 
     # Initialize bot: if a project is provided, pass it; otherwise allow app layer
     # to prefer CALL_TELEGRAM_TOKEN or TELEGRAM_TOKEN per its own logic.
@@ -1814,10 +1543,9 @@ async def call_async(
                 status = 403
                 err_code = "REQUEST_FORBIDDEN"
                 try:
-                    import json as _json
                     brace = msg.find("{")
                     if brace != -1:
-                        details = _json.loads(msg[brace:])
+                        details = json.loads(msg[brace:])
                 except Exception:
                     details = None
             if status == 403:
@@ -2012,20 +1740,88 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
     """
     try:
         # 1) Resolve by agent name
-        if isinstance(agent, str) and agent.strip():
+        agent_filter = isinstance(agent, str) and agent.strip()
+        if agent_filter:
             rows = call_repo.find_agents(project=(project or None), agent=agent)
-            if not rows:
-                return _error_payload(agent=agent, input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
-            if len(rows) > 1:
-                return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
-            r = rows[0]
-            return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+            if rows:
+                if len(rows) > 1:
+                    return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
+                r = rows[0]
+                return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+            if not (isinstance(prompt, str) and prompt.strip()):
+                return _error_payload(
+                    agent=agent,
+                    input="",
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                    options=[],
+                )
 
         # 2) Resolve by prompt
         if isinstance(prompt, str) and prompt.strip():
             recs = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=prompt)
             if not recs:
-                return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+                alt_recs: list[dict] = []
+                try:
+                    alt_recs = call_repo.list_prompts(project=None, agent=None, prompt=prompt)
+                except Exception:
+                    alt_recs = []
+                if alt_recs:
+                    valid_alt = [r for r in alt_recs if (str(r.get("project") or "").strip() and str(r.get("agent") or "").strip())]
+                    if not valid_alt:
+                        return _error_payload(
+                            agent=(agent or ""),
+                            input="",
+                            exc="Prompt metadata could not be parsed",
+                            status=400,
+                            code="BAD_CARD_FORMAT",
+                            project=project,
+                            options=alt_recs[:20],
+                        )
+                    project_norm = (project or "").strip().lower()
+                    candidates = []
+                    for row in valid_alt:
+                        pj = str(row.get("project") or "").strip()
+                        if project_norm and pj.lower() != project_norm:
+                            continue
+                        candidates.append(row)
+                    if candidates:
+                        chosen = candidates[0]
+                        pj = chosen.get("project") or project
+                        ag = chosen.get("agent") or agent
+                        arows = call_repo.find_agents(project=pj, agent=ag)
+                        if len(arows) == 1:
+                            ar = arows[0]
+                            return {
+                                "ok": True,
+                                "resolved": {
+                                    "project": ar.get("project"),
+                                    "name": ar.get("agent"),
+                                    "path": ar.get("path"),
+                                    "aliases": [],
+                                    "prompts": [],
+                                },
+                            }
+                    return _error_payload(
+                        agent=(agent or ""),
+                        input="",
+                        exc="No agent found matching criteria",
+                        status=404,
+                        code="NO_DATA_FOUND",
+                        project=project,
+                        options=valid_alt[:20],
+                    )
+                return _error_payload(
+                    agent=(agent or ""),
+                    input="",
+                    exc="No prompt found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=project,
+                    options=[],
+                )
             if len(recs) > 1:
                 return _error_payload(agent=(agent or ""), input="", exc="Multiple prompts matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=recs[:20])
             pr = recs[0]
@@ -2034,7 +1830,15 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             # Agent row must exist
             arows = call_repo.find_agents(project=pj, agent=ag)
             if len(arows) != 1:
-                return _error_payload(agent=str(ag or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=pj, options=(arows or []))
+                return _error_payload(
+                    agent=str(ag or ""),
+                    input="",
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=pj,
+                    options=(arows or []),
+                )
             ar = arows[0]
             return {"ok": True, "resolved": {"project": ar.get("project"), "name": ar.get("agent"), "path": ar.get("path"), "aliases": [], "prompts": []}}
 
@@ -2044,10 +1848,26 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             if len(opts) == 1:
                 r = opts[0]
                 return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
-            return _error_payload(agent=(agent or ""), input="", exc=("not found" if not opts else "Multiple agents matched your criteria"), status=(404 if not opts else 400), code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"), project=project, options=opts[:20] if opts else [])
+            return _error_payload(
+                agent=(agent or ""),
+                input="",
+                exc=("No agent found matching criteria" if not opts else "Multiple agents matched your criteria"),
+                status=(404 if not opts else 400),
+                code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"),
+                project=project,
+                options=opts[:20] if opts else [],
+            )
 
         # Nothing to resolve
-        return _error_payload(agent=(agent or ""), input="", exc="not found", status=404, code="NO_DATA_FOUND", project=project, options=[])
+        return _error_payload(
+            agent=(agent or ""),
+            input="",
+            exc="No agent found matching criteria",
+            status=404,
+            code="NO_DATA_FOUND",
+            project=project,
+            options=[],
+        )
     except Exception as e:
         return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
 
@@ -2132,9 +1952,8 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
     """
     try:
         try:
-            import json
             debug_print(
-                "[api]", "interpret_exec_payload:|-\n",
+                "[api]", "interpret_exec_payload:|-\n" + 
                 json.dumps(payload, ensure_ascii=False, indent=2),
             )
         except Exception:
@@ -2161,9 +1980,8 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
                 "description": "When 'event' is provided, do not include project|agent|prompt|target selectors",
                 "code": "BAD_REQUEST",
             }
-        import json as _json
         # Always use full payload JSON as input
-        inp = _json.dumps(payload, ensure_ascii=False)
+        inp = json.dumps(payload, ensure_ascii=False)
         kwargs = {
             "project": None,
             "agent": None,
