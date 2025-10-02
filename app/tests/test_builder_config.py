@@ -88,6 +88,73 @@ def test_builder_model_override_has_priority():
     assert cfg.attributes.get("model") == "gpt-test-override"
 
 
+def test_builder_target_prefers_prompt_over_agent(monkeypatch, tmp_path):
+    agent_path = tmp_path / "agent.md"
+    agent_path.write_text(
+        """
+        <!-- METADATA:START -->
+        ```yaml
+        model: gpt-from-agent
+        ```
+        <!-- METADATA:END -->
+
+        <!-- PROMPT:START -->
+        Agent body
+        <!-- PROMPT:END -->
+        """,
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_module.call_repo, "list_prompts", lambda **_: [
+        {"prompt": "PromptAlpha", "project": "ProjX", "agent": "AgentA"},
+        {"prompt": "PromptBeta", "project": "ProjX", "agent": "AgentB"},
+    ])
+    monkeypatch.setattr(api_module, "interpret_target", lambda **_: ("ProjX", "AgentB", "PromptBeta", None))
+    monkeypatch.setattr(api_module, "resolve_agent", lambda **kw: {
+        "ok": True,
+        "resolved": {
+            "project": "ProjX",
+            "name": "AgentB",
+            "path": str(agent_path),
+        },
+    })
+    monkeypatch.setattr(api_module.call_repo, "find_projects", lambda **_: [])
+    monkeypatch.setattr(api_module.call_repo, "find_agents", lambda **_: [])
+
+    cfg, err = build_runnable_instructions_config(project="ProjX", agent="AgentA", prompt=None, target="PromptBeta")
+    assert err is None
+    assert cfg.prompt == "PromptBeta"
+    assert cfg.agent == "AgentB"
+
+
+def test_builder_db_prompt_without_agent(monkeypatch, tmp_path):
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text(
+        """
+        <!-- METADATA:START -->
+        ```yaml
+        model: gpt-prompt
+        ```
+        <!-- METADATA:END -->
+
+        <!-- PROMPT:START -->
+        Prompt body
+        <!-- PROMPT:END -->
+        """,
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_module.call_repo, "find_projects", lambda **_: [])
+    monkeypatch.setattr(api_module.call_repo, "find_agents", lambda **_: [])
+    monkeypatch.setattr(api_module.call_repo, "find_prompts", lambda **_: [{"prompt": "StandalonePrompt", "project": "ProjZ", "path": str(prompt_path)}])
+
+    cfg, err = build_runnable_instructions_config(project=None, agent=None, prompt="StandalonePrompt")
+    assert err is None
+    assert cfg is not None
+    assert cfg.prompt == "StandalonePrompt"
+    assert cfg.project == "ProjZ"
+    assert cfg.model == "gpt-prompt"
+
 def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     from call.lib import api as api_module
 
