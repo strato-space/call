@@ -41,19 +41,19 @@ Review the relevant directory documentation before making changes; many subsyste
 
 ## Contribution Workflow
 
-1. Plan your change and update docs/tests alongside code.
-2. Run targeted or full `pytest` suites inside the activated virtual environment.
-3. Update `CHANGELOG.md` when behavior or documentation changes materially.
-4. Reflect notable setup or behavior tweaks in `README.md` or subsystem docs.
-5. Commit with descriptive messages; open PRs summarizing user-facing impact.
+- Plan changes and update code, docs, and tests together.
+- Run targeted or full `pytest` suites within the shared virtualenv.
+- Update `CHANGELOG.md` plus relevant docs when behavior shifts.
+- Record setup or behavior tweaks in `README.md` or subsystem docs.
+- Write descriptive commits and PRs summarizing user-facing impact.
 
 Thanks for keeping the repo tidy and well-documented!
 
 ## Build, Test & Development Commands
 
-- `pytest` runs all tests; `pytest -k fragment` narrows scope.
-- `python -m cli.main --help` explores CLI workflows; use `uvicorn actions.main:app --reload` for local REST checks.
-- Capture integration traces via repo-native scripts inside `tools/`.
+- `pytest` runs all tests; add `-k fragment` to focus.
+- `python -m cli.main --help` explores CLI workflows; `uvicorn actions.main:app --reload` serves REST locally.
+- Use `tools/` scripts to capture integration traces.
 
 ## Testing Guidelines
 
