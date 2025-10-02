@@ -1,6 +1,8 @@
 import importlib
 import json
 
+from agents.model_settings import ModelSettings
+
 
 def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
     api = importlib.import_module("call.lib.api")
@@ -29,6 +31,20 @@ def test_session_id_in_success_response(monkeypatch):
     class _Cfg:
         def __init__(self, out):
             self._last_final_output = out
+            self.id = "NewsAggr"
+            self.type = "agent"
+            self.project = "UxFab"
+            self.agent = "NewsAggr"
+            self.prompt = None
+            self.path = "/p/UxFab/NewsAggr/agent.md"
+            self.url = None
+            self.goal = None
+            self.instructions = ""
+            self.model = "gpt-4.1-mini"
+            self.model_settings = ModelSettings()
+            self.attributes = {}
+            self.tools = []
+            self.mcp = []
 
     class _DummyAgent:
         pass
@@ -63,7 +79,20 @@ def test_session_id_override_parsed_and_used(monkeypatch):
     class _Cfg:
         def __init__(self, out):
             self._last_final_output = out
-            self.name = "NewsAggr"
+            self.id = "NewsAggr"
+            self.type = "agent"
+            self.project = "UxFab"
+            self.agent = "NewsAggr"
+            self.prompt = None
+            self.path = "/p/UxFab/NewsAggr/agent.md"
+            self.url = None
+            self.goal = None
+            self.instructions = ""
+            self.model = "gpt-4.1-mini"
+            self.model_settings = ModelSettings()
+            self.attributes = {}
+            self.tools = []
+            self.mcp = []
 
     class _DummyAgent:
         pass
@@ -102,7 +131,20 @@ def test_no_session_without_routing(monkeypatch):
     class _Cfg:
         def __init__(self, out):
             self._last_final_output = out
-            self.name = "NewsAggr"
+            self.id = "NewsAggr"
+            self.type = "agent"
+            self.project = "UxFab"
+            self.agent = "NewsAggr"
+            self.prompt = None
+            self.path = "/p/UxFab/NewsAggr/agent.md"
+            self.url = None
+            self.goal = None
+            self.instructions = ""
+            self.model = "gpt-4.1-mini"
+            self.model_settings = ModelSettings()
+            self.attributes = {}
+            self.tools = []
+            self.mcp = []
 
     class _DummyAgent:
         pass
