@@ -1,26 +1,18 @@
-# Guidance for Codex Contributors
+# Repository Guidelines
 
-Welcome! This document provides house rules and quick references for agents working in the `call` repository. Keep it handy when planning changes.
+## Environment & Tooling Fundamentals
 
-## Environment & Tooling
-
-- **Python virtual environment**: The bootstrap script `tools/repos.sh --codex` provisions a shared virtual environment at `/workspace/.venv`. Always activate it before running Python commands:
-
-  ```bash
-  source /workspace/.venv/bin/activate
-  ```
-
-  Install any additional dependencies into this environment.
-- **Sibling repositories**: The same script clones or fast-forwards the companion repositories (`agent`, `prompt`, `voice`, `rms`, `server`) under `/workspace/`. When you need cross-repo context, look for them alongside this checkout.
-- **Testing**: Prefer `pytest` for unit/integration tests. The repo root contains `pytest.ini`; invoke tests via `pytest` (optionally with `-k` filters).
-- **Linting & formatting**: Follow existing style in touched files. Do not introduce new formatters without prior guidance.
+- Activate the shared virtualenv with `source /workspace/.venv/bin/activate` before running Python or pytest.
+- Provision or refresh sibling repos with `tools/repos.sh --codex`; they land in `/workspace/{agent,prompt,voice,rms,server}`.
+- Install extras into that env and avoid global pip packages; use `uv pip compile` plus `pip install -r requirements.txt` for updates.
+- Stick with built-in linting; do not add formatters unless the project maintainers ask for them.
 
 ## Repository Orientation
 
 - `app/`, `cli/`, `lib/` — core runtime, CLI entrypoints, and shared library code.
 - `actions/` — FastAPI REST surface for GPT Actions clients. It re-exports the public `call.lib.api` helpers and enforces bearer auth; keep OpenAPI metadata (`actions/openapi.json`) up to date when adding endpoints.
 - `mcp/` — Model Context Protocol (MCP) server implementation built with `fastmcp`. Tools here should stay in sync with the REST surface and reuse `call.lib.api` helpers only (avoid reaching into app internals).
-- `docs/`, `README.md`, `tg-user-guide*.md` — user and operator documentation.
+- `docs/`, `README.md`, `tg-user-guide*.md` — user and operator documentation. Fixtures for shared tests live in `conftest.py`.
 - `telegram_bot/` — production Telegram bot implementation. It wraps the public API layer, so changes here must preserve the structured envelopes returned by `call.lib.api`.
 - `wallet/` — secure credentials (e.g., Google service-account JSON). Treat everything under this folder as sensitive and never check real secrets into commits or logs.
 - `windsurf/` — IDE preset (`settings.json`) for the Windsurf editor. Update it in lock-step with repo-wide tooling changes (linters, formatters, etc.).
@@ -33,8 +25,12 @@ Review the relevant directory documentation before making changes; many subsyste
 ## Coding Conventions
 
 - Preserve existing logging patterns (`call.lib.logging.debug_print`, structured envelopes, etc.).
+- Lean on `call.lib.logging.debug_print` for diagnostics and return structured envelopes from `call.lib.api`.
 - Keep error handling consistent with the standard envelope outlined in `README.md`.
 - Maintain Markdown prompt metadata format when editing prompt files (YAML front matter with `METADATA` blocks).
+- Use 4-space indentation and ASCII unless a touched file already requires Unicode.
+- Access config and dataclass fields directly; avoid `getattr` indirection.
+
 - **Preferred engineering principles**:
   - Favor the KISS approach — prefer straightforward solutions, avoid unnecessary abstractions, and remove dead fallbacks.
   - Apply SOLID design tenets; compose behavior through Dependency Injection instead of global state so components stay testable.
@@ -52,3 +48,22 @@ Review the relevant directory documentation before making changes; many subsyste
 5. Commit with descriptive messages; open PRs summarizing user-facing impact.
 
 Thanks for keeping the repo tidy and well-documented!
+
+## Build, Test & Development Commands
+
+- `pytest` runs all tests; `pytest -k fragment` narrows scope.
+- `python -m cli.main --help` explores CLI workflows; use `uvicorn actions.main:app --reload` for local REST checks.
+- Capture integration traces via repo-native scripts inside `tools/`.
+
+## Testing Guidelines
+
+- Co-locate `test_*.py` with code; share setup in `conftest.py`.
+- Add integration coverage when altering `actions/` or `mcp/`; mirror documentation-driven smoke checks when prompts change.
+- Run `pytest --maxfail=1 --disable-warnings` before pushing and ensure new features ship with meaningful assertions.
+
+## Commit & Pull Request Guidelines
+
+- Write imperative, scope-prefixed subjects (for example, `mcp: tighten tool auth`) with bodies describing motivation and follow-up work.
+- Link tickets, include screenshots or sample payloads when behavior shifts, and record manual verification steps.
+- Update `CHANGELOG.md` and relevant docs whenever user-facing behavior or configuration toggles.
+

@@ -32,7 +32,7 @@ Augment app/tests/test_builder_config.py (or add a new focused test) with a prom
 
 Cover the scenario where a project filter is provided but the prompt row’s project is empty, ensuring the fallback still succeeds.
 
-5. Validation
+5.Validation
 
 - Re-run the targeted pytest module (pytest call/app/tests/test_builder_config.py -q) and, if practical, a quick smoke run of other relevant suites touching repo DB lookup logic.
 
