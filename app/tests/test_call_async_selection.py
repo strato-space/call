@@ -87,22 +87,40 @@ def test_call_event_ack(monkeypatch):
     marker = object()
     monkeypatch.setitem(sys.modules, "call.app.call", marker)
 
-    res = api.call(event="session_closed")
+    res = api.call(event="session_transcription_done")
     assert isinstance(res, dict)
     assert res.get("ok") is True
-    assert res.get("event") == "session_closed"
+    assert res.get("event") == "session_transcription_done"
 
     # The marker should remain untouched (no attribute access on placeholder)
+    assert sys.modules["call.app.call"] is marker
+
+
+def test_call_event_error_test(monkeypatch):
+    api = importlib.import_module("call.lib.api")
+
+    import sys
+    marker = object()
+    monkeypatch.setitem(sys.modules, "call.app.call", marker)
+
+    res = api.call(event="error_test", agent="DemoAgent", project="DemoProj")
+    assert isinstance(res, dict)
+    assert res.get("ok") is False
+    assert res.get("code") == "FAKE_EVENT_ERROR"
+    assert res.get("error_code") == 500
+    assert "agent" not in res
+    assert "project" not in res
+
     assert sys.modules["call.app.call"] is marker
 
 
 def test_api_interpret_exec_payload_event_only():
     api = importlib.import_module("call.lib.api")
 
-    payload = {"event": "session_closed"}
+    payload = {"event": "session_transcription_done"}
     kwargs, err = api.api_interpret_exec_payload(payload)
     assert err is None
-    assert kwargs.get("event") == "session_closed"
+    assert kwargs.get("event") == "session_transcription_done"
     assert kwargs.get("input").startswith("{")
     assert kwargs.get("project") is None
     assert kwargs.get("agent") is None
@@ -113,7 +131,7 @@ def test_api_interpret_exec_payload_event_only():
 def test_api_interpret_exec_payload_event_with_target():
     api = importlib.import_module("call.lib.api")
 
-    payload = {"event": "session_closed", "target": "UxFab"}
+    payload = {"event": "session_transcription_done", "target": "UxFab"}
     kwargs, err = api.api_interpret_exec_payload(payload)
     assert kwargs == {}
     assert err is not None
@@ -124,7 +142,7 @@ def test_api_interpret_exec_payload_event_with_target():
 def test_api_interpret_exec_payload_event_with_multiple_selectors_error():
     api = importlib.import_module("call.lib.api")
 
-    payload = {"event": "session_closed", "project": "UxFab", "agent": "DialogPostAnalysis"}
+    payload = {"event": "session_transcription_done", "project": "UxFab", "agent": "DialogPostAnalysis"}
     kwargs, err = api.api_interpret_exec_payload(payload)
     assert kwargs == {}
     assert err is not None

@@ -13,6 +13,9 @@ from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
 from call.lib.logging import debug_print
 import builtins as _bi
+import re
+from collections import deque
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 
 
 _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
@@ -73,6 +76,106 @@ def _serialize_model_item(item: Any) -> Dict[str, Any]:
     except Exception:
         identifier = None
     return {"id": identifier}
+
+
+_SNAPSHOT_ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TEXT_MODE_MARKERS = ("text", "chat", "completion")
+_NON_TEXT_IDENTIFIER_MARKERS = (
+    "embedding",
+    "embed",
+    "whisper",
+    "speech",
+    "voice",
+    "audio",
+    "image",
+    "vision-only",
+    "vision",
+    "realtime-audio",
+    "realtime",
+    "dall-e",
+    "dalle",
+)
+_TEXT_IDENTIFIER_MARKERS = (
+    "gpt",
+    "davinci",
+    "curie",
+    "babbage",
+    "ada",
+    "o1",
+    "o3",
+)
+
+
+def _iter_string_values(value: Any):
+    queue: deque[Any] = deque([value])
+    while queue:
+        current = queue.popleft()
+        if isinstance(current, str):
+            yield current
+            continue
+        if isinstance(current, (bytes, bytearray)):
+            try:
+                queue.append(current.decode())
+            except Exception:
+                continue
+            continue
+        if isinstance(current, Mapping):
+            queue.extend(current.values())
+            continue
+        if isinstance(current, (Sequence, AbstractSet)):
+            queue.extend(current)
+
+
+def _model_supports_text_output(item: Dict[str, Any]) -> bool:
+    for key in ("modes", "modalities", "response_types"):
+        for raw in _iter_string_values(item.get(key)):
+            normalized = raw.strip().lower()
+            if not normalized:
+                continue
+            if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+                return True
+    capabilities = item.get("capabilities")
+    if isinstance(capabilities, dict):
+        for cap_name, enabled in capabilities.items():
+            if not enabled:
+                continue
+            if not isinstance(cap_name, str):
+                try:
+                    cap_name = str(cap_name)
+                except Exception:
+                    continue
+            normalized = cap_name.strip().lower()
+            if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+                return True
+    type_value = item.get("type")
+    if isinstance(type_value, str):
+        normalized = type_value.strip().lower()
+        if any(marker in normalized for marker in _TEXT_MODE_MARKERS):
+            return True
+    identifier = item.get("id") or item.get("name")
+    try:
+        identifier_str = str(identifier).strip()
+    except Exception:
+        identifier_str = ""
+    identifier_lower = identifier_str.lower()
+    if not identifier_lower:
+        return False
+    if any(marker in identifier_lower for marker in _NON_TEXT_IDENTIFIER_MARKERS):
+        return False
+    if any(marker in identifier_lower for marker in _TEXT_IDENTIFIER_MARKERS):
+        return True
+    return True
+
+
+def _model_is_snapshot(item: Dict[str, Any]) -> bool:
+    identifier = item.get("id")
+    try:
+        identifier_str = str(identifier) if identifier is not None else ""
+    except Exception:
+        return False
+    if not identifier_str:
+        return False
+    return bool(_SNAPSHOT_ID_PATTERN.search(identifier_str))
 
 
 def _compile_wildcard_regex(pattern: str | None):
@@ -1102,6 +1205,63 @@ def build_runnable_instructions_config(
 
     return cfg, None
 
+def _error_payload_event(
+    event: str,
+    exc: BaseException | str,
+    *,
+    status: int | None = None,
+    debug: bool = False,
+    code: Optional[str] = None,
+    options: Optional[List[Dict[str, Any]]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if isinstance(exc, BaseException):
+        msg_attr = getattr(exc, "message", None)
+        message = msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        code_attr = getattr(exc, "code", None)
+        if isinstance(code_attr, int):
+            effective_status = code_attr
+        elif isinstance(code_attr, str) and code_attr.isdigit():
+            effective_status = int(code_attr)
+        else:
+            effective_status = int(status or 400)
+        err_attr = getattr(exc, "error", None)
+        error_obj = err_attr if isinstance(err_attr, dict) else {"message": message}
+    else:
+        message = str(exc) if exc is not None else "Error"
+        effective_status = int(status or 400)
+        error_obj = {"message": message}
+
+    if isinstance(error_obj, dict):
+        err_msg = error_obj.get("message")
+        if isinstance(err_msg, str) and err_msg.strip():
+            message = err_msg.strip()
+
+    payload: Dict[str, Any] = {
+        "ok": False,
+        "event": event,
+        "error_code": effective_status,
+        "description": message,
+        "error": error_obj,
+    }
+    if options is not None:
+        payload["options"] = options
+    if code is not None:
+        payload["code"] = code
+
+    if debug:
+        try:
+            import traceback
+            payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
+        except Exception:
+            pass
+
+    if details is not None:
+        payload["details"] = details
+
+    return payload
+
+
 def _error_payload(
     agent: str,
     input: str,
@@ -1225,7 +1385,16 @@ async def call_async(
     """
     # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
     if event is not None:
-        return {"ok": True, "event": str(event), "agents": []}
+        event_str = str(event)
+        if event_str.strip().lower() == "error_test":
+            return _error_payload_event(
+                event=event_str,
+                debug=debug,
+                exc="Synthetic test error",
+                status=500,
+                code="FAKE_EVENT_ERROR",
+            )
+        return {"ok": True, "event": event_str, "targets": []}
 
     attribute_overrides = _normalize_attribute_overrides(attributes)
     token_override = None
@@ -1547,9 +1716,16 @@ def models() -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for entry in data or []:
         try:
-            items.append(_serialize_model_item(entry))
+            serialized = _serialize_model_item(entry)
         except Exception:
             continue
+        if not isinstance(serialized, dict):
+            continue
+        if _model_is_snapshot(serialized):
+            continue
+        if not _model_supports_text_output(serialized):
+            continue
+        items.append(serialized)
     return items
 
 

@@ -182,34 +182,34 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
 def test_cli_call_event_ack():
     code, out, err = _run_cli([
         "call",
-        "--event", "session_closed",
+        "--event", "session_transcription_done",
     ])
     assert code == 0, err
     data = json.loads(out)
     assert data.get("ok") is True
-    assert data.get("event") == "session_closed"
+    assert data.get("event") == "session_transcription_done"
 
 
 def test_cli_exec_event_only_ack():
     code, out, err = _run_cli([
         "exec",
-        "--event", "session_closed",
+        "--event", "session_transcription_done",
     ])
     assert code == 0, err
     data = json.loads(out)
     assert data.get("ok") is True
-    assert data.get("event") == "session_closed"
+    assert data.get("event") == "session_transcription_done"
 
 
 def test_cli_notify_event_only_ack():
     code, out, err = _run_cli([
         "notify",
-        "--event", "session_closed",
+        "--event", "session_transcription_done",
     ])
     assert code == 0, err
     data = json.loads(out)
     assert data.get("ok") is True
-    assert data.get("event") == "session_closed"
+    assert data.get("event") == "session_transcription_done"
 
 
 def test_cli_call_echo_resolved_project_agent_null():
