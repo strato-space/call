@@ -176,7 +176,7 @@ def test_cli_call_print_instructions_wrong_project_prompt_not_found():
         assert data.get("error_code") in (400, 404)
     except Exception:
         # Fallback: plain-text error message
-        assert ("no agent found matching criteria" in err.lower())
+        assert ("no card found matching the provided filters" in err.lower())
 
 
 def test_cli_call_event_ack():
@@ -261,9 +261,9 @@ bad: [missing: bracket
         assert code != 0
         data = json.loads(out)
         assert data.get("ok") is False
-        # For malformed METADATA, the index row may be missing project linkage, resulting in 404 (more specific)
-        assert data.get("error_code") == 400
-        assert (data.get("code") or "").upper() == "BAD_CARD_FORMAT"
+        # With strict DB usage the malformed card is skipped, so the CLI surfaces a not-found envelope.
+        assert data.get("error_code") == 404
+        assert (data.get("code") or "").upper() == "NO_DATA_FOUND"
     finally:
         try:
             bad.unlink(missing_ok=True)
@@ -310,7 +310,7 @@ bad: [missing: bracket
         # Prefer BAD_CARD_FORMAT when available, but allow not-found in strict DB-only mode
         desc = (data.get("description") or "").lower()
         code_s = (data.get("code") or "").lower()
-        assert ("bad_card_format" in code_s) or ("metadata" in desc) or ("not found" in desc)
+        assert ("bad_card_format" in code_s) or ("metadata" in desc) or ("no card found" in desc)
     finally:
         try:
             bad.unlink(missing_ok=True)
@@ -336,9 +336,11 @@ def test_cli_exec_print_instructions_wrong_project_prompt_not_found():
         assert data.get("ok") is False
         assert data.get("error_code") in (400, 404, 500)
         desc = (data.get("description", "").lower())
-        assert ("no agent found matching criteria" in desc) or ("no agent found matching criteria" in desc)
+        assert "no card found matching the provided filters" in desc
     except Exception:
-        assert ("no agent found matching criteria" in out.lower()) or ("no agent found matching criteria" in err.lower())
+        assert ("no card found matching the provided filters" in out.lower()) or (
+            "no card found matching the provided filters" in err.lower()
+        )
 
 
 def test_cli_call_print_instructions_wrong_project_agent_not_found():
@@ -352,9 +354,12 @@ def test_cli_call_print_instructions_wrong_project_agent_not_found():
         "--prompt", "33-Questioning",
         "--print-card",
     ], env=env)
-    # In DB-only mode, this agent exists under UxFab, so printing instructions should succeed
-    assert code == 0, err
-    assert "agent: DialogPostAnalysis" in out
+    # Without prompt/agent fallback, mismatched agent requests now surface as not-found errors.
+    assert code != 0
+    data = json.loads(out)
+    assert data.get("ok") is False
+    assert data.get("error_code") == 404
+    assert "no card found matching the provided filters" in (data.get("description") or "").lower()
 
 
 def test_cli_exec_print_instructions_wrong_project_agent_not_found():
@@ -374,6 +379,8 @@ def test_cli_exec_print_instructions_wrong_project_agent_not_found():
         data = json.loads(out)
         assert data.get("ok") is False
         assert data.get("error_code") in (400, 404, 500)
-        assert "no agent found matching criteria" in (data.get("description", "").lower())
+        assert "no card found matching the provided filters" in (data.get("description", "").lower())
     except Exception:
-        assert ("no agent found matching criteria" in out.lower()) or ("no agent found matching criteria" in err.lower())
+        assert ("no card found matching the provided filters" in out.lower()) or (
+            "no card found matching the provided filters" in err.lower()
+        )

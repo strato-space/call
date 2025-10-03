@@ -193,6 +193,13 @@ def cmd_call(args: argparse.Namespace) -> int:
             except Exception:
                 pass
             if getattr(args, "print_card", False):
+                header_parts: list[str] = []
+                if cfg is not None and getattr(cfg, "agent", None):
+                    header_parts.append(f"agent: {cfg.agent}")
+                if cfg is not None and getattr(cfg, "project", None):
+                    header_parts.append(f"project: {cfg.project}")
+                if header_parts:
+                    _safe_print("\n".join(header_parts))
                 _safe_print((cfg.card_text if cfg else "") or "")
             else:
                 _safe_print((cfg.instructions if cfg else "") or "")
