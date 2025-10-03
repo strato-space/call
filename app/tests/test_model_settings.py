@@ -1,5 +1,6 @@
 import pytest
 from call.lib import api as api_module
+from call.lib import repo_db as repo_db_module
 from call.lib.api import build_runnable_instructions_config
 
 
@@ -23,6 +24,28 @@ def _minimal_repo(monkeypatch):
 
     monkeypatch.setattr(api_module.call_repo, "find_agents", _find_agents, raising=True)
     monkeypatch.setattr(api_module.call_repo, "get_card", lambda cid: ({}, "", ""), raising=True)
+
+    monkeypatch.setattr(
+        api_module,
+        "interpret_target",
+        lambda **kwargs: repo_db_module.RepoCardRow(
+            id="TestAgent",
+            target="TestAgent",
+            project="",
+            agent="TestAgent",
+            prompt="",
+            path="",
+            state="",
+            engine="",
+            orchestration="",
+            type="agent",
+            rel_path="",
+            url="",
+            goal="",
+            card="",
+        ),
+        raising=True,
+    )
 
 
 def _build_with_overrides(overrides: dict):
