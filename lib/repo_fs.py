@@ -88,54 +88,24 @@ def _upsert_row(
     card: str | None = None,
 ) -> None:
     try:
-        cur.execute("SELECT project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card FROM repo WHERE target = ?", (target,))
-        old = cur.fetchone()
-        if old is not None:
-            old_project, old_agent, old_prompt, old_path, old_state, old_engine, old_orch, old_type, old_rel, old_url, old_goal, old_card = [x or "" for x in old]
-            # Enforce precedence: project > agent > prompt. Do not let lower-precedence overwrite higher-precedence rows.
-            try:
-                new_type = str(type or "")
-                if (old_type == "project") and (new_type in ("agent", "prompt")):
-                    return  # keep project row
-                if (old_type == "agent") and (new_type == "prompt"):
-                    return  # keep agent row
-            except Exception:
-                pass
-            eff_project = project or old_project
-            eff_agent = agent or old_agent
-            eff_prompt = prompt or old_prompt
-            new_path = abs_path or ""
-            eff_path = new_path or old_path
-            new_card = (card or "")
-            eff_card = new_card or old_card
-            try:
-                if (eff_prompt or old_prompt):  # prompt row
-                    old_is_prompt_file = isinstance(old_path, str) and old_path.lower().endswith(('.md',)) and (("\\prompt\\" in old_path.lower()) or ('/prompt/' in old_path.lower()))
-                    new_is_agent_card = isinstance(new_path, str) and (new_path.lower().endswith(('agent.md',)))
-                    if old_is_prompt_file and new_is_agent_card:
-                        eff_path = old_path
-                        # Preserve prompt card if replacing with agent card placeholder
-                        eff_card = old_card or eff_card
-            except Exception:
-                pass
-            eff_state = (state or "") or old_state
-            eff_engine = (engine or "") or old_engine
-            eff_orch = (orchestration or "") or old_orch
-            eff_type = (type or "") or old_type
-            eff_rel = (rel_path or "") or old_rel
-            eff_url = (url or "") or old_url
-            eff_goal = (goal or "") or old_goal
-            if old_path and eff_path and (old_path != eff_path):
-                debug_print("[repo.scan] overwrite", f"target={target}", f"old={old_path}", f"new={eff_path}")
-            cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, eff_project, eff_agent, eff_prompt, eff_path, eff_state, eff_engine, eff_orch, eff_type, eff_rel, eff_url, eff_goal, eff_card),
-            )
-        else:
-            cur.execute(
-                "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target, project, agent, prompt, abs_path, state or "", engine or "", orchestration or "", (type or ""), (rel_path or ""), (url or ""), (goal or ""), (card or "")),
-            )
+        cur.execute(
+            "REPLACE INTO repo (target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                target,
+                project or "",
+                agent or "",
+                prompt or "",
+                abs_path or "",
+                state or "",
+                engine or "",
+                orchestration or "",
+                type or "",
+                rel_path or "",
+                url or "",
+                goal or "",
+                card or "",
+            ),
+        )
     except Exception as e:
         debug_print("[repo.scan] upsert failed", f"target={target}", str(e))
 

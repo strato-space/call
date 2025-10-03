@@ -2,6 +2,7 @@ import importlib
 import json
 
 from agents.model_settings import ModelSettings
+from call.lib.api import RunnableConfig
 
 
 def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
@@ -19,6 +20,25 @@ def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
                 "prompts": ["Default"],
             },
         },
+        raising=True,
+    )
+    monkeypatch.setattr(
+        api,
+        "build_runnable_instructions_config",
+        lambda **kwargs: (
+            RunnableConfig(
+                id=name,
+                type="agent",
+                project=project,
+                agent=name,
+                prompt=None,
+                path=f"agent/{project}/{name}/agent.md",
+                goal=None,
+                instructions="",
+                model="gpt-4.1-mini",
+            ),
+            None,
+        ),
         raising=True,
     )
     return api

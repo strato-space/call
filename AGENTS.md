@@ -28,9 +28,12 @@ Review the relevant directory documentation before making changes; many subsyste
 - Lean on `call.lib.logging.debug_print` for diagnostics and return structured envelopes from `call.lib.api`.
 - Keep error handling consistent with the standard envelope outlined in `README.md`.
 - Maintain Markdown prompt metadata format when editing prompt files (YAML front matter with `METADATA` blocks).
+- When copying attributes between repository dataclasses (`RepoCardRow`, `RunnableConfig`, etc.), pass the values through unchanged. Avoid normalising, trimming, or inventing fallbacks when transferring fields from the database into runtime DTOs.
+- When constructing `RunnableConfig` instances from a `RepoCardRow`, assign the row's columns (`id`, `type`, `project`, `agent`, `prompt`, `path`, `url`, `goal`, etc.) directly. Do not rewrite or normalise these fields—use the stored SQLite values as-is and layer metadata-derived attributes separately.
 - Use 4-space indentation and ASCII unless a touched file already requires Unicode.
 - Access config and dataclass fields directly; avoid `getattr` indirection.
 
+## Coding Principles
 - **Preferred engineering principles**:
   - Favor the KISS approach — prefer straightforward solutions, avoid unnecessary abstractions, and remove dead fallbacks.
   - Apply SOLID design tenets; compose behavior through Dependency Injection instead of global state so components stay testable.

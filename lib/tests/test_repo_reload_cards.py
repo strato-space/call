@@ -82,3 +82,69 @@ def test_reload_stores_card_text_and_skips_placeholder_prompts(tmp_path, monkeyp
     for value in records.values():
         normalized = value.replace("\\", "/")
         assert not normalized.endswith(".md"), normalized
+
+
+def test_find_prompts_returns_global_rows(tmp_path, monkeypatch):
+    prompt_root = tmp_path / "prompt"
+    ready_dir = prompt_root / "ready"
+    ready_dir.mkdir(parents=True)
+
+    global_prompt = ready_dir / "GlobalPrompt.md"
+    global_prompt.write_text(
+        """
+        <!-- METADATA:START -->
+        ```yaml
+        id: GlobalPrompt
+        model: gpt-global
+        ```
+        <!-- METADATA:END -->
+
+        <!-- PROMPT:START -->
+        Global prompt body
+        <!-- PROMPT:END -->
+        """,
+        encoding="utf-8",
+    )
+
+    scoped_prompt = ready_dir / "ScopedPrompt.md"
+    scoped_prompt.write_text(
+        """
+        <!-- METADATA:START -->
+        ```yaml
+        id: ScopedPrompt
+        project: SomeProject
+        agent: ScopedAgent
+        model: gpt-scoped
+        ```
+        <!-- METADATA:END -->
+
+        <!-- PROMPT:START -->
+        Scoped prompt body
+        <!-- PROMPT:END -->
+        """,
+        encoding="utf-8",
+    )
+
+    agent_root = tmp_path / "agent"
+    agent_root.mkdir()
+
+    monkeypatch.setattr(repo_fs, "discover_prompt_repo", lambda: prompt_root)
+    monkeypatch.setattr(repo_fs, "discover_agent_repo", lambda: agent_root)
+
+    db_path = tmp_path / "repo.db"
+    monkeypatch.setattr(repo_db, "DB_PATH", str(db_path))
+    monkeypatch.setattr(repo_fs.repo_db, "DB_PATH", str(db_path))
+
+    result = repo_fs.reload(repos=["prompt"], full_form=False)
+    assert result["ok"] is True
+
+    rows = repo_db.find_prompts(project="SomeProject")
+    prompts = {row["prompt"]: row for row in rows}
+    assert "ScopedPrompt" in prompts
+    assert "GlobalPrompt" in prompts
+    assert prompts["GlobalPrompt"]["project"] == ""
+
+    scoped_rows = repo_db.find_prompts(project="SomeProject", prompt="GlobalPrompt")
+    assert len(scoped_rows) == 1
+    assert scoped_rows[0]["prompt"] == "GlobalPrompt"
+    assert scoped_rows[0]["project"] == ""
