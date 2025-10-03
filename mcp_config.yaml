@@ -22,30 +22,48 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
 
+  # skip --active --inexact too hard to sync all
+  # uv --directory telegram-mcp sync 
   # uv --directory telegram-mcp run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
-  telegram-mcp:
+  telegram-user:
     enabled: true
     command: uv
     args:
       - --directory
-      - telegram-mcp
+      - ./telegram-mcp
       - run
       - main.py
 
+  # # OS env var:
+  # API_ACCESS_TOKEN=123123142356365864895789678967
+  # uv --directory voice sync
   # uv --directory voice run -m mcp_voicebot.server
   voice:
     enabled: true
     command: uv
     args:
       - --directory
-      - voice
+      - ./voice
       - run
       - -m
       - mcp_voicebot.server
 
-  # uvx --env-file call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
+  # # OS env var:
+  # GOOGLE_APPLICATION_CREDENTIALS=/home/strato-space/call/wallet/service-account-key.json
+  # uv --directory mcp-google-sheets sync
+  # uv --directory mcp-google-sheets run mcp-google-sheets
   gsh:
+    enabled: false
+    command: uv
+    args:
+      - --directory
+      - ./mcp-google-sheets
+      - run
+      - mcp-google-sheets
+
+  # uvx --env-file call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
+  gsh-uvx:
     # Google Sheets MCP (remote or local)
     # If you are using a remote MCP, keep only 'serverUrl' here and optionally add a 'bridge' later.
     # If you want to run a local process, provide command/args env like other *-local servers.
@@ -53,7 +71,7 @@ mcpServers:
     command: uvx
     args:
       - --env-file
-      - call/.env
+      - ./call/.env
       - --from
       - git+https://github.com/strato-space/mcp-google-sheets@main
       - mcp-google-sheets

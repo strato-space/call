@@ -63,6 +63,7 @@ Call provides a unified invocation syntax, consistent logging, and pluggable bac
 - **`windsurf/`** — Windsurf IDE workspace settings. Update formatter/linter toggles here whenever repo tooling changes so contributors on Windsurf inherit the same defaults.
 - **`requirements.txt`** — Pinned Python dependencies for the runtime, CLI, bot, Actions API, and MCP server. Rebuild with your dependency management tool (`uv pip compile`, `pip-tools`, etc.) and test inside `/workspace/.venv` before committing.
 - **`mcp_config.yaml` / `mcp_config.json`** — Declarative presets for external MCP servers (filesystem, sequential thinking, voice bridge, Google Sheets, etc.). Comments document how to hydrate Claude Desktop configs. Synchronize these files with operational reality when enabling/disabling servers.
+  - **Claude Desktop conversion** — when updating `call/claude_desktop_config.json`, copy only servers where `enabled: true` in `mcp_config.yaml`, preserve their `command`, `args`, and `env`, and set the filesystem catalog path to `c:/home/strato-space` instead of `.`.
 
 ### Engineering principles (New)
 
