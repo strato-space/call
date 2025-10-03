@@ -897,6 +897,10 @@ async def call_async(
     # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
     if event is not None:
         event_str = str(event)
+        try:
+            call_repo.push_event(event_str, input)
+        except Exception as push_exc:
+            debug_print("[api]", "[events]", f"Failed to persist event '{event_str}': {push_exc}")
         if event_str.strip().lower() == "error_test":
             return _error_payload_event(
                 event=event_str,
