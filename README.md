@@ -124,6 +124,12 @@ The script uses current directory as the workspace root, applies Git LF/CRLF set
   - `target` also supports `*` and is applied after other filters.
   - This allows scoping access to a single project (e.g., pass `project=MyProject` always).
 
+### Event log (New)
+
+- Incoming runtime events are durably appended to `call/call.db` in the `events` table to simplify a future migration to Kafka or NATS.
+- `call.lib.repo_db.push_event(event: str, payload: Any | None) -> int` inserts a new row and returns its sequence id for consumers that want checkpointing semantics.
+- `call.lib.repo_db.iter_events(*, after_id: int | None = None, limit: int | None = None) -> list[EventRow]` reads batches of events in ascending order so pollers can replay or resume at an offset.
+
 ### Prompt format (MD-only)
 
 - Prompts and cards are Markdown-only. Each file follows the Strato Prompt Framework with a `METADATA` fenced YAML block and an optional `PROMPT` block.

@@ -10,19 +10,21 @@ Functions:
 """
 from __future__ import annotations
 
+import json
 import re
 import os
 import sqlite3
 from pathlib import Path
 import builtins as _builtins
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import logging
 
 # Location of the SQLite database. Default to call/repo.db next to this module,
 # but can be overridden via the DB_PATH environment variable.
 DB_PATH = os.getenv("DB_PATH", "call/repo.db")
+EVENT_DB_PATH = os.getenv("EVENT_DB_PATH", "call/call.db")
 
 
 def _ensure_db() -> sqlite3.Connection:
@@ -97,6 +99,91 @@ def _like_pattern(pat: Optional[str]) -> Optional[str]:
     s = s.replace('%', r'\%').replace('_', r'\_')
     s = s.replace('*', '%')
     return s
+
+
+def _ensure_events_db() -> sqlite3.Connection:
+    Path(EVENT_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(EVENT_DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            event   TEXT NOT NULL,
+            payload TEXT
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+@dataclass(frozen=True)
+class EventRow:
+    id: int
+    event: str
+    payload: Any
+
+
+def push_event(event: str, payload: Any = None) -> int:
+    """Persist an event payload into call.db.
+
+    Returns the inserted row ID to align with future queue offsets.
+    """
+    conn = _ensure_events_db()
+    payload_to_store: Optional[str]
+    if payload is None:
+        payload_to_store = None
+    elif isinstance(payload, str):
+        payload_to_store = payload
+    else:
+        try:
+            payload_to_store = json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            payload_to_store = str(payload)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO events (event, payload) VALUES (?, ?)",
+        (str(event), payload_to_store),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    cur.close()
+    conn.close()
+    return int(row_id)
+
+
+def iter_events(*, after_id: Optional[int] = None, limit: Optional[int] = None) -> List[EventRow]:
+    """Read a batch of events in ascending order.
+
+    This helper mirrors a polling consumer API to ease migration to MQ backends.
+    """
+    conn = _ensure_events_db()
+    cur = conn.cursor()
+    sql = "SELECT id, event, payload FROM events WHERE 1=1"
+    params: List[Any] = []
+    if isinstance(after_id, int):
+        sql += " AND id > ?"
+        params.append(after_id)
+    sql += " ORDER BY id ASC"
+    if isinstance(limit, int) and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+    cur.execute(sql, tuple(params))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    event_rows: List[EventRow] = []
+    for row_id, event_name, payload_text in rows:
+        parsed_payload: Any = payload_text
+        if isinstance(payload_text, str):
+            try:
+                parsed_payload = json.loads(payload_text)
+            except Exception:
+                parsed_payload = payload_text
+        event_rows.append(EventRow(id=int(row_id), event=str(event_name or ""), payload=parsed_payload))
+    return event_rows
 
 
 def _build_where_and_params(project: Optional[str], agent: Optional[str], prompt: Optional[str], state: Optional[str]) -> tuple[list[str], list[str]]:
