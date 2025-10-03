@@ -36,22 +36,6 @@ def test_call_too_many_rows(monkeypatch):
 def test_call_success_with_prompt_override(monkeypatch):
     api = importlib.import_module("call.lib.api")
 
-    # resolve_agent returns a single resolved item
-    monkeypatch.setattr(
-        api,
-        "resolve_agent",
-        lambda **kwargs: {
-            "ok": True,
-            "resolved": {
-                "project": kwargs.get("project") or "UxFab",
-                "name": kwargs.get("agent") or "NewsAggr",
-                "path": "/p/UxFab/NewsAggr/agent.md",
-                "aliases": ["NA"],
-                "prompts": ["Default", "Draft"],
-            },
-        },
-    )
-
     # Patch build_and_run_agent to avoid heavy runtime and return a cfg with _last_final_output
     app_call = importlib.import_module("call.app.call")
     class _Cfg:
@@ -71,11 +55,11 @@ def test_call_success_with_prompt_override(monkeypatch):
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
 
-    res = api.call(project="UxFab", agent="NewsAggr", prompt="Draft", input="hello")
+    res = api.call(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning", input="hello")
     assert res.get("ok") is True
-    assert res.get("final_output", "").startswith("ok:NewsAggr:Draft:UxFab")
+    assert res.get("final_output", "").startswith("ok:DialogPostAnalysis:33-Questioning:UxFab")
     resolved = res.get("resolved") or {}
-    assert resolved.get("agent") == "NewsAggr"
+    assert resolved.get("agent") == "DialogPostAnalysis"
     assert resolved.get("project") == "UxFab"
 
 

@@ -15,7 +15,8 @@ import os
 import sqlite3
 from pathlib import Path
 import builtins as _builtins
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import logging
 
@@ -212,23 +213,73 @@ def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: 
     return out
 
 
-def find_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None, prompt: Optional[str] = None) -> List[Dict[str, str]]:
+def find_prompts(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    state: Optional[str] = None,
+    target: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> List[Dict[str, str]]:
     """Return prompt rows from repo.db with wildcard-aware filters.
 
     Wildcards:
       - '*' supported for project/agent/prompt/state/target
       - Filters are ANDed; target applied after SQL fetch to preserve `LIKE` semantics
+      - Project-scoped queries also surface prompts whose project column is blank so that
+        global prompts remain discoverable across projects.
     """
     conn = _ensure_db(); cur = conn.cursor()
     try:
         rx_t = _rx(target)
-        where, params = _build_where_and_params(project, agent, prompt, state)
-        # Ensure we only select prompt rows
-        where = ["prompt != ''"] + [w for w in where if w != "1=1"]
+
+        def _add_filter(column: str, value: Optional[str], *, allow_global: bool = False) -> tuple[Optional[str], Optional[str]]:
+            if value is None:
+                return None, None
+            raw_value = str(value)
+            has_wildcard = "*" in raw_value
+            pattern = _like_pattern(raw_value)
+            if not pattern:
+                return None, None
+            if has_wildcard:
+                clause = f"{column} LIKE ? ESCAPE '\\' COLLATE NOCASE"
+            else:
+                clause = f"{column} = ? COLLATE NOCASE"
+                if allow_global:
+                    clause = f"({clause} OR {column} = '' OR {column} IS NULL)"
+            return clause, pattern
+
+        filters: list[str] = ["prompt != ''"]
+        params: list[str] = []
+
+        project_clause, project_param = _add_filter("project", project, allow_global=True)
+        if project_clause:
+            filters.append(project_clause)
+        if project_param:
+            params.append(project_param)
+
+        agent_clause, agent_param = _add_filter("agent", agent)
+        if agent_clause:
+            filters.append(agent_clause)
+        if agent_param:
+            params.append(agent_param)
+
+        prompt_clause, prompt_param = _add_filter("prompt", prompt)
+        if prompt_clause:
+            filters.append(prompt_clause)
+        if prompt_param:
+            params.append(prompt_param)
+
+        state_clause, state_param = _add_filter("state", state)
+        if state_clause:
+            filters.append(state_clause)
+        if state_param:
+            params.append(state_param)
+
         sql = (
             "SELECT target as id, project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal "
             "FROM repo WHERE "
-            + " AND ".join(where)
+            + " AND ".join(filters)
         )
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
@@ -259,6 +310,7 @@ def find_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, 
         return out
     finally:
         cur.close(); conn.close()
+
 
 # Backwards-compat alias
 list_prompts = find_prompts
@@ -463,120 +515,163 @@ class SelectionNotFoundError(SelectionError):
         )
 
 
-def _first_stripped(value: Optional[str]) -> Optional[str]:
+@dataclass(frozen=True)
+class RepoCardRow:
+    """Single repo table row with values preserved as stored in SQLite."""
+
+    id: str | None
+    target: str | None
+    project: str | None
+    agent: str | None
+    prompt: str | None
+    path: str | None
+    state: str | None
+    engine: str | None
+    orchestration: str | None
+    type: str | None
+    rel_path: str | None
+    url: str | None
+    goal: str | None
+    card: str | None
+
+
+def _add_filter_clause(where: List[str], params: List[str], *, column: str, value: Optional[str]) -> None:
     if value is None:
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
+        return
     try:
-        text = str(value)
+        raw = str(value)
     except Exception:
-        return None
-    stripped = text.strip()
-    return stripped or None
+        raw = ""
+    if raw == "":
+        where.append(f"{column} = ''")
+        return
+    pattern = _like_pattern(raw)
+    if "*" in raw:
+        where.append(f"{column} LIKE ? ESCAPE '\\' COLLATE NOCASE")
+    else:
+        where.append(f"{column} = ? COLLATE NOCASE")
+    if pattern is not None:
+        params.append(pattern)
 
 
-def _require_single(
+def _kind_filters(kind: Optional[str]) -> List[str]:
+    if kind == "prompt":
+        return ["prompt != ''"]
+    if kind == "agent":
+        return ["prompt = ''", "agent != ''"]
+    if kind == "project":
+        return ["agent = ''", "prompt = ''"]
+    return []
+
+
+def select_card(
     *,
-    kind: str,
-    fetcher,
-    filters: Dict[str, Optional[str]],
-    required: bool,
-) -> Optional[Dict[str, str]]:
-    kwargs = dict(filters)
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    prompt: Optional[str] = None,
+    target: Optional[str] = None,
+    kind: Optional[str] = None,
+) -> RepoCardRow:
+    """Return a single repo row matching the provided filters.
+
+    Args:
+        project/agent/prompt/target: Optional selectors. '*' is treated as a wildcard.
+        kind: Optional explicit type hint ("project", "agent", "prompt").
+
+    Raises:
+        SelectionNotFoundError: When no rows satisfy the filters.
+        TooManyRowsError: When multiple rows satisfy the filters.
+    """
+
+    conn = _ensure_db(); cur = conn.cursor()
     try:
-        rows = fetcher(**kwargs) or []
-    except SelectionError:
-        raise
-    except Exception as exc:  # pragma: no cover - propagated as SelectionError
-        raise SelectionError(
-            f"Failed to query {kind}",
-            kind=kind,
-            code="INTERNAL_ERROR",
-            status=500,
-        ) from exc
+        where: List[str] = ["1=1"]
+        params: List[str] = []
+
+        where.extend(_kind_filters(kind))
+
+        _add_filter_clause(where, params, column="project", value=project)
+        _add_filter_clause(where, params, column="agent", value=agent)
+
+        if kind == "agent":
+            _add_filter_clause(where, params, column="prompt", value="")
+        elif kind == "project":
+            _add_filter_clause(where, params, column="prompt", value="")
+            _add_filter_clause(where, params, column="agent", value="")
+        else:
+            _add_filter_clause(where, params, column="prompt", value=prompt)
+
+        _add_filter_clause(where, params, column="target", value=target)
+
+        sql = (
+            "SELECT target, project, agent, prompt, path, state, engine, orchestration, type, rel_path, url, goal, card "
+            "FROM repo WHERE " + " AND ".join(where)
+        )
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+    finally:
+        cur.close(); conn.close()
 
     if not rows:
-        if required:
-            clean_filters = {k: v for k, v in kwargs.items() if isinstance(v, str) and v}
-            raise SelectionNotFoundError(
-                f"No {kind} found matching the provided filters",
-                kind=kind,
-                filters=clean_filters,
-            )
-        return None
+        clean_filters = {
+            k: v
+            for k, v in {
+                "project": project,
+                "agent": agent,
+                "prompt": prompt,
+                "target": target,
+            }.items()
+            if isinstance(v, str) and v
+        }
+        raise SelectionNotFoundError(
+            "No card found matching the provided filters",
+            kind=(kind or "card"),
+            filters=clean_filters,
+        )
 
     if len(rows) > 1:
+        options: List[Dict[str, str]] = []
+        for row in rows[:20]:
+            tgt, prj, ag, prm, path, *_ = row
+            options.append(
+                {
+                    "target": tgt,
+                    "project": prj,
+                    "agent": ag,
+                    "prompt": prm,
+                    "path": path,
+                }
+            )
         raise TooManyRowsError(
-            (
-                "Multiple prompts matched your criteria"
-                if kind == "prompt"
-                else "Multiple agents matched your criteria"
-                if kind == "agent"
-                else "Multiple projects matched your criteria"
-            ),
-            kind=kind,
-            options=[r for r in rows[:20]],
+            "Multiple cards matched the provided filters",
+            kind=(kind or "card"),
+            options=options,
         )
 
-    return rows[0]
+    tgt, prj, ag, prm, path, state, eng, orch, typ, rel, url, goal, card = rows[0]
+
+    return RepoCardRow(
+        id=tgt,
+        target=tgt,
+        project=prj,
+        agent=ag,
+        prompt=prm,
+        path=path,
+        state=state,
+        engine=eng,
+        orchestration=orch,
+        type=typ,
+        rel_path=rel,
+        url=url,
+        goal=goal,
+        card=card,
+    )
 
 
-def select_unique_rows(
-    *,
-    project: Optional[str],
-    agent: Optional[str],
-    prompt: Optional[str],
-    require_project: Optional[bool] = None,
-    require_agent: Optional[bool] = None,
-    require_prompt: Optional[bool] = None,
-) -> tuple[Optional[Dict[str, str]], Optional[Dict[str, str]], Optional[Dict[str, str]]]:
-    """Return single project/agent/prompt rows when present, enforcing uniqueness."""
-
-    project_filter = _first_stripped(project)
-    agent_filter = _first_stripped(agent)
-    prompt_filter = _first_stripped(prompt)
-
-    if require_project is None:
-        require_project = bool(project_filter)
-    if require_agent is None:
-        require_agent = bool(agent_filter)
-    if require_prompt is None:
-        require_prompt = bool(prompt_filter)
-
-    project_row = None
-    agent_row = None
-    prompt_row = None
-
-    if project_filter:
-        project_row = _require_single(
-            kind="project",
-            fetcher=find_projects,
-            filters={"project": project_filter},
-            required=require_project,
-        )
-
-    if agent_filter:
-        agent_row = _require_single(
-            kind="agent",
-            fetcher=find_agents,
-            filters={"project": project_filter, "agent": agent_filter},
-            required=require_agent,
-        )
-
-    if prompt_filter:
-        prompt_row = _require_single(
-            kind="prompt",
-            fetcher=find_prompts,
-            filters={
-                "project": project_filter,
-                "agent": agent_filter,
-                "prompt": prompt_filter,
-                "state": None,
-                "target": None,
-            },
-            required=require_prompt,
-        )
-
-    return project_row, agent_row, prompt_row
+__all__ = [
+    "RepoCardRow",
+    "select_card",
+    "SelectionError",
+    "SelectionNotFoundError",
+    "TooManyRowsError",
+]

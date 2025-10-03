@@ -17,10 +17,12 @@ def test_api_normalize_selector():
 
 def test_interpret_target_projects_agentfab_uxfab():
     api = importlib.import_module("call.lib.api")
-    pj, ag, pr, err = api.interpret_target(project=None, agent=None, prompt=None, target="AgentFab")
-    assert err is None and pj == "AgentFab" and ag is None and pr is None
-    pj, ag, pr, err = api.interpret_target(project=None, agent=None, prompt=None, target="UxFab")
-    assert err is None and pj == "UxFab" and ag is None and pr is None
+    row = api.interpret_target(project=None, agent=None, prompt=None, target="AgentFab")
+    assert row.project == "AgentFab"
+    assert row.type == "project"
+    row = api.interpret_target(project=None, agent=None, prompt=None, target="UxFab")
+    assert row.project == "UxFab"
+    assert row.type == "project"
 
 
 def test_build_cfg_project_via_target_preview_has_project_card():
