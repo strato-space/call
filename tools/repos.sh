@@ -415,6 +415,12 @@ if [ "$DO_PULL" = true ]; then
   repo https://github.com/strato-space/server
   repo https://github.com/strato-space/rms
   repo https://github.com/strato-space/voice
+  repo https://github.com/chigwell/telegram-mcp
+  repo https://github.com/xing5/mcp-google-sheets
+  cp call/tools/telegram-mcp/.env telegram-mcp/.env
+  uv --directory voice sync --active
+  uv --directory mcp-google-sheets sync --active
+
   # Optional repositories
   # repo https://github.com/strato-space/telegram-mcp
   # repo https://github.com/strato-space/mcp-google-sheets

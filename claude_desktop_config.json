@@ -1,11 +1,13 @@
 {
+  "isUsingBuiltInNodeForMcp": false,
+  "isDxtAutoUpdatesEnabled": true,
   "mcpServers": {
     "fs": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "~"
+        "c:/home/strato-space"
       ],
       "env": {}
     },
@@ -21,7 +23,7 @@
       "command": "uv",
       "args": [
         "--directory",
-        "telegram-mcp",
+        "c:/home/strato-space/telegram-mcp",
         "run",
         "main.py"
       ]
@@ -30,7 +32,7 @@
       "command": "uv",
       "args": [
         "--directory",
-        "voice",
+        "c:/home/strato-space/voice",
         "run",
         "-m",
         "mcp_voicebot.server"
@@ -40,13 +42,11 @@
       "command": "uvx",
       "args": [
         "--env-file",
-        "call/.env",
+        "c:/home/strato-space/call/.env",
         "--from",
         "git+https://github.com/strato-space/mcp-google-sheets@main",
         "mcp-google-sheets"
-      ],
-      "env": {}
+      ]
     }
-  },
-  "isDxtAutoUpdatesEnabled": true
+  }
 }
