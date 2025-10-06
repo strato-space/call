@@ -114,6 +114,13 @@ The script uses current directory as the workspace root, applies Git LF/CRLF set
   - CLI supports output formats: `json | yaml | text`.
   - Agent records populate `id` from the stored `target`, falling back to the agent name when no explicit target exists. CLI, Actions `/agents`, and the MCP agents tool rely on this identifier for stable selection.
 
+- Direct access to stored cards:
+  - `call.lib.api.read(card_id: str) -> str` returns the raw Markdown card from `repo.db` without parsing metadata.
+  - `call.lib.api.write(card_id: str, card_text: str)` updates the `card` column first and then rewrites the on-disk file path recorded in the index.
+  - CLI (`call read`, `call write`) prints or consumes plain text on success (JSON is only emitted on stderr for errors).
+  - The Actions API exposes `/read/{id}` (GET) returning `text/plain` and `/write/{id}` (POST) accepting `text/plain` payloads for immediate propagation.
+  - MCP tools `read` and `write` mirror the plain-text semantics and forward errors as JSON envelopes when needed.
+
 - Find helpers (arrays):
   - `call.lib.repo.find_projects(project?, target?)`
   - `call.lib.repo.find_agents(project?, agent?, target?)`
@@ -209,6 +216,10 @@ python -m call.cli.main exec --project UxFab --agent DialogPostAnalysis --conten
 .
 # Reload repositories and print result as YAML
 python -m call.cli.main reload --repos agent,prompt --format yaml
+
+# Read/write raw cards directly from the repo index
+python -m call.cli.main read DemoCard
+python -m call.cli.main write DemoCard --card "# Demo\n\nUpdated body"
 
 # List agents/projects as text
 python -m call.cli.main agents --project * --format text

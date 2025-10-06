@@ -29,6 +29,7 @@ import faulthandler
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
+from call.lib import repo_db as repo_db_module
 from dotenv import load_dotenv
 from pathlib import Path as _Path
 import logging as _logging
@@ -98,6 +99,85 @@ def cmd_models(args: argparse.Namespace) -> int:
         items = call_api.models()
         _emit_output(items, getattr(args, "format", "json"))
         return 0
+    except Exception as e:
+        err = {
+            "ok": False,
+            "error_code": 500,
+            "description": str(e),
+            "code": "INTERNAL_ERROR",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+
+
+def cmd_read(args: argparse.Namespace) -> int:
+    try:
+        text = call_api.read(args.id)
+        _safe_print(text)
+        return 0
+    except repo_db_module.CardNotFoundError as e:
+        err = {
+            "ok": False,
+            "error_code": 404,
+            "description": str(e),
+            "code": "NO_DATA_FOUND",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+    except ValueError as e:
+        err = {
+            "ok": False,
+            "error_code": 400,
+            "description": str(e),
+            "code": "BAD_REQUEST",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+    except Exception as e:
+        err = {
+            "ok": False,
+            "error_code": 500,
+            "description": str(e),
+            "code": "INTERNAL_ERROR",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+
+
+def _load_write_text(args: argparse.Namespace) -> str:
+    if getattr(args, "card", None):
+        return str(args.card)
+    if getattr(args, "file", None):
+        path = _Path(args.file)
+        return path.read_text(encoding="utf-8")
+    if getattr(args, "stdin", False) or not sys.stdin.isatty():
+        return sys.stdin.read()
+    raise ValueError("Provide --card, --file, or pipe card text via stdin")
+
+
+def cmd_write(args: argparse.Namespace) -> int:
+    try:
+        text = _load_write_text(args)
+        call_api.write(args.id, text)
+        return 0
+    except repo_db_module.CardNotFoundError as e:
+        err = {
+            "ok": False,
+            "error_code": 404,
+            "description": str(e),
+            "code": "NO_DATA_FOUND",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
+    except ValueError as e:
+        err = {
+            "ok": False,
+            "error_code": 400,
+            "description": str(e),
+            "code": "BAD_REQUEST",
+        }
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+        return 1
     except Exception as e:
         err = {
             "ok": False,
@@ -403,6 +483,17 @@ def main() -> int:
     p_models = sub.add_parser("models", help="List available OpenAI models via API")
     p_models.add_argument("--format", default="json", choices=["json", "yaml", "text"], help="Output format")
     p_models.set_defaults(func=cmd_models)
+
+    p_read = sub.add_parser("read", help="Read raw card text from repo.db")
+    p_read.add_argument("id", help="Card identifier (target)")
+    p_read.set_defaults(func=cmd_read)
+
+    p_write = sub.add_parser("write", help="Write card text to repo.db and filesystem")
+    p_write.add_argument("id", help="Card identifier (target)")
+    p_write.add_argument("--card", default="", help="Inline card text to persist")
+    p_write.add_argument("--file", default="", help="Read card text from a file path")
+    p_write.add_argument("--stdin", action="store_true", help="Read card text from stdin (pipe) if provided")
+    p_write.set_defaults(func=cmd_write)
 
     p_call = sub.add_parser("call", help="Call an agent with input text")
     p_call.add_argument("--project", default="", help="Project name (exact or with * wildcard). '@' and '.md' suffix are stripped")
