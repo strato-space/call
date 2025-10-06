@@ -118,6 +118,10 @@ for _cand in _env_candidates:
 pytestmark = [
     *pytestmark,  # keep live guard
     pytest.mark.skipif(
+        _LIVE_KIND == "skip",
+        reason="TELEGRAM_LIVE_KIND=skip disables Telegram integration tests",
+    ),
+    pytest.mark.skipif(
         not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"),
         reason="Integration test requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env or environment",
     ),
