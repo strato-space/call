@@ -24,6 +24,90 @@ _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
 )
 
 
+def read(card_id: str) -> str:
+    """Return raw card text stored in repo.db for the given identifier."""
+
+    if not card_id or not str(card_id).strip():
+        raise ValueError("card id is required")
+
+    conn = call_repo._ensure_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT card FROM repo WHERE target = ? LIMIT 1",
+            (str(card_id),),
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not row:
+        raise call_repo.CardNotFoundError(f"card '{card_id}' not found")
+
+    card_text = row[0]
+    if not isinstance(card_text, str) or not card_text:
+        raise call_repo.CardNotFoundError(f"card '{card_id}' not found")
+
+    return card_text
+
+
+def write(card_id: str, card_text: str) -> None:
+    """Persist card text to repo.db and the filesystem (DB first)."""
+
+    if not card_id or not str(card_id).strip():
+        raise ValueError("card id is required")
+    if card_text is None:
+        raise ValueError("card text is required")
+
+    card_str = str(card_text)
+    conn = call_repo._ensure_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT path FROM repo WHERE target = ? LIMIT 1",
+            (str(card_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise call_repo.CardNotFoundError(f"card '{card_id}' not found")
+        cur.execute(
+            "UPDATE repo SET card = ? WHERE target = ?",
+            (card_str, str(card_id)),
+        )
+        if cur.rowcount <= 0:
+            raise call_repo.CardNotFoundError(f"card '{card_id}' not found")
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    fs_path_raw = row[0] if row else ""
+    try:
+        fs_path = str(fs_path_raw or "").strip()
+    except Exception:
+        fs_path = ""
+
+    if not fs_path:
+        return
+
+    path_obj = _Path(fs_path)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path_obj.write_text(card_str, encoding="utf-8")
+    except Exception as exc:
+        try:
+            debug_print(
+                "[cards.write]",
+                "filesystem_write_failed",
+                str(path_obj),
+                str(exc),
+            )
+        except Exception:
+            pass
+        raise
+
+
 def _dict_with_str_keys(data: Dict[str, Any] | None) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return {}
