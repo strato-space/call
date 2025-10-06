@@ -5,7 +5,7 @@ from typing import Any, Optional, Literal
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, Query, Request, Body
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .deps import bearer_guard
 
@@ -14,8 +14,11 @@ from call.lib.api import call as api_call
 from call.lib.api import list as api_list
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import models as api_models
+from call.lib.api import read as api_read
+from call.lib.api import write as api_write
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
+from call.lib import repo_db as repo_db_module
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
 def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
@@ -204,6 +207,62 @@ def notify_action_post(payload: NotifyPayload = Body(...)):
     except Exception:
         pass
     return res
+
+
+@app.get(
+    "/read/{id}",
+    dependencies=[Depends(bearer_guard)],
+    operation_id="read",
+    summary="Read raw card text from repo.db for any entity project/agent/prompt",
+)
+def read(id: str):
+    try:
+        text = api_read(id)
+        return PlainTextResponse(text)
+    except repo_db_module.CardNotFoundError:
+        err = {
+            "ok": False,
+            "error_code": 404,
+            "description": f"Card '{id}' not found",
+            "code": "NO_DATA_FOUND",
+        }
+        return JSONResponse(content=err, status_code=404)
+    except ValueError as exc:
+        err = {
+            "ok": False,
+            "error_code": 400,
+            "description": str(exc),
+            "code": "BAD_REQUEST",
+        }
+        return JSONResponse(content=err, status_code=400)
+
+
+@app.post(
+    "/write/{id}",
+    dependencies=[Depends(bearer_guard)],
+    operation_id="write",
+    summary="Write card text to repo.db and filesystem for any entity project/agent/prompt",
+)
+def write(id: str, payload: str = Body(..., media_type="text/plain")):
+    try:
+        api_write(id, str(payload))
+        return PlainTextResponse("ok")
+    except repo_db_module.CardNotFoundError:
+        err = {
+            "ok": False,
+            "error_code": 404,
+            "description": f"Card '{id}' not found",
+            "code": "NO_DATA_FOUND",
+        }
+        return JSONResponse(content=err, status_code=404)
+    except ValueError as exc:
+        err = {
+            "ok": False,
+            "error_code": 400,
+            "description": str(exc),
+            "code": "BAD_REQUEST",
+        }
+        return JSONResponse(content=err, status_code=400)
 
 
 @app.get(

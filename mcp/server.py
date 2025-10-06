@@ -20,6 +20,9 @@ from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import reload as api_reload
 from call.lib.api import models as api_models
+from call.lib.api import read as api_read
+from call.lib.api import write as api_write
+from call.lib import repo_db as repo_db_module
 
 
 @asynccontextmanager
@@ -71,6 +74,51 @@ def prompts(
     """List prompts from the prompt repo (ready/draft)."""
     items = api_list_prompts(project=project, agent=agent, prompt=prompt, state=state)
     return items if isinstance(items, list) else ([items] if items else [])
+
+
+@mcp.tool()
+def read(id: str, ctx: Context | None = None) -> Any:
+    """Return raw card text from repo.db."""
+
+    try:
+        return api_read(id)
+    except repo_db_module.CardNotFoundError as exc:
+        return {
+            "ok": False,
+            "error_code": 404,
+            "description": str(exc),
+            "code": "NO_DATA_FOUND",
+        }
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error_code": 400,
+            "description": str(exc),
+            "code": "BAD_REQUEST",
+        }
+
+
+@mcp.tool()
+def write(id: str, text: str, ctx: Context | None = None) -> Any:
+    """Persist card text to repo.db and filesystem."""
+
+    try:
+        api_write(id, text)
+        return "ok"
+    except repo_db_module.CardNotFoundError as exc:
+        return {
+            "ok": False,
+            "error_code": 404,
+            "description": str(exc),
+            "code": "NO_DATA_FOUND",
+        }
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error_code": 400,
+            "description": str(exc),
+            "code": "BAD_REQUEST",
+        }
 
 
 @mcp.tool(name="exec")
