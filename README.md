@@ -273,6 +273,11 @@ python -m call.cli.main exec --target AgentFab --parse-input "@50-* @3-*" --echo
 python -m call.cli.main exec --target Vasil3
 ```
 
+### Running tests locally
+
+- Windows environments: activate the project virtualenv and run `pytest` to execute the full suite, including Telegram integration checks when `TELEGRAM_LIVE=1`.
+- Linux environments (CI/headless): run the suite with `TELEGRAM_LIVE_KIND=skip TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID="" pytest` to skip live Telegram send tests while running everything else.
+
 ### Call Actions API (curl examples)
 
 - **List prompts (HTTPS via nginx)**
