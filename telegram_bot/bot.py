@@ -19,6 +19,7 @@ import html as py_html
 import argparse
 import json
 import sys
+import httpx
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Telegram bot entrypoint for Call")
@@ -191,26 +192,36 @@ def _summarize_update(update: Update) -> str:
 
 
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """TypeHandler callback to log every incoming update (uses CALL_DEBUG via debug_print)."""
+    """TypeHandler callback to log every incoming update."""
     summary = _summarize_update(update)
-    raw_payload = None
-    try:
-        if isinstance(update, Update):
-            raw_payload = update.to_dict()
-    except Exception:
-        raw_payload = None
-    if raw_payload is not None:
-        try:
-            raw_json = json.dumps(raw_payload, ensure_ascii=False, default=str)
-        except Exception:
-            raw_json = str(raw_payload)
-        log.info("Update raw: %s", raw_json)
-    # Structured app log remains at INFO
     log.info("Update: %s", summary)
-    # Console debug output is gated by CALL_DEBUG through debug_print
-    # Module prefix first, optional tags second
-    debug_print("[bot]", "[UPDATE]", summary)
     return None
+
+
+async def _tap_getupdates_response(response: httpx.Response) -> None:
+    """Log raw Telegram getUpdates responses before PTB processes them."""
+    try:
+        req = getattr(response, "request", None)
+        request_url = str(req.url) if req and getattr(req, "url", None) else ""
+        if not request_url.endswith("/getUpdates"):
+            return
+        await response.aread()
+        raw = response.text
+        if not raw:
+            return
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            result = payload.get("result")
+            if isinstance(result, list) and not result:
+                return
+        if len(raw) > 5000:
+            raw = f"{raw[:5000]}… [truncated]"
+        log.debug("Telegram RAW getUpdates: %s", raw)
+    except Exception:
+        log.debug("Telegram RAW getUpdates: <unavailable>", exc_info=True)
 
 
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1101,6 +1112,9 @@ def main() -> None:
         read_timeout=120.0,
         write_timeout=60.0,
         pool_timeout=30.0,
+        httpx_kwargs={
+            "event_hooks": {"response": [_tap_getupdates_response]},
+        },
     )
 
     # Ensure repo index is loaded before polling to avoid NO_DATA_FOUND on first calls
