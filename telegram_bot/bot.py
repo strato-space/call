@@ -160,6 +160,12 @@ def _summarize_update(update: Update) -> str:
         uid = getattr(update, "update_id", None)
         chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
         user_id = getattr(getattr(update, "effective_user", None), "id", None)
+        thread_id = None
+        try:
+            msg = getattr(update, "effective_message", None)
+            thread_id = getattr(msg, "message_thread_id", None)
+        except Exception:
+            thread_id = None
         kind = None
         data = None
         if update.message:
@@ -178,7 +184,8 @@ def _summarize_update(update: Update) -> str:
             kind = "other"
             data = ""
         data = (data or "")[:120].replace("\n", " ")
-        return f"uid={uid} chat={chat_id} user={user_id} kind={kind} data={data!r}"
+        thread_part = f" thread={thread_id}" if thread_id is not None else ""
+        return f"uid={uid} chat={chat_id} user={user_id}{thread_part} kind={kind} data={data!r}"
     except Exception:
         return "<unavailable>"
 
@@ -186,6 +193,18 @@ def _summarize_update(update: Update) -> str:
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TypeHandler callback to log every incoming update (uses CALL_DEBUG via debug_print)."""
     summary = _summarize_update(update)
+    raw_payload = None
+    try:
+        if isinstance(update, Update):
+            raw_payload = update.to_dict()
+    except Exception:
+        raw_payload = None
+    if raw_payload is not None:
+        try:
+            raw_json = json.dumps(raw_payload, ensure_ascii=False, default=str)
+        except Exception:
+            raw_json = str(raw_payload)
+        log.info("Update raw: %s", raw_json)
     # Structured app log remains at INFO
     log.info("Update: %s", summary)
     # Console debug output is gated by CALL_DEBUG through debug_print
