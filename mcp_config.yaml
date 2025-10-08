@@ -23,17 +23,42 @@ mcpServers:
     env: {}
 
   # skip --active --inexact too hard to sync all
+  # uv --directory telegram-mcp-ro sync 
+  # uv --directory telegram-mcp-ro run main.py
+  # note: the app should load call/.env itself (e.g., via python-dotenv)
+  telegram-mcp-ro:
+    enabled: true
+    command: uv
+    args:
+      - --directory
+      - ./telegram-mcp-ro
+      - run
+      - voice.py
+
   # uv --directory telegram-mcp sync 
   # uv --directory telegram-mcp run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
-  telegram-user:
-    enabled: true
+  telegram-mcp:
+    enabled: false
     command: uv
     args:
       - --directory
       - ./telegram-mcp
       - run
       - main.py
+  
+  # uv --directory mcp-telegram-bot sync 
+  # uv --directory mcp-telegram-bot run main.py
+  # note: the app should load call/.env itself (e.g., via python-dotenv)
+  mcp-telegram-bot:
+    enabled: true
+    command: uv
+    args:
+      - --directory
+      - ./mcp-telegram-bot
+      - run
+      - mcp-telegram-bot
+      - start
 
   # # OS env var:
   # API_ACCESS_TOKEN=123123142356365864895789678967
