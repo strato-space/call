@@ -223,6 +223,21 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
     except Exception:
         log.debug("Telegram RAW getUpdates: <unavailable>", exc_info=True)
 
+async def _tap_getupdates_response(response: httpx.Response) -> None:
+    """Log raw Telegram getUpdates responses before PTB processes them."""
+    try:
+        req = getattr(response, "request", None)
+        request_url = str(req.url) if req and getattr(req, "url", None) else ""
+        if not request_url.endswith("/getUpdates"):
+            return
+        await response.aread()
+        raw = response.text
+        if len(raw) > 5000:
+            raw = f"{raw[:5000]}… [truncated]"
+        log.debug("Telegram RAW getUpdates: %s", raw)
+    except Exception:
+        log.debug("Telegram RAW getUpdates: <unavailable>", exc_info=True)
+
 
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global error handler to avoid unhandled exception warnings and provide context."""
