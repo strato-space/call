@@ -107,9 +107,8 @@ def test_handle_call_prompt_token_calls_api_with_target(monkeypatch):
     # Assert
     assert services.last_call is not None
     assert services.last_call["target"] == "3-OnlineChunkSummarization"
-    # Bot should have replied with a concise error envelope string
-    replies = upd.message._replies
-    assert replies and replies[0][0].startswith("Error:")
+    # NO_DATA_FOUND responses are now suppressed
+    assert upd.message._replies == []
 
 
 def test_handle_call_agent_token_calls_api_with_target(monkeypatch):

@@ -327,9 +327,7 @@ def _require_allowed_users(func: Callable[[Update, ContextTypes.DEFAULT_TYPE], A
             cid = update.effective_chat.id if update.effective_chat else None
             ok = (uid in ALLOWED_USERS) or (cid in ALLOWED_USERS)
             if not ok:
-                # Minimal feedback without leaking info
-                if update.message:
-                    await update.message.reply_text("Unauthorized")
+                debug_print("[bot]", "[AUTH]", f"ignored unauthorized user={uid} chat={cid}")
                 return
         await func(update, context)
     return wrapper
@@ -760,7 +758,11 @@ async def _call_task(
         # On success: do not send an extra bot reply. On error: reply with a concise error.
         try:
             if not (isinstance(res, dict) and res.get("ok")):
-                code = (res.get("code") if isinstance(res, dict) else None) or "ERROR"
+                code_raw = (res.get("code") if isinstance(res, dict) else None)
+                code = str(code_raw or "ERROR")
+                if code.upper() == "NO_DATA_FOUND":
+                    debug_print("[bot]", "[CALL_TASK]", "suppressing NO_DATA_FOUND response")
+                    return
                 status = (res.get("error_code") if isinstance(res, dict) else None) or 500
                 desc = (res.get("description") if isinstance(res, dict) else None) or "Unknown error"
                 await m.reply(f"Error: {code} ({status}): {desc}", parse_mode=None)
