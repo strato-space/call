@@ -63,7 +63,7 @@ def test_write_endpoint_updates_storage(actions_env):
     headers = {"Authorization": "Bearer TEST_TOKEN"}
     resp = client.post(
         "/write/DemoCard",
-        data="updated",
+        content="updated",
         headers={**headers, "Content-Type": "text/plain"},
     )
     assert resp.status_code == 200
