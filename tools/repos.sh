@@ -444,7 +444,7 @@ if [ "$DO_PULL" = true ]; then
     log_section "Copy services config"
     cp -a server/mcp/etc/. /etc/
     systemctl daemon-reload
-    log_section "Restarting call services"
+    log_section "Restarting call, voice, fs, seq, nginx services"
     sudo systemctl restart actions@call mcp@call actions@voice mcp@voice mcp@fs mcp@seq nginx
 
   fi
