@@ -441,11 +441,15 @@ if [ "$DO_PULL" = true ]; then
   python -m call.cli.main reload
 
   if [ "$DO_CODEX" != true ] && command_exists systemctl; then
+    log_section "Copy services config"
+    cp -a server/mcp/etc/. /etc/
+    systemctl daemon-reload
     log_section "Restarting call services"
-    sudo systemctl restart actions@call.service mcp@call.service
+    sudo systemctl restart actions@call mcp@call actions@voice mcp@voice mcp@fs mcp@seq nginx
+
   fi
 fi
-
+ 
 if [ "$DO_MCP" = true ]; then
   log_section "Running --mcp workflow"
   if setup_mcp; then
