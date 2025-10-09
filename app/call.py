@@ -1987,7 +1987,7 @@ class MCPServerStdioHook(MCPServerStdio):
             pass
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> CallToolResult:
-        debug_print(f"[MCP Hook] Calling tool: {tool_name}")
+        debug_print(f"[MCP Hook][{self._mcp_title}] Calling tool: {tool_name}")
         # Bind parent method to avoid 'super(): no arguments' inside nested closures
         parent_call_tool = super(MCPServerStdioHook, self).call_tool
         # Try to present arguments in YAML for readability (console)
