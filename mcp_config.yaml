@@ -26,7 +26,7 @@ mcpServers:
   # uv --directory telegram-mcp-ro sync 
   # uv --directory telegram-mcp-ro run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
-  telegram-mcp-ro:
+  tg-ro:
     enabled: true
     command: uv
     args:
@@ -38,7 +38,7 @@ mcpServers:
   # uv --directory telegram-mcp sync 
   # uv --directory telegram-mcp run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
-  telegram-mcp:
+  tg:
     enabled: false
     command: uv
     args:
@@ -50,7 +50,7 @@ mcpServers:
   # uv --directory mcp-telegram-bot sync 
   # uv --directory mcp-telegram-bot run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
-  mcp-telegram-bot:
+  tgbot:
     enabled: true
     command: uv
     args:
