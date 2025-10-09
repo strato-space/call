@@ -419,6 +419,7 @@ if [ "$DO_PULL" = true ]; then
   repo https://github.com/strato-space/telegram-mcp
   repo https://github.com/strato-space/telegram-mcp-ro
   repo https://github.com/xing5/mcp-google-sheets
+  repo https://github.com/strato-space/mcp-telegram-bot
   
   uv --directory voice sync 
   uv --directory mcp-google-sheets sync 
@@ -447,6 +448,7 @@ if [ "$DO_PULL" = true ]; then
     log_section "Restarting call, voice, tg-ro, tg, tgbot services"
     sudo systemctl restart mcp@call mcp@voice mcp@tg-ro mcp@tg mcp@tgbot actions@call actions@voice
     
+    #to fix: fe, tm, gsh
     log_section "Restarting fs, seq, fe, mem, tm, gsh services"
     sudo systemctl restart mcp@fs mcp@seq mcp@fe mcp@mem mcp@tm mcp@gsh 
 
