@@ -206,6 +206,14 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
         if not request_url.endswith("/getUpdates"):
             return
         await response.aread()
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            result = data.get("result")
+            if isinstance(result, list) and not result:
+                return
         raw = response.text
         if len(raw) > 5000:
             raw = f"{raw[:5000]}… [truncated]"
