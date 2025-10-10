@@ -33,7 +33,7 @@ mcpServers:
       - --directory
       - ./telegram-mcp-ro
       - run
-      - voice.py
+      -  main.py
 
   # uv --directory telegram-mcp sync 
   # uv --directory telegram-mcp run main.py
