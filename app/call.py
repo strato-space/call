@@ -416,6 +416,42 @@ async def build_tools_for_cfg(cfg) -> list[Any]:
     return tool_instances
 
 
+def _remote_url_with_token(remote_url: str | None, token: str | None) -> str | None:
+    if not remote_url or not token:
+        return None
+
+    url = remote_url.strip()
+    tok = token.strip()
+    if not url or not tok:
+        return None
+
+    if url.startswith("git@"):
+        if url.startswith("git@github.com:"):
+            path = url.split(":", 1)[1]
+            path = path.lstrip("/")
+            return f"https://x-access-token:{tok}@github.com/{path}"
+        return None
+
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        return None
+
+    if parsed.scheme not in ("http", "https"):
+        return None
+
+    netloc = parsed.netloc
+    if "@" in netloc:
+        netloc = netloc.split("@", 1)[1]
+
+    netloc = f"x-access-token:{tok}@{netloc}"
+
+    try:
+        return urllib.parse.urlunsplit(parsed._replace(netloc=netloc))
+    except Exception:
+        return None
+
+
 async def _git_pull_prompt_repo() -> None:
     """Ensure prompt repo is up-to-date before running the agent."""
     try:
@@ -423,21 +459,39 @@ async def _git_pull_prompt_repo() -> None:
 
         from asyncio.subprocess import PIPE
 
-        async def _run_git(cmd: list[str]) -> tuple[int, bytes, bytes]:
+        async def _run_git(cmd: list[str], *, env: dict[str, str] | None = None) -> tuple[int, bytes, bytes]:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(prompt_repo),
                 stdout=PIPE,
                 stderr=PIPE,
+                env=env,
             )
             out, err = await proc.communicate()
             return proc.returncode, out, err
 
+        git_env: dict[str, str] | None = None
+        token = os.environ.get("GITHUB_TOKEN_PROMPT", "").strip()
+        if token:
+            rc_url, out_url, _ = await _run_git(["git", "config", "--get", "remote.origin.url"])
+            if rc_url == 0:
+                remote_url = out_url.decode(errors="ignore").strip()
+                token_url = _remote_url_with_token(remote_url, token)
+                if token_url:
+                    await _run_git(["git", "remote", "set-url", "origin", token_url])
+                    git_env = os.environ.copy()
+                    git_env["GIT_TERMINAL_PROMPT"] = "0"
+                    git_env["GITHUB_TOKEN_PROMPT"] = token
+                    try:
+                        debug_print("[git]", "origin remote switched to token-auth URL for prompt repo")
+                    except Exception:
+                        pass
+
         debug_print("[git]", f"Pulling prompt repo at {prompt_repo} with --rebase")
-        rc, out_rebase, err_rebase = await _run_git(["git", "pull", "--rebase"])
+        rc, out_rebase, err_rebase = await _run_git(["git", "pull", "--rebase"], env=git_env)
         if rc != 0:
             debug_print("[git]", "--rebase failed; retrying plain pull")
-            rc_plain, out_plain, err_plain = await _run_git(["git", "pull"])
+            rc_plain, out_plain, err_plain = await _run_git(["git", "pull"], env=git_env)
             debug_print(
                 "[git]",
                 "plain pull rc=%s out=%s err=%s" % (
