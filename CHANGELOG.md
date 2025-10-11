@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## 2025-10-11
+
+- **CLI:** call exec now reloads repositories when CALL_DEBUG is set before payload construction so local prompt/agent edits are picked up without restarting. (call/cli/main.py, call/README.md)
+- **MCP:** Tool invocation hooks log formatted results under debug to aid inspection while truncating large payloads. (call/app/call.py)
+- **Config:** Added Telegram MCP presets and normalized paths in the Claude Desktop config template. (call/claude_desktop_config.json)
+
 ## 2025-09-29
 
 - **API/CLI/Actions/MCP:** Added `call.lib.api.read(card_id)` and `call.lib.api.write(card_id, card_text)` helpers that keep repo.db and the filesystem in sync (DB first). Exposed them through new CLI commands (`call read`, `call write`), Actions endpoints (plain-text `/read/{id}` + `/write/{id}`), and MCP tools (`read`, `write`) so card edits take effect immediately without running `reload`. (`call/lib/api.py`, `call/cli/main.py`, `call/actions/main.py`, `call/actions/openapi.json`, `call/mcp/server.py`)

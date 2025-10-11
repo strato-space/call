@@ -633,6 +633,12 @@ def main() -> int:
         return item
 
     def cmd_exec(args: argparse.Namespace) -> int:
+        if os.getenv("CALL_DEBUG"):
+            debug_print("[cli]", "[EXEC]", "CALL_DEBUG set -> triggering reload() before exec")
+            try:
+                call_api.reload()
+            except Exception as reload_error:
+                debug_print("[cli]", "[EXEC]", f"reload() failed: {reload_error}")
         # Build payload by merging all provided args (no strict mutual exclusivity).
         payload: dict = {}
         model_override = (str(getattr(args, "model", "")) if hasattr(args, "model") else "").strip()

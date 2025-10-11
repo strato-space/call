@@ -243,6 +243,7 @@ python -m call.cli.main prompts --project * --agent * --state ready --format tab
 - exec (payload-based)
   - Merges selectors and content items into a single JSON payload (best for content buckets and Actions/MCP).
   - If exactly one selector among `project|agent|prompt|target` is provided, the CLI uses the single-source-of-truth validator `interpret_exec_payload()`; otherwise it falls back to a backward-compatible path and calls using explicit selectors with the full payload JSON as input.
+  - When `CALL_DEBUG` is truthy, the CLI runs `call_api.reload()` before building the payload so recent on-disk edits are picked up.
 - `--echo` prints the payload and exits (no execution).
 - `--model` embeds the override into the payload so downstream callers (Actions/MCP) use the requested model.
 - `--format json|yaml|text` controls output format.

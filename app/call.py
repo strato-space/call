@@ -1994,6 +1994,70 @@ class MCPServerStdioHook(MCPServerStdio):
         except Exception:
             return f"{thoughtNumber}/{totalThoughts}"
 
+    @staticmethod
+    def _format_tool_result(result: Any, *, max_len: int = 4000) -> str:
+        """Convert tool result to a readable, truncated string for logging."""
+        value = result
+
+        def _dump_like_mapping(obj: Any) -> Any:
+            for attr in ("model_dump", "dict"):
+                method = getattr(obj, attr, None)
+                if callable(method):
+                    try:
+                        return method()
+                    except TypeError:
+                        try:
+                            return method(by_alias=True)
+                        except Exception:
+                            continue
+            return obj
+
+        value = _dump_like_mapping(value)
+
+        try:
+            if isinstance(value, (bytes, bytearray)):
+                text = value.decode("utf-8", errors="replace")
+            elif isinstance(value, str):
+                text = value
+            elif isinstance(value, (list, tuple, set)):
+                seq = list(value)
+                if isinstance(value, tuple):
+                    seq = list(value)
+                if isinstance(value, set):
+                    seq = sorted(list(value), key=str)
+                try:
+                    import yaml
+
+                    text = yaml.safe_dump(seq, allow_unicode=True, sort_keys=False, width=1000)
+                except Exception:
+                    text = json.dumps(seq, ensure_ascii=False, indent=2, default=str)
+            elif isinstance(value, dict):
+                try:
+                    import yaml
+
+                    text = yaml.safe_dump(value, allow_unicode=True, sort_keys=False, width=1000)
+                except Exception:
+                    text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+            else:
+                text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+        except Exception:
+            try:
+                text = repr(value)
+            except Exception:
+                text = f"{type(value)!r}"
+
+        text = text.replace("\r\n", "\n").replace("\\n", "\n")
+        try:
+            import re as _re_collapse
+
+            text = _re_collapse.sub(r"\n{2}", r"\n\n", text)
+            text = _re_collapse.sub(r"\n{3,}", r"\n\n", text)
+        except Exception:
+            pass
+        if len(text) > max_len:
+            text = text[: max_len - 3] + "..."
+        return text.strip("\n")
+
     async def __send_message(self, text: str) -> Message:
         """Send a new Telegram message for this MCP instance and cache it. Never raises."""
         # Prefix with MCP title and sanitize; use common send path with consistent target selection
@@ -2104,7 +2168,12 @@ class MCPServerStdioHook(MCPServerStdio):
             try:
                 async def _call():
                     return await parent_call_tool(tool_name, arguments)
-                return await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+                result = await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
+                debug_print(
+                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
+                    + self._format_tool_result(result)
+                )
+                return result
             except Exception as e:
                 try:
                     err_text = format_exception_text(e)
@@ -2174,6 +2243,10 @@ class MCPServerStdioHook(MCPServerStdio):
                     return await parent_call_tool(tool_name, arguments)
                 result = await async_retry(_call, retries=1, base_delay=1.0, jitter=0.2, retry_on=(httpx.TimeoutException, OSError))
                 debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
+                debug_print(
+                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
+                    + self._format_tool_result(result)
+                )
                 return result
             except Exception as e:
                 err_text = format_exception_text(e)
