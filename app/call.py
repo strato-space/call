@@ -206,8 +206,7 @@ async def safe_edit_message_text(*, chat_id: int, message_id: int, text: str, pa
         # Fallback to plain edit if HTML entities fail
         if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
             try:
-                import re as _re
-                plain = _re.sub(r"<[^>]+>", "", prepared)
+                plain = re.sub(r"<[^>]+>", "", prepared)
                 async def _plain():
                     return await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=plain)
                 return await async_retry(_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
@@ -1648,8 +1647,7 @@ async def safe_send_message(*, chat_id: int | None, text: str, message_thread_id
         # Fallback to plain text on entity parse errors
         if ("can't parse entities" in msg) or ("parse entities" in msg) or ("entity" in msg):
             try:
-                import re as _re
-                plain = _re.sub(r"<[^>]+>", "", text or "")
+                plain = re.sub(r"<[^>]+>", "", text or "")
                 async def _plain():
                     return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup)
                 return await async_retry(_plain, retries=1, base_delay=0.7, jitter=0.1, retry_on=(TimedOut, NetworkError, httpx.TimeoutException))
@@ -2014,6 +2012,26 @@ class MCPServerStdioHook(MCPServerStdio):
 
         value = _dump_like_mapping(value)
 
+        def _redact_structured_content(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                structured_value = obj.get("structuredContent")
+                redact_content = structured_value not in (None, [], {}, "")
+                sanitized: dict[Any, Any] = {}
+                for key, val in obj.items():
+                    if redact_content and key == "content":
+                        continue
+                    sanitized[key] = _redact_structured_content(val)
+                return sanitized
+            if isinstance(obj, list):
+                return [_redact_structured_content(v) for v in obj]
+            if isinstance(obj, tuple):
+                return tuple(_redact_structured_content(v) for v in obj)
+            if isinstance(obj, set):
+                return {_redact_structured_content(v) for v in obj}
+            return obj
+
+        value = _redact_structured_content(value)
+
         try:
             if isinstance(value, (bytes, bytearray)):
                 text = value.decode("utf-8", errors="replace")
@@ -2047,14 +2065,8 @@ class MCPServerStdioHook(MCPServerStdio):
                 text = f"{type(value)!r}"
 
         text = text.replace("\r\n", "\n").replace("\\n", "\n")
-        try:
-            import re as _re_collapse
-
-            text = _re_collapse.sub(r"\n{2}", r"\n\n", text)
-            text = _re_collapse.sub(r"\n{3,}", r"\n\n", text)
-        except Exception:
-            pass
-        if len(text) > max_len:
+        debug_mode = bool(os.getenv("CALL_DEBUG"))
+        if not debug_mode and len(text) > max_len:
             text = text[: max_len - 3] + "..."
         return text.strip("\n")
 
