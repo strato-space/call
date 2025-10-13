@@ -2065,7 +2065,15 @@ class MCPServerStdioHook(MCPServerStdio):
                 text = f"{type(value)!r}"
 
         text = text.replace("\r\n", "\n").replace("\\n", "\n")
-        debug_mode = bool(os.getenv("CALL_DEBUG"))
+        try:
+            import re as _re_collapse
+
+            text = _re_collapse.sub(r"\n{2}", r"\n\n", text)
+            text = _re_collapse.sub(r"\n{3,}", r"\n\n", text)
+        except Exception:
+            pass
+        
+        debug_mode = bool(os.getenv("DEBUG_MODE"))
         if not debug_mode and len(text) > max_len:
             text = text[: max_len - 3] + "..."
         return text.strip("\n")
