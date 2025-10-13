@@ -1,5 +1,18 @@
 {
     "mcpServers": {
+
+          "voice-s": {"serverUrl": "https://voice-mcp.stratospace.fun"},
+          "GitKraken": {
+            "args": [
+              "mcp",
+              "--host=windsurf",
+              "--source=gitlens",
+              "--scheme=windsurf"
+            ],
+            "command": "c:\\Users\\Admin\\AppData\\Roaming\\Windsurf\\User\\globalStorage\\eamodio.gitlens\\gk.exe",
+            "type":    "stdio"
+          }
+        }, 
      "fs": {
       "command": "npx",
       "args": [
