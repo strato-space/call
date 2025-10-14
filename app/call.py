@@ -548,35 +548,88 @@ async def _git_pull_prompt_repo() -> None:
 
         git_env: dict[str, str] | None = None
         token = os.environ.get("GITHUB_TOKEN_PROMPT", "").strip()
+        
+        try:
+            debug_print("[git]", f"Token available: {bool(token)}")
+        except Exception:
+            pass
+        
+        # Always set git_env to disable interactive prompts and bypass proxy for GitHub
+        git_env = os.environ.copy()
+        git_env["GIT_TERMINAL_PROMPT"] = "0"
+        git_env["GIT_ASKPASS"] = "echo"
+        git_env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        # Ensure GitHub is not proxied
+        no_proxy = git_env.get("NO_PROXY", "")
+        if "github.com" not in no_proxy:
+            git_env["NO_PROXY"] = f"{no_proxy},github.com,*.github.com" if no_proxy else "github.com,*.github.com"
+        git_env["no_proxy"] = git_env["NO_PROXY"]
+        
+        try:
+            debug_print("[git]", f"NO_PROXY set to: {git_env['NO_PROXY']}")
+        except Exception:
+            pass
+        
         if token:
-            rc_url, out_url, _ = await _run_git(
-                ["git", "config", "--get", "remote.origin.url"]
-            )
+            git_env["GITHUB_TOKEN_PROMPT"] = token
+            try:
+                rc_url, out_url, _ = await asyncio.wait_for(
+                    _run_git(["git", "config", "--get", "remote.origin.url"], env=git_env),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                debug_print("[git]", "git config timed out, skipping token setup")
+                return
+            except Exception as e:
+                debug_print("[git]", f"git config failed: {type(e).__name__}: {e}")
+                return
+                
             if rc_url == 0:
                 remote_url = out_url.decode(errors="ignore").strip()
                 token_url = _remote_url_with_token(remote_url, token)
                 if token_url:
-                    await _run_git(["git", "remote", "set-url", "origin", token_url])
-                    git_env = os.environ.copy()
-                    git_env["GIT_TERMINAL_PROMPT"] = "0"
-                    git_env["GITHUB_TOKEN_PROMPT"] = token
                     try:
-                        debug_print(
-                            "[git]",
-                            "origin remote switched to token-auth URL for prompt repo",
+                        await asyncio.wait_for(
+                            _run_git(["git", "remote", "set-url", "origin", token_url], env=git_env),
+                            timeout=5.0
                         )
-                    except Exception:
-                        pass
+                        try:
+                            debug_print(
+                                "[git]",
+                                "origin remote switched to token-auth URL for prompt repo",
+                            )
+                        except Exception:
+                            pass
+                    except asyncio.TimeoutError:
+                        debug_print("[git]", "git remote set-url timed out")
+                    except Exception as e:
+                        debug_print("[git]", f"git remote set-url failed: {type(e).__name__}: {e}")
 
         debug_print("[git]", f"Pulling prompt repo at {prompt_repo} with --rebase")
-        rc, out_rebase, err_rebase = await _run_git(
-            ["git", "pull", "--rebase"], env=git_env
-        )
+        try:
+            rc, out_rebase, err_rebase = await asyncio.wait_for(
+                _run_git(["git", "pull", "--rebase"], env=git_env),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            debug_print("[git]", "git pull --rebase timed out after 10s, skipping")
+            return
+        except Exception as e:
+            debug_print("[git]", f"git pull --rebase failed: {type(e).__name__}: {e}")
+            return
         if rc != 0:
             debug_print("[git]", "--rebase failed; retrying plain pull")
-            rc_plain, out_plain, err_plain = await _run_git(
-                ["git", "pull"], env=git_env
-            )
+            try:
+                rc_plain, out_plain, err_plain = await asyncio.wait_for(
+                    _run_git(["git", "pull"], env=git_env),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                debug_print("[git]", "git pull timed out after 10s, skipping")
+                return
+            except Exception as e:
+                debug_print("[git]", f"git pull failed: {type(e).__name__}: {e}")
+                return
             debug_print(
                 "[git]",
                 "plain pull rc=%s out=%s err=%s"
@@ -3385,7 +3438,15 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
         debug_dump_cfg_preview(cfg)
 
+        try:
+            debug_print("[call]", "[GIT] starting git pull...")
+        except Exception:
+            pass
         await _git_pull_prompt_repo()
+        try:
+            debug_print("[call]", "[GIT] git pull completed")
+        except Exception:
+            pass
 
         mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
         tools = await build_tools_for_cfg(cfg)
@@ -3427,11 +3488,27 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         )
 
         run_context = RunContextWrapper(context=context)
+        try:
+            debug_print("[call]", "[MCP] listing tools from servers...")
+        except Exception:
+            pass
         for srv in mcp_servers:
             _ = await srv.list_tools(run_context, agent)
+        try:
+            debug_print("[call]", "[MCP] tools listed")
+        except Exception:
+            pass
 
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
+        try:
+            debug_print("[call]", "[BOT] initializing bot...")
+        except Exception:
+            pass
         await _init_bot_safe(project_name=(cfg.project or None))
+        try:
+            debug_print("[call]", "[BOT] bot initialized")
+        except Exception:
+            pass
 
         # Save globally for subsequent messages (defaults come from .env; Telegram bot may override)
         global selected_chat_id, selected_thread_id
@@ -3440,6 +3517,10 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         session = _create_session_if_any(selected_chat_id, selected_thread_id)
 
         # Send welcome message with agent link and run context (after config is ready)
+        try:
+            debug_print("[call]", "[BANNER] sending welcome banner...")
+        except Exception:
+            pass
         await _send_welcome_banner(
             cfg=cfg,
             user_input=user_input,
@@ -3447,6 +3528,10 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             selected_chat_id=selected_chat_id,
             selected_thread_id=selected_thread_id,
         )
+        try:
+            debug_print("[call]", "[BANNER] welcome banner sent")
+        except Exception:
+            pass
 
         # Run the main agent once with normalized input string (session-enabled)
 

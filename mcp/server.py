@@ -15,6 +15,7 @@ except Exception as e:  # pragma: no cover
 
 # Library imports (no cross-reference with 'voice')
 from call.lib.api import call as api_call
+from call.lib.api import call_async as api_call_async
 from call.lib.api import list as api_list
 from call.lib.api import api_interpret_exec_payload
 from call.lib.api import list_prompts as api_list_prompts
@@ -119,55 +120,51 @@ def write(id: str, text: str, ctx: Context | None = None) -> Any:
         return {
             "ok": False,
             "error_code": 400,
-            "description": str(exc),
             "code": "BAD_REQUEST",
         }
 
 
 @mcp.tool(name="exec")
-def mcp_exec(
+async def mcp_exec(
     payload: Dict[str, Any],
     ctx: Context | None = None,
 ) -> Any:
-    """Execute using a single JSON payload.
-
-    Payload shape: { agent?: str, prompt?: str, target?: str, context?: any, project?: str, echo?: bool, session_id?: str }
-    """
-    kwargs, err = api_interpret_exec_payload(payload or {})
-    if err:
-        return err
-    return api_call(**kwargs)
-
-
-@mcp.tool(name="notify")
-def mcp_notify(
-    event: str,
-    context: Optional[List[Dict[str, Any]]] = None,
-    echo: bool = False,
-    session_id: Optional[str] = None,
-    ctx: Context | None = None,
-) -> Any:
-    """Acknowledge an event without executing the pipeline.
-
-    Event notifications may include optional context items and echo/session metadata.
-    project|agent|prompt|target selectors are not allowed together with event.
-    """
-
-    payload: Dict[str, Any] = {"event": event}
-    if context is not None:
-        payload["context"] = context
-    if echo:
-        payload["echo"] = True
-    if session_id:
-        payload["session_id"] = session_id
+    """Execute via payload (best for content buckets)."""
+    # Forward to the library's single-source-of-truth payload interpreter
     kwargs, err = api_interpret_exec_payload(payload)
     if err:
         return err
-    return api_call(**kwargs)
+    return await api_call_async(**kwargs)
+
+
+@mcp.tool(name="notify")
+async def mcp_notify(
+    event: str,
+    context: Optional[List[Dict[str, Any]]] = None,
+    session_id: Optional[str] = None,
+    ctx: Context | None = None,
+) -> Any:
+    """Acknowledge an event with optional context.
+
+    Args:
+        event: event name (e.g., 'session_transcription_done')
+        context: optional list of context items
+        session_id: optional session identifier
+    """
+    return await api_call_async(
+        project=None,
+        agent=None,
+        prompt=None,
+        target=None,
+        input=None,
+        event=event,
+        session_id=session_id,
+        attributes={"context": context} if context else None,
+    )
 
 
 @mcp.tool(name="call")
-def mcp_call(
+async def mcp_call(
     name: str,
     input: str,
     echo: bool = False,
@@ -183,7 +180,7 @@ def mcp_call(
         model_str = str(model).strip()
         if model_str:
             attrs = {"model": model_str}
-    res = api_call(
+    res = await api_call_async(
         project=None,
         agent=None,
         prompt=None,
