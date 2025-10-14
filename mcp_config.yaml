@@ -14,6 +14,11 @@ mcpServers:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
     env: {}
+    capabilities: |
+      Чтение/запись файлов в локальной файловой системе
+      Позволяет AgentFab оптимизировать одновременно много промптов
+      Позволяет работать с сохраненными артефактами - промпты, планы, идеи совместно AI + man
+      Доступ к документам, конфигурациям, артефактам проекта
 
   # npx -y @modelcontextprotocol/server-sequential-thinking
   seq:
@@ -21,6 +26,36 @@ mcpServers:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     env: {}
+    capabilities: |
+      Пошаговое рассуждение для сложных задач
+      Позволяет подсмотреть как он думает
+      Декомпозиция проблем, логический вывод
+
+  # npx -y @modelcontextprotocol/server-brave-search
+  web_search:
+    enabled: false
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    env:
+      BRAVE_API_KEY: ""
+    capabilities: |
+      Поиск информации в интернете
+      Позволяет работать новостным агрегаторам, обогащает идеями
+      Исследование трендов, технологий, best practices
+
+  # uv --directory mcp-crm-task run main.py
+  crm-task:
+    enabled: false
+    command: uv
+    args:
+      - --directory
+      - ./mcp-crm-task
+      - run
+      - main.py
+    capabilities: |
+      Управление задачами в Strato CRM
+      Позволяет создавать задачи, читать перечень открытых задач
+      CRUD операции, фильтрация, индексы (project, assignee, dedup)
 
   # skip --active --inexact too hard to sync all
   # uv --directory telegram-mcp-ro sync 
@@ -34,6 +69,13 @@ mcpServers:
       - ./telegram-mcp-ro
       - run
       -  main.py
+    capabilities: |
+      Чтение сообщений из Telegram чатов
+      Позволяет выгребать сообщения из чатов на любую глубину, за вчера, за неделю, на конкретную дату
+      Позволяет проводить поиск по ключевым словам
+      Получение участников, истории, топиков
+      Ограничен только r/o операциями, для безопасного добавления в чаты с заказчиками
+      ../
 
   # uv --directory telegram-mcp sync 
   # uv --directory telegram-mcp run main.py
@@ -46,7 +88,12 @@ mcpServers:
       - ./telegram-mcp
       - run
       - main.py
-  
+    capabilities: |
+      Отправка сообщений в Telegram
+      Создание чатов, топиков, каналов, вход - выходы в чаты и каналы, управление пользователями
+      Позволяет отправлять любые сообщения и в целом сделать любые действия от имени пользователя, входить-выходить в чаты, подписываться на каналы, извлекать инфу из каналов
+      Перечень функций: https://github.com/chigwell/telegram-mcp
+      
   # uv --directory mcp-telegram-bot sync 
   # uv --directory mcp-telegram-bot run main.py
   # note: the app should load call/.env itself (e.g., via python-dotenv)
@@ -59,6 +106,10 @@ mcpServers:
       - run
       - mcp-telegram-bot
       - start
+    capabilities: |
+      Рассылка через Telegram ботом сообщений в Text, HTML и Markdown2 формататх
+      Отправка сообщений, создание навигационных меню под сообщением - url кнопки
+      Интеграция бота с промптами с любыми для автоматизации коммуникаций
 
   # # OS env var:
   # API_ACCESS_TOKEN=123123142356365864895789678967
@@ -73,6 +124,11 @@ mcpServers:
       - run
       - -m
       - mcp_voicebot.server
+    capabilities: |
+      Доступ к транскрипциям voice-диалогов
+      Позволяет из промпта получить последние диалоги за сутки, за неделю, все диалоги по проекту
+      Позволяет выбрать из промпта любой диалог использовать его как входные данные
+      Проекты, персоны, поиск сессий, dialogue_reference
 
   # # OS env var:
   # GOOGLE_APPLICATION_CREDENTIALS=/home/strato-space/call/wallet/service-account-key.json
@@ -86,6 +142,11 @@ mcpServers:
       - ./mcp-google-sheets
       - run
       - mcp-google-sheets
+    capabilities: |
+      Чтение/запись данных в Google Sheets по диапазонам ячеек
+      Позволяет опираться на реестры, планы, медиа-планы прямо в google sheets
+      Интеграция с клиентскими таблицами, отчёты
+      Перечень функций: https://github.com/xing5/mcp-google-sheets
 
   # uvx --env-file call/.env --from git+https://github.com/strato-space/mcp-google-sheets@main mcp-google-sheets
   gsh-uvx:
