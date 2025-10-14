@@ -27,7 +27,9 @@ async def test_call_async_tracing_403_error_json(monkeypatch):
     def fake_build_config(**kwargs):
         return cfg, None
 
-    monkeypatch.setattr(call_api, "build_runnable_instructions_config", fake_build_config, raising=False)
+    monkeypatch.setattr(
+        call_api, "build_runnable_instructions_config", fake_build_config, raising=False
+    )
 
     async def fake_prepare_mcp(astack):
         return [], None
@@ -35,8 +37,12 @@ async def test_call_async_tracing_403_error_json(monkeypatch):
     async def fake_build_tools(_cfg):
         return []
 
-    monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp, raising=False)
-    monkeypatch.setattr(app_call, "build_tools_for_cfg", fake_build_tools, raising=False)
+    monkeypatch.setattr(
+        app_call, "_prepare_mcp_servers", fake_prepare_mcp, raising=False
+    )
+    monkeypatch.setattr(
+        app_call, "build_tools_for_cfg", fake_build_tools, raising=False
+    )
     monkeypatch.setattr(app_call, "_collect_tools", lambda *_: [], raising=False)
 
     async def fake_git_pull():
@@ -47,12 +53,16 @@ async def test_call_async_tracing_403_error_json(monkeypatch):
     async def fake_send_banner(**kwargs):
         return ""
 
-    monkeypatch.setattr(app_call, "_send_welcome_banner", fake_send_banner, raising=False)
+    monkeypatch.setattr(
+        app_call, "_send_welcome_banner", fake_send_banner, raising=False
+    )
 
     async def fake_embed(payload, **kwargs):
         return payload
 
-    monkeypatch.setattr(app_call, "_embed_files_in_user_input", fake_embed, raising=False)
+    monkeypatch.setattr(
+        app_call, "_embed_files_in_user_input", fake_embed, raising=False
+    )
 
     async def fake_init_bot_safe(**kwargs):
         return None
@@ -72,7 +82,9 @@ async def test_call_async_tracing_403_error_json(monkeypatch):
     async def fake_error(**kwargs):
         error_calls.append(kwargs)
 
-    monkeypatch.setattr(app_call, "_notify_digest_if_applicable", fake_digest, raising=False)
+    monkeypatch.setattr(
+        app_call, "_notify_digest_if_applicable", fake_digest, raising=False
+    )
     monkeypatch.setattr(app_call, "_send_error_notification", fake_error, raising=False)
 
     class DummyAgent:
@@ -85,7 +97,9 @@ async def test_call_async_tracing_403_error_json(monkeypatch):
         def __init__(self):
             self.id = 123
 
-    monkeypatch.setattr(app_call, "_create_session_if_any", lambda *_: DummySession(), raising=False)
+    monkeypatch.setattr(
+        app_call, "_create_session_if_any", lambda *_: DummySession(), raising=False
+    )
 
     async def fatal_run(*args, **kwargs):
         raise RuntimeError("request_forbidden: blocked by tracing")

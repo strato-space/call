@@ -3,9 +3,13 @@ Argument parsing helpers for Telegram bot commands (prompt listing).
 
 This module is dependency-light to enable straightforward unit testing.
 """
+
 from __future__ import annotations
 
-def parse_prompts_filters(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+
+def parse_prompts_filters(
+    text: str, *, command: str, default_project: str | None
+) -> tuple[str | None, str | None, str | None, str | None]:
     """Parse command text into (project, agent, prompt, target) with AND semantics.
 
     Accepted forms (order-insensitive after the command token):
@@ -30,16 +34,16 @@ def parse_prompts_filters(text: str, *, command: str, default_project: str | Non
                 continue
             low = t.lower()
             if low.startswith("--project"):
-                project = (next(it, "").strip() or project)
+                project = next(it, "").strip() or project
                 continue
             if low.startswith("--agent"):
-                agent = (next(it, "").strip().lstrip("@") or agent)
+                agent = next(it, "").strip().lstrip("@") or agent
                 continue
             if low.startswith("--prompt"):
-                prompt = (next(it, "").strip() or prompt)
+                prompt = next(it, "").strip() or prompt
                 continue
             if low.startswith("--target"):
-                target = (next(it, "").strip() or target)
+                target = next(it, "").strip() or target
                 continue
             # Ignore other unknown long flags (like --state) here; parse_prompts_and_state handles them
             if low.startswith("--"):
@@ -47,18 +51,23 @@ def parse_prompts_filters(text: str, *, command: str, default_project: str | Non
                 continue
             if "=" in t:
                 k, v = t.split("=", 1)
-                k = k.strip().lower(); v = v.strip()
-                if k == "project": project = v or project
-                elif k == "agent": agent = v.lstrip("@") or agent
-                elif k == "prompt": prompt = v or prompt
-                elif k == "target": target = v or target
+                k = k.strip().lower()
+                v = v.strip()
+                if k == "project":
+                    project = v or project
+                elif k == "agent":
+                    agent = v.lstrip("@") or agent
+                elif k == "prompt":
+                    prompt = v or prompt
+                elif k == "target":
+                    target = v or target
                 continue
             if t.startswith("@"):
                 agent = t[1:]
             elif project is None:
                 project = t
             else:
-                prompt = (prompt or t)
+                prompt = prompt or t
         if not project:
             project = default_project or None
         return project, agent, prompt, target
@@ -67,12 +76,16 @@ def parse_prompts_filters(text: str, *, command: str, default_project: str | Non
         return (default_project or None), None, None, None
 
 
-def parse_prompts_and_state(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+def parse_prompts_and_state(
+    text: str, *, command: str, default_project: str | None
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     """Extended parser that also recognizes state (ready|draft) via --state or state=.
 
     Returns (project, agent, prompt, target, state).
     """
-    project, agent, prompt, target = parse_prompts_filters(text, command=command, default_project=default_project)
+    project, agent, prompt, target = parse_prompts_filters(
+        text, command=command, default_project=default_project
+    )
     # Lightweight pass to capture state options
     try:
         s = (text or "").strip()
@@ -87,12 +100,12 @@ def parse_prompts_and_state(text: str, *, command: str, default_project: str | N
                 continue
             low = t.lower()
             if low.startswith("--state"):
-                state = (next(it, "").strip() or state)
+                state = next(it, "").strip() or state
                 continue
             if "=" in t:
                 k, v = t.split("=", 1)
                 if k.strip().lower() == "state":
-                    state = (v.strip() or state)
+                    state = v.strip() or state
         return project, agent, prompt, target, state
     except Exception:
         return project, agent, prompt, target, None

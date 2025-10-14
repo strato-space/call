@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Ensure the repository root is on sys.path so 'call' package is importable
 _this_file = Path(__file__).resolve()
 _call_dir = _this_file.parents[2]  # .../call
-_repo_root = _call_dir.parent      # .../
+_repo_root = _call_dir.parent  # .../
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
@@ -25,7 +25,9 @@ from call.app.utils.telegram_text import (
 # --- Live-send guards ---------------------------------------------------------
 # Set TELEGRAM_LIVE=1 to enable these integration tests.
 _LIVE = os.getenv("TELEGRAM_LIVE") == "1"
-_LIVE_KIND = (os.getenv("TELEGRAM_LIVE_KIND") or "").strip().lower()  # 'md' or 'html' optional
+_LIVE_KIND = (
+    (os.getenv("TELEGRAM_LIVE_KIND") or "").strip().lower()
+)  # 'md' or 'html' optional
 
 pytestmark = [
     pytest.mark.skipif(
@@ -36,6 +38,7 @@ pytestmark = [
 
 # --- Load .env from repo to populate TELEGRAM_* if not already set ---
 from pathlib import Path
+
 
 def _load_env_from_dotenv() -> None:
     """Best-effort .env loader for integration tests.
@@ -48,16 +51,16 @@ def _load_env_from_dotenv() -> None:
         # repo root = parents[3], call dir = parents[2]
         here = Path(__file__).resolve()
         call_dir = here.parents[2]
-        dotenv = call_dir / '.env'
+        dotenv = call_dir / ".env"
         if not dotenv.exists():
             return
-        for line in dotenv.read_text(encoding='utf-8').splitlines():
+        for line in dotenv.read_text(encoding="utf-8").splitlines():
             s = line.strip()
-            if not s or s.startswith('#'):
+            if not s or s.startswith("#"):
                 continue
-            if '=' not in s:
+            if "=" not in s:
                 continue
-            k, v = s.split('=', 1)
+            k, v = s.split("=", 1)
             key = k.strip()
             val = v.strip().strip('"')
             if key and key not in os.environ:
@@ -76,6 +79,7 @@ def _load_env_from_dotenv() -> None:
         # best-effort; ignore errors
         pass
 
+
 _load_env_from_dotenv()
 
 # Map TELEGRAM_TOKEN -> TELEGRAM_BOT_TOKEN if only the former exists
@@ -92,12 +96,14 @@ if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
 # Run with: pytest -q call/app/tests/test_telegram_send.py -k send --maxfail=1
 # Ensure your venv is used: .venv\Scripts\python.exe -m pytest ...
 
+
 def _env_token_chat_thread() -> tuple[str, str, Optional[int]]:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     thread = os.getenv("TELEGRAM_THREAD_ID")
     thread_id = int(thread) if thread and thread.strip() else None
     return token or "", chat_id or "", thread_id
+
 
 # Load .env before evaluating skip markers
 _here = Path(__file__).resolve()
@@ -162,6 +168,7 @@ def test_send_markdown_v2_message() -> None:
         except Exception as e:
             # If thread id is invalid/missing on target chat, retry without topic
             from telegram.error import BadRequest
+
             if isinstance(e, BadRequest) and "thread not found" in str(e).lower():
                 msg = await bot.send_message(
                     chat_id=chat_id,
@@ -190,7 +197,7 @@ def test_send_html_message() -> None:
     html_text = (
         "<b>SelfReflection</b>\n"
         "Проверяем HTML режим <i>курсив</i> и <b>жирный</b> и ссылку "
-        "<a href=\"https://example.com?q=1&x=2\">Example</a>."
+        '<a href="https://example.com?q=1&x=2">Example</a>.'
     )
     safe_text, mode = telegram_prepare_html(html_text, 4000)
     assert mode == "HTML"
@@ -208,6 +215,7 @@ def test_send_html_message() -> None:
             )
         except Exception as e:
             from telegram.error import BadRequest
+
             if isinstance(e, BadRequest) and "thread not found" in str(e).lower():
                 msg = await bot.send_message(
                     chat_id=chat_id,

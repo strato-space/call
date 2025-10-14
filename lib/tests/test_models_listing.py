@@ -13,7 +13,9 @@ def test_models_uses_openai_client(monkeypatch):
     class DummyModels:
         def list(self):
             captured["listed"] = True
-            return type("Resp", (), {"data": [DummyModel("gpt-alpha"), DummyModel("gpt-beta")]})()
+            return type(
+                "Resp", (), {"data": [DummyModel("gpt-alpha"), DummyModel("gpt-beta")]}
+            )()
 
     class DummyClient:
         def __init__(self):

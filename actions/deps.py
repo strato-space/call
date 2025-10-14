@@ -20,7 +20,9 @@ def bearer_guard(Authorization: Optional[str] = Header(None)) -> None:
     if not token:
         # If no token configured, allow only in test runs
         if not os.getenv("PYTEST_CURRENT_TEST"):
-            raise HTTPException(status_code=503, detail="API is not configured with API_ACCESS_TOKEN")
+            raise HTTPException(
+                status_code=503, detail="API is not configured with API_ACCESS_TOKEN"
+            )
         return
     hdr = Authorization or ""
     m = _bearer_re.match(hdr)

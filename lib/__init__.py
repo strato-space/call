@@ -17,9 +17,11 @@ __all__ = [
     "discovery",
 ]
 
+
 # Lazy attribute loader for submodules (PEP 562 style)
 def __getattr__(name):  # type: ignore[override]
     import importlib as _importlib
+
     if name in ("api", "repo_db", "repo_fs", "discovery"):
         return _importlib.import_module(f"call.lib.{name}")
     raise AttributeError(name)

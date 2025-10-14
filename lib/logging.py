@@ -5,6 +5,7 @@ Lightweight debug logging utilities for the call subsystem.
 - Gated only by CALL_DEBUG to keep behavior simple (KISS)
  - Integrates with Python's logging module for optional routing/formatting
 """
+
 from __future__ import annotations
 
 import os
@@ -14,6 +15,7 @@ import sys
 
 # Tracks whether configure_logging() has successfully attached handlers
 _configured_logging = False
+
 
 def _env_true(name: str) -> bool:
     try:
@@ -40,7 +42,11 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
         if _logger.handlers:
             _configured_logging = True
             return
-        eff_level = level if level is not None else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
+        eff_level = (
+            level
+            if level is not None
+            else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
+        )
         _logger.setLevel(eff_level)
         handler = logging.StreamHandler()
         # Env toggle for JSON logs takes precedence unless explicit json param is given True/False
@@ -48,14 +54,21 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
         use_json = json or json_env
 
         if not use_json:
-            fmt = logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
+            fmt = logging.Formatter(
+                fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
         else:
+
             class JSONFormatter(logging.Formatter):
                 def format(self, record: logging.LogRecord) -> str:
                     try:
                         import json as _json
+
                         payload = {
-                            "time": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S"),
+                            "time": self.formatTime(
+                                record, datefmt="%Y-%m-%dT%H:%M:%S"
+                            ),
                             "level": record.levelname,
                             "logger": record.name,
                             "message": record.getMessage(),
@@ -64,6 +77,7 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
                     except Exception:
                         # Fallback to basic formatting on any error
                         return f"{self.formatTime(record)} {record.levelname} {record.name}: {record.getMessage()}"
+
             fmt = JSONFormatter()
         handler.setFormatter(fmt)
         _logger.addHandler(handler)
@@ -75,6 +89,7 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
             if logfile:
                 # Ensure parent directory exists
                 import os as _os
+
                 parent = _os.path.dirname(logfile)
                 if parent:
                     _os.makedirs(parent, exist_ok=True)
@@ -112,7 +127,7 @@ def debug_print(*parts: str) -> None:
         for p in parts:
             s = str(p) if p is not None else ""
             if len(s) >= 3 and s.startswith("[") and "]" in s:
-                inside = s[1:s.index("]")].strip()
+                inside = s[1 : s.index("]")].strip()
                 if inside and all(ch not in inside for ch in (" ", "\t", "/", "\\")):
                     prefix_token = inside
                     break

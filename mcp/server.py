@@ -41,7 +41,10 @@ async def lifespan(app: FastMCP):
     except Exception:
         pass
     log = get_logger("mcp")
-    log.info("Starting mcp-call server (env loaded: call/.env exists=%s)", (call_dir / ".env").exists() if 'call_dir' in locals() else False)
+    log.info(
+        "Starting mcp-call server (env loaded: call/.env exists=%s)",
+        (call_dir / ".env").exists() if "call_dir" in locals() else False,
+    )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     # Nothing to preload for library-only usage
     yield {}
@@ -220,4 +223,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

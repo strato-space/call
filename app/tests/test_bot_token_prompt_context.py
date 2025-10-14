@@ -16,7 +16,13 @@ class DummyDoc:
 
 
 class DummyMessage:
-    def __init__(self, text: str = "", *, reply_to: "DummyMessage | None" = None, document: DummyDoc | None = None):
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        reply_to: "DummyMessage | None" = None,
+        document: DummyDoc | None = None
+    ):
         self.text = text
         self.caption = ""
         self.document = document
@@ -61,7 +67,9 @@ async def test_payload_field_ordering_with_reply_and_context():
     ctx = DummyContext(file_path="documents/file_1.pdf")
 
     # Act
-    arg, payload = await build_input_payload_from_reply("AgentFab", "Hello", update, ctx)
+    arg, payload = await build_input_payload_from_reply(
+        "AgentFab", "Hello", update, ctx
+    )
 
     # Assert key ordering in JSON string (Python preserves insertion order)
     assert arg.startswith("{")
@@ -76,7 +84,9 @@ async def test_payload_field_ordering_with_reply_and_context():
     assert parsed["target"] == "AgentFab"
     assert parsed["replay"] == "Reply content"
     assert parsed["input"] == "Hello"
-    assert isinstance(parsed.get("context"), list) and parsed["context"], "expected context from document"
+    assert (
+        isinstance(parsed.get("context"), list) and parsed["context"]
+    ), "expected context from document"
 
 
 async def test_no_fs_fallback_for_prompt_token():
@@ -87,9 +97,13 @@ async def test_no_fs_fallback_for_prompt_token():
     ctx = DummyContext()
 
     # Act
-    arg, payload = await build_input_payload_from_reply("AgentFab", "@DefinitelyNotExistingPromptToken", update, ctx)
+    arg, payload = await build_input_payload_from_reply(
+        "AgentFab", "@DefinitelyNotExistingPromptToken", update, ctx
+    )
 
     # Assert: no context created from filesystem fallback
     parsed = json.loads(arg) if payload else {}
     ctx_items = (parsed.get("context") or []) if parsed else []
-    assert ctx_items == [] or all(it.get("type") != "file" or "path" not in it for it in ctx_items)
+    assert ctx_items == [] or all(
+        it.get("type") != "file" or "path" not in it for it in ctx_items
+    )

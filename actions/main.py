@@ -20,9 +20,19 @@ from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payloa
 from call.lib.logging import configure_logging
 from call.lib import repo_db as repo_db_module
 
+
 # Expose thin wrappers for test monkeypatching (delegate to API)
-def list_prompts(*, project: str | None = None, agent: str | None = None, prompt: str | None = None, state: str | None = None, target: str | None = None):
-    return api_list_prompts(project=project, agent=agent, prompt=prompt, state=state, target=target)
+def list_prompts(
+    *,
+    project: str | None = None,
+    agent: str | None = None,
+    prompt: str | None = None,
+    state: str | None = None,
+    target: str | None = None,
+):
+    return api_list_prompts(
+        project=project, agent=agent, prompt=prompt, state=state, target=target
+    )
 
 
 # Configure logging once so CALL_DEBUG and related envs take effect under Uvicorn
@@ -57,7 +67,10 @@ def custom_openapi():
         exec_schema = schemas.get("ExecPayload")
         if isinstance(exec_schema, dict):
             # Add oneOf alternatives; each alternative requires exactly one selector
-            exec_schema.setdefault("description", "Execute with a single selector. Exactly one of project|agent|prompt|target must be provided.")
+            exec_schema.setdefault(
+                "description",
+                "Execute with a single selector. Exactly one of project|agent|prompt|target must be provided.",
+            )
             exec_schema["oneOf"] = [
                 {"required": ["project"]},
                 {"required": ["agent"]},
@@ -68,7 +81,10 @@ def custom_openapi():
             exec_schema["x-exactly-one"] = ["project", "agent", "prompt", "target"]
         notify_schema = schemas.get("NotifyPayload")
         if isinstance(notify_schema, dict):
-            notify_schema.setdefault("description", "Notify the system about an event. 'event' is required; project/agent/prompt/target selectors are not accepted.")
+            notify_schema.setdefault(
+                "description",
+                "Notify the system about an event. 'event' is required; project/agent/prompt/target selectors are not accepted.",
+            )
             notify_schema.setdefault("required", ["event"])
     except Exception:
         # Schema patching best-effort only
@@ -87,7 +103,9 @@ async def access_log(req: Request, call_next):
     try:
         resp = await call_next(req)
         ms = int((time.time() - t0) * 1000)
-        print(f"[{rid}] {req.method} {req.url.path}?{req.url.query} -> {resp.status_code} {ms}ms")
+        print(
+            f"[{rid}] {req.method} {req.url.path}?{req.url.query} -> {resp.status_code} {ms}ms"
+        )
         resp.headers["X-Request-Id"] = rid
         return resp
     except Exception as e:
@@ -107,7 +125,9 @@ def agents(
     agent: str = Query("", description="Filter by agent (supports * wildcard)"),
     prompt: str = Query("", description="Filter by prompt (supports * wildcard)"),
 ):
-    return api_list(project=(project or None), agent=(agent or None), prompt=(prompt or None))
+    return api_list(
+        project=(project or None), agent=(agent or None), prompt=(prompt or None)
+    )
 
 
 @app.get(
@@ -119,9 +139,16 @@ def agents(
 def call(
     name: str = Query(..., description="The name used as 'target' for selection"),
     input: str = Query(..., description="Input text"),
-    echo: bool = Query(False, description="If true, return structured JSON from library"),
-    session_id: str | None = Query(None, description="Override session id (format: chat or chat:thread)"),
-    event: str | None = Query(None, description="Optional event name to acknowledge without pipeline execution"),
+    echo: bool = Query(
+        False, description="If true, return structured JSON from library"
+    ),
+    session_id: str | None = Query(
+        None, description="Override session id (format: chat or chat:thread)"
+    ),
+    event: str | None = Query(
+        None,
+        description="Optional event name to acknowledge without pipeline execution",
+    ),
     model: str | None = Query(None, description="Override model for this call"),
 ):
     attrs = None
@@ -182,7 +209,9 @@ def exec_action_post(payload: ExecPayload = Body(...)):
     res = api_call(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
-            return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))
+            return JSONResponse(
+                content=res, status_code=int(res.get("error_code", 400))
+            )
     except Exception:
         pass
     return res
@@ -203,7 +232,9 @@ def notify_action_post(payload: NotifyPayload = Body(...)):
     res = api_call(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
-            return JSONResponse(content=res, status_code=int(res.get("error_code", 400)))
+            return JSONResponse(
+                content=res, status_code=int(res.get("error_code", 400))
+            )
     except Exception:
         pass
     return res
@@ -279,9 +310,19 @@ def prompts(
 ):
     st = (state or "").strip() or None
     if st not in (None, "ready", "draft"):
-        err = {"ok": False, "error_code": 400, "description": "Invalid state; use 'ready' or 'draft'", "code": "BAD_REQUEST"}
+        err = {
+            "ok": False,
+            "error_code": 400,
+            "description": "Invalid state; use 'ready' or 'draft'",
+            "code": "BAD_REQUEST",
+        }
         return JSONResponse(content=err, status_code=400)
-    items = list_prompts(project=(project or None), agent=(agent or None), prompt=(prompt or None), state=st)
+    items = list_prompts(
+        project=(project or None),
+        agent=(agent or None),
+        prompt=(prompt or None),
+        state=st,
+    )
     return items if isinstance(items, list) else ([items] if items else [])
 
 
@@ -306,7 +347,9 @@ def reload():
     res = api_reload()
     try:
         if isinstance(res, dict) and not res.get("ok", False):
-            return JSONResponse(content=res, status_code=int(res.get("error_code", 500)))
+            return JSONResponse(
+                content=res, status_code=int(res.get("error_code", 500))
+            )
     except Exception:
         pass
     return res
