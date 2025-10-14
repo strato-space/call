@@ -1125,16 +1125,18 @@ async def call_async(
                 session_id=session_id,
             )
 
-    try:
-        cfg_payload = asdict(cfg)
-    except Exception:
-        cfg_payload = getattr(cfg, "__dict__", {})
-    try:
-        debug_print(
-            "[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2)
-        )
-    except Exception:
-        debug_print("[api]", "[CFG]", str(cfg_payload))
+    # Debug CFG payload removed - too verbose for normal operation
+    # Uncomment if needed for deep debugging:
+    # try:
+    #     cfg_payload = asdict(cfg)
+    # except Exception:
+    #     cfg_payload = getattr(cfg, "__dict__", {})
+    # try:
+    #     debug_print(
+    #         "[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2)
+    #     )
+    # except Exception:
+    #     debug_print("[api]", "[CFG]", str(cfg_payload))
 
     # Initialize bot: if a project is provided, pass it; otherwise allow app layer
     # to prefer CALL_TELEGRAM_TOKEN or TELEGRAM_TOKEN per its own logic.
@@ -1171,7 +1173,7 @@ async def call_async(
     # Priority:
     #   1) If session_id override provided: parse chat/thread from it
     #   2) Else if chat_id/thread_id args provided: use them (fallback to env for missing)
-    #   3) Else: do not route to Telegram and do not create a session
+    #   3) Else: use TELEGRAM_CHAT_ID/TELEGRAM_THREAD_ID from .env as fallback
     sel_chat: Optional[int] = None
     sel_thread: Optional[int] = None
     sid_override = (session_id or "").strip()
@@ -1187,7 +1189,9 @@ async def call_async(
                 else (app_call.TELEGRAM_THREAD_ID or None)
             )
         else:
-            sel_chat, sel_thread = None, None
+            # Fallback to .env values when running from CLI without explicit session
+            sel_chat = app_call.TELEGRAM_CHAT_ID
+            sel_thread = app_call.TELEGRAM_THREAD_ID or None
 
     selected_chat_id = sel_chat
     selected_thread_id = sel_thread

@@ -859,12 +859,16 @@ def main() -> int:
         return item
 
     def cmd_exec(args: argparse.Namespace) -> int:
-        if os.getenv("CALL_DEBUG"):
+        # CALL_DEBUG is already loaded by main() via load_dotenv()
+        call_debug = os.getenv("CALL_DEBUG")
+        debug_print("[cli]", "[EXEC]", f"cmd_exec started, CALL_DEBUG={call_debug!r}")
+        if call_debug:
             debug_print(
-                "[cli]", "[EXEC]", "CALL_DEBUG set -> triggering reload() before exec"
+                "[cli]", "[EXEC]", f"CALL_DEBUG={call_debug} -> triggering reload() before exec"
             )
             try:
-                call_api.reload()
+                result = call_api.reload()
+                debug_print("[cli]", "[EXEC]", f"reload() completed: {result}")
             except Exception as reload_error:
                 debug_print("[cli]", "[EXEC]", f"reload() failed: {reload_error}")
         # Build payload by merging all provided args (no strict mutual exclusivity).
