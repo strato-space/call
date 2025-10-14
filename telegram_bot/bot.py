@@ -155,7 +155,6 @@ def _current_config_dict() -> dict:
     return {
         "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
         "ALLOWED_USERS": allowed,
-        "DEBUG": os.environ.get("DEBUG", ""),
         "CALL_DEBUG": os.environ.get("CALL_DEBUG", ""),
         "CALL_LOG_JSON": os.environ.get("CALL_LOG_JSON", ""),
         "CALL_ENV": str(_CALL_ENV),
@@ -216,7 +215,14 @@ def _summarize_update(update: Update) -> str:
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TypeHandler callback to log every incoming update."""
     summary = _summarize_update(update)
-    log.info("Update: %s", summary)
+    debug_print("[bot]", "[UPDATE]", summary)
+    try:
+        from call.lib.logging import _env_true
+        if _env_true("CALL_DEBUG"):
+            raw_json = json.dumps(update.to_dict(), ensure_ascii=False)
+            log.info("Update raw: %s", raw_json)
+    except Exception:
+        pass
     return None
 
 

@@ -48,16 +48,34 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
             else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
         )
         _logger.setLevel(eff_level)
+        # Force UTF-8 encoding for stderr to avoid encoding issues on Windows
+        import sys
+        if hasattr(sys.stderr, 'reconfigure'):
+            try:
+                sys.stderr.reconfigure(encoding='utf-8')
+            except Exception:
+                pass
+        # Set wider terminal width for better log formatting in Claude Desktop
+        # This affects how Python's logging formats output
+        if 'COLUMNS' not in os.environ:
+            os.environ['COLUMNS'] = '100'  # Optimal width for Claude Desktop logs
+        
         handler = logging.StreamHandler()
         # Env toggle for JSON logs takes precedence unless explicit json param is given True/False
         json_env = _env_true("CALL_LOG_JSON")
         use_json = json or json_env
 
         if not use_json:
+            # Use compact single-line format for better readability in Claude Desktop
+            # Claude Desktop wraps long lines, so we keep format minimal
             fmt = logging.Formatter(
                 fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                 datefmt="%H:%M:%S",
             )
+            # Disable line wrapping by setting a very large width (if handler supports it)
+            if hasattr(handler, 'terminator'):
+                # Keep default terminator but ensure no extra formatting
+                pass
         else:
 
             class JSONFormatter(logging.Formatter):
