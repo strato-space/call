@@ -19,7 +19,7 @@ def telegram_truncate_html_safe(html: str, max_len: int) -> str:
     try:
         return _truncate_html(html, max_len)
     except Exception:
-        return (str(html)[: max_len]).rstrip()
+        return (str(html)[:max_len]).rstrip()
 
 
 def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
@@ -45,15 +45,15 @@ def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
         s = re.sub(r"<[^>]*$", "", s)
 
         # Balance Markdown links: cut off trailing unmatched '[' or '('
-        last_open_sq = s.rfind('[')
-        last_close_sq = s.rfind(']')
+        last_open_sq = s.rfind("[")
+        last_close_sq = s.rfind("]")
         if last_open_sq > last_close_sq:
             s = s[:last_open_sq]
 
-        last_open_par = s.rfind('(')
-        last_close_par = s.rfind(')')
+        last_open_par = s.rfind("(")
+        last_close_par = s.rfind(")")
         # Likely part of a link if last ']' is before '('
-        if last_open_par > last_close_par and s.rfind(']') < last_open_par:
+        if last_open_par > last_close_par and s.rfind("]") < last_open_par:
             s = s[:last_open_par]
 
         # Ensure triple backtick fences are balanced
@@ -71,10 +71,10 @@ def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
                 s += fence
 
         # Optionally, mitigate trailing single backticks
-        backticks = s.count('`') - 3 * (len(re.findall(r"```", s)))
+        backticks = s.count("`") - 3 * (len(re.findall(r"```", s)))
         if backticks % 2 == 1:
             # Remove a trailing '`' if present
-            if s.endswith('`'):
+            if s.endswith("`"):
                 s = s[:-1]
 
         # Ensure we do not exceed max_len after balancing
@@ -82,7 +82,7 @@ def telegram_truncate_markdown_safe(md: str, max_len: int) -> str:
             s = s[:max_len]
         return s
     except Exception:
-        return (str(md)[: max_len]).rstrip()
+        return (str(md)[:max_len]).rstrip()
 
 
 # --- Centralized builders -----------------------------------------------------
@@ -101,7 +101,9 @@ def _escape_markdown_v2(text: str) -> str:
     return s
 
 
-def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2") -> tuple[str, str]:
+def telegram_prepare_markdown(
+    md: str, max_len: int = 4000, version: str = "v2"
+) -> tuple[str, str]:
     """Return (text, parse_mode) for safe Markdown send.
 
     - version: "v2" or "v1". Defaults to v2 escaping.
@@ -127,7 +129,7 @@ def telegram_prepare_markdown(md: str, max_len: int = 4000, version: str = "v2")
             return safe, "Markdown"
     except Exception:
         # Fallback: plain text under limit
-        s = (str(md) or "")
+        s = str(md) or ""
         if len(s) > max_len:
             s = s[: max_len - 1] + "…"
         return s, None
@@ -148,7 +150,7 @@ def telegram_prepare_html(html: str, max_len: int = 4000) -> tuple[str, str]:
     try:
         return _prepare_html(html, max_len)
     except Exception:
-        s = (str(html) or "")
+        s = str(html) or ""
         if len(s) > max_len:
             s = s[: max_len - 1] + "…"
         return s, None

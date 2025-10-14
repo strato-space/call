@@ -4,7 +4,10 @@ import sys
 import traceback
 from typing import Optional, TextIO, Dict, Any
 
-async def dump_tasks_periodically(period: int, dump_fp: Optional[TextIO] = None) -> None:
+
+async def dump_tasks_periodically(
+    period: int, dump_fp: Optional[TextIO] = None
+) -> None:
     """Periodically dump asyncio tasks to dump_fp (or stderr) every 'period' seconds.
 
     When dump_fp is None, printing is gated behind CALL_DEBUG to avoid noisy output.
@@ -17,7 +20,12 @@ async def dump_tasks_periodically(period: int, dump_fp: Optional[TextIO] = None)
             # Gate stderr dumps behind CALL_DEBUG to reduce noise in production
             if dump_fp is None:
                 try:
-                    enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in ("1", "true", "yes", "on")
+                    enabled = str(os.environ.get("CALL_DEBUG", "")).strip().lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    )
                 except Exception:
                     enabled = False
                 if not enabled:
@@ -42,7 +50,9 @@ async def dump_tasks_periodically(period: int, dump_fp: Optional[TextIO] = None)
         await asyncio.sleep(period)
 
 
-def parse_metadata_and_prompt(md_text: str, *, path: str | None = None) -> Dict[str, Any]:
+def parse_metadata_and_prompt(
+    md_text: str, *, path: str | None = None
+) -> Dict[str, Any]:
     """Parse agent/prompt card content.
 
     Supports Markdown cards with METADATA/PROMPT sections and pure YAML cards.
@@ -78,7 +88,7 @@ def parse_metadata_and_prompt(md_text: str, *, path: str | None = None) -> Dict[
     meta_start = _re.search(r"<!--\s*METADATA\s*:??\s*START\s*-->", working_text, flags)
     meta_end = _re.search(r"<!--\s*METADATA\s*:??\s*END\s*-->", working_text, flags)
     if meta_start and meta_end and meta_end.start() > meta_start.end():
-        meta_section = working_text[meta_start.end():meta_end.start()]
+        meta_section = working_text[meta_start.end() : meta_end.start()]
         yaml_match = _re.search(r"```(?:yaml)?\s*\r?\n(.*?)```", meta_section, flags)
         parsed_meta = None
         if yaml_match:
@@ -93,18 +103,24 @@ def parse_metadata_and_prompt(md_text: str, *, path: str | None = None) -> Dict[
                 try:
                     parsed_meta = _yaml.safe_load(candidate) or {}
                 except Exception as exc:
-                    raise ValueError("Markdown card METADATA YAML failed to parse") from exc
+                    raise ValueError(
+                        "Markdown card METADATA YAML failed to parse"
+                    ) from exc
         if parsed_meta is None:
-            raise ValueError("Markdown card missing ```yaml block inside METADATA section")
+            raise ValueError(
+                "Markdown card missing ```yaml block inside METADATA section"
+            )
         if not isinstance(parsed_meta, dict):
             raise ValueError("Markdown card METADATA did not parse into a mapping")
         meta = dict(parsed_meta)
-        working_text = working_text[:meta_start.start()] + working_text[meta_end.end():]
+        working_text = (
+            working_text[: meta_start.start()] + working_text[meta_end.end() :]
+        )
 
     prompt_start = _re.search(r"<!--\s*PROMPT\s*:??\s*START\s*-->", working_text, flags)
     prompt_end = _re.search(r"<!--\s*PROMPT\s*:??\s*END\s*-->", working_text, flags)
     if prompt_start and prompt_end and prompt_end.start() > prompt_start.end():
-        prompt_body = working_text[prompt_start.end():prompt_end.start()].strip()
+        prompt_body = working_text[prompt_start.end() : prompt_end.start()].strip()
         meta["prompt"] = prompt_body
         return meta
 

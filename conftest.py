@@ -4,6 +4,7 @@ Pytest configuration for running tests inside the `call/` folder.
 - Loads call/.env for integration tests
 - Performs a repo scan once before the test session to populate repo.db
 """
+
 from __future__ import annotations
 
 import os
@@ -39,6 +40,7 @@ if not os.getenv("AGENT_REPO") and ar.exists():
 # Populate repo.db once per session via filesystem sync facade
 try:
     from call.lib import repo_fs as _repo_fs
+
     _repo_fs.reload()
 except Exception:
     # Non-fatal; individual tests may monkeypatch DB access

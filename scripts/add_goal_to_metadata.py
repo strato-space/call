@@ -9,7 +9,14 @@ PROMPT_START = "<!-- PROMPT:START -->"
 PROMPT_END = "<!-- PROMPT:END -->"
 
 
-def extract_blocks(text: str) -> Tuple[Optional[Tuple[int, int]], Optional[Tuple[int, int]], Optional[Tuple[int, int]], Optional[Tuple[int, int]]]:
+def extract_blocks(
+    text: str,
+) -> Tuple[
+    Optional[Tuple[int, int]],
+    Optional[Tuple[int, int]],
+    Optional[Tuple[int, int]],
+    Optional[Tuple[int, int]],
+]:
     """Return (meta_start_idx, meta_end_idx, prompt_start_idx, prompt_end_idx) as (start, end) pairs of slice indices.
     Indices point to the start of the marker lines themselves.
     """
@@ -51,7 +58,7 @@ def extract_prompt_text(text: str) -> Optional[str]:
     pe = text.find(PROMPT_END)
     if ps == -1 or pe == -1 or pe <= ps:
         return None
-    return text[ps + len(PROMPT_START):pe]
+    return text[ps + len(PROMPT_START) : pe]
 
 
 def extract_goal_from_prompt(prompt_text: str) -> Optional[str]:
@@ -119,7 +126,9 @@ def ensure_goal_first_in_yaml(orig_yaml: str, goal_text: str) -> str:
                     idx += 1
                     continue
                 # also treat list continuation at top-level as new top-key if not indented
-                if is_top_key(nxt) or (nxt and not (nxt.startswith(" ") or nxt.startswith("\t"))):
+                if is_top_key(nxt) or (
+                    nxt and not (nxt.startswith(" ") or nxt.startswith("\t"))
+                ):
                     break
                 idx += 1
             break
@@ -150,9 +159,16 @@ def ensure_goal_first_in_yaml(orig_yaml: str, goal_text: str) -> str:
     # Insert at top (as first attribute)
     # Keep any leading comments or empty lines at the very top of YAML body
     k = 0
-    while k < len(cleaned) and (cleaned[k].strip() == "" or cleaned[k].lstrip().startswith("#")):
+    while k < len(cleaned) and (
+        cleaned[k].strip() == "" or cleaned[k].lstrip().startswith("#")
+    ):
         k += 1
-    new_yaml_lines = cleaned[:k] + goal_block + ([""] if (k < len(cleaned) and cleaned[k].strip() != "") else []) + cleaned[k:]
+    new_yaml_lines = (
+        cleaned[:k]
+        + goal_block
+        + ([""] if (k < len(cleaned) and cleaned[k].strip() != "") else [])
+        + cleaned[k:]
+    )
     return "\n".join(new_yaml_lines).rstrip("\n") + "\n"
 
 
@@ -188,9 +204,18 @@ def should_process(path: Path) -> bool:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Add 'goal' as first METADATA attribute by extracting from PROMPT")
-    ap.add_argument("--repos", nargs="*", default=["agent", "prompt"], help="Top-level repos to scan")
-    ap.add_argument("--apply", action="store_true", help="Write changes (otherwise dry-run)")
+    ap = argparse.ArgumentParser(
+        description="Add 'goal' as first METADATA attribute by extracting from PROMPT"
+    )
+    ap.add_argument(
+        "--repos",
+        nargs="*",
+        default=["agent", "prompt"],
+        help="Top-level repos to scan",
+    )
+    ap.add_argument(
+        "--apply", action="store_true", help="Write changes (otherwise dry-run)"
+    )
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -224,13 +249,15 @@ def main():
                         skipped_files.append((path, f"write error: {e}"))
 
     # Report
-    print({
-        "ok": True,
-        "apply": args.apply,
-        "changed_count": len(changed_files),
-        "changed_files": [str(p) for p in changed_files],
-        "skipped": [(str(p), reason) for p, reason in skipped_files],
-    })
+    print(
+        {
+            "ok": True,
+            "apply": args.apply,
+            "changed_count": len(changed_files),
+            "changed_files": [str(p) for p in changed_files],
+            "skipped": [(str(p), reason) for p, reason in skipped_files],
+        }
+    )
 
 
 if __name__ == "__main__":

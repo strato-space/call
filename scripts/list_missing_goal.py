@@ -33,8 +33,15 @@ def should_scan(path: Path) -> bool:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="List .md files missing goal in METADATA YAML")
-    ap.add_argument("--repos", nargs="*", default=["agent", "prompt"], help="Top-level repos to scan")
+    ap = argparse.ArgumentParser(
+        description="List .md files missing goal in METADATA YAML"
+    )
+    ap.add_argument(
+        "--repos",
+        nargs="*",
+        default=["agent", "prompt"],
+        help="Top-level repos to scan",
+    )
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -71,6 +78,7 @@ def main():
         "no_metadata": no_meta,
     }
     import json
+
     print(json.dumps(out, ensure_ascii=False, indent=2))
 
 

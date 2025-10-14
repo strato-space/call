@@ -24,16 +24,20 @@ async def create_telegrath_account(token: Optional[str] = None) -> str:
     telegraph = Telegraph(access_token) if access_token else Telegraph()
 
     acc = telegraph.create_account(
-        short_name='strato.space',
-        author_name='AI Agent @ strato.space',
-        author_url='https://linkedin.com/in/iqdoctor',
+        short_name="strato.space",
+        author_name="AI Agent @ strato.space",
+        author_url="https://linkedin.com/in/iqdoctor",
     )
-    new_token = acc.get('access_token')
+    new_token = acc.get("access_token")
     print(f"Telegraph access_token: {new_token}")
     return new_token
 
 
-async def publish_results(title: str = "AgentName Results", content: str | None = None, token: Optional[str] = None) -> str:
+async def publish_results(
+    title: str = "AgentName Results",
+    content: str | None = None,
+    token: Optional[str] = None,
+) -> str:
     """Publish aggregation results on Telegra.ph and return the page URL.
 
     The HTML content is sanitized and lightly minified before publishing.
@@ -44,7 +48,11 @@ async def publish_results(title: str = "AgentName Results", content: str | None 
     clear_context = minify_html_func(content or "")
 
     # Build dynamic title: if caller passed an agent name, append ' Results' unless already present
-    page_title = (f"{title} Results" if title and "Results" not in str(title) else (title or "AgentName Results"))
+    page_title = (
+        f"{title} Results"
+        if title and "Results" not in str(title)
+        else (title or "AgentName Results")
+    )
 
     response = telegraph.create_page(
         title=page_title,

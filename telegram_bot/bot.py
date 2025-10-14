@@ -7,6 +7,7 @@ Commands:
 
 The bot only interacts with the call library API and does not directly use OpenAI or Telegraph.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,12 +22,21 @@ import json
 import sys
 import httpx
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Telegram bot entrypoint for Call")
     p.add_argument("bot_name_pos", nargs="?", help="Bot handle, e.g. StratoSpaceAiBot")
-    p.add_argument("--bot-name", dest="bot_name", default=None, help="Bot handle (same as positional)")
-    p.add_argument("--echo", action="store_true", help="Print effective config and exit")
+    p.add_argument(
+        "--bot-name",
+        dest="bot_name",
+        default=None,
+        help="Bot handle (same as positional)",
+    )
+    p.add_argument(
+        "--echo", action="store_true", help="Print effective config and exit"
+    )
     return p
+
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -53,6 +63,7 @@ from call.app.utils.telegram_text import (
 )
 from call.app.call import get_project_token
 from call.app import call as app_call
+
 # Use API-only facade; no direct repo_db/repo_fs imports
 from call.telegram_bot.filters import (
     parse_prompts_filters as _parse_filters_mod,
@@ -96,14 +107,18 @@ log = get_logger("bot")
 
 log.info("Loaded env: call/.env exists=%s", _CALL_ENV.exists())
 masked = TELEGRAM_TOKEN[:6] + "..." if TELEGRAM_TOKEN else "<empty>"
-log.info("TELEGRAM_TOKEN(prefix)=%s, ALLOWED_USERS_raw_len=%d", masked, len(_ALLOWED_USERS_RAW))
+log.info(
+    "TELEGRAM_TOKEN(prefix)=%s, ALLOWED_USERS_raw_len=%d",
+    masked,
+    len(_ALLOWED_USERS_RAW),
+)
 
 
 def _parse_allowed_users(raw: str) -> set[int]:
     out: set[int] = set()
     if not raw:
         return out
-    for part in raw.split(','):
+    for part in raw.split(","):
         part = part.strip()
         if not part:
             continue
@@ -119,9 +134,12 @@ def _env_to_bool(raw: str, default: bool = False) -> bool:
     if not isinstance(raw, str) or not raw.strip():
         return default
     v = raw.strip().lower()
-    if v in ("1", "true", "yes", "on"): return True
-    if v in ("0", "false", "no", "off"): return False
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
     return default
+
 
 # Materialize parsed envs
 _ALLOWED_USERS = _parse_allowed_users(_ALLOWED_USERS_RAW)
@@ -131,13 +149,12 @@ _DROP_PENDING_UPDATES = _env_to_bool(DROP_PENDING_UPDATES_RAW, default=False)
 def _current_config_dict() -> dict:
     """Collect key startup parameters for echo/debug output."""
     try:
-        allowed = sorted(list(_ALLOWED_USERS)) if '_ALLOWED_USERS' in globals() else []
+        allowed = sorted(list(_ALLOWED_USERS)) if "_ALLOWED_USERS" in globals() else []
     except Exception:
         allowed = []
     return {
         "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
         "ALLOWED_USERS": allowed,
-        "DEBUG": os.environ.get("DEBUG", ""),
         "CALL_DEBUG": os.environ.get("CALL_DEBUG", ""),
         "CALL_LOG_JSON": os.environ.get("CALL_LOG_JSON", ""),
         "CALL_ENV": str(_CALL_ENV),
@@ -174,13 +191,17 @@ def _summarize_update(update: Update) -> str:
             data = (update.message.text or update.message.caption or "").strip()
         elif update.edited_message:
             kind = "edited_message"
-            data = (update.edited_message.text or update.edited_message.caption or "").strip()
+            data = (
+                update.edited_message.text or update.edited_message.caption or ""
+            ).strip()
         elif update.callback_query:
             kind = "callback_query"
             data = (getattr(update.callback_query, "data", "") or "").strip()
         elif update.channel_post:
             kind = "channel_post"
-            data = (update.channel_post.text or update.channel_post.caption or "").strip()
+            data = (
+                update.channel_post.text or update.channel_post.caption or ""
+            ).strip()
         else:
             kind = "other"
             data = ""
@@ -194,7 +215,15 @@ def _summarize_update(update: Update) -> str:
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TypeHandler callback to log every incoming update."""
     summary = _summarize_update(update)
-    log.info("Update: %s", summary)
+    debug_print("[bot]", "[UPDATE]", summary)
+    try:
+        from call.lib.logging import _env_true
+
+        if _env_true("CALL_DEBUG"):
+            raw_json = json.dumps(update.to_dict(), ensure_ascii=False)
+            log.info("Update raw: %s", raw_json)
+    except Exception:
+        pass
     return None
 
 
@@ -225,7 +254,9 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global error handler to avoid unhandled exception warnings and provide context."""
     try:
-        summary = _summarize_update(update) if isinstance(update, Update) else "<non-Update>"
+        summary = (
+            _summarize_update(update) if isinstance(update, Update) else "<non-Update>"
+        )
     except Exception:
         summary = "<unavailable>"
     # Log the exception with traceback
@@ -233,8 +264,16 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
         err = getattr(context, "error", None)
         if err is not None:
             # Provide traceback tuple explicitly for structured logs
-            log.error("Unhandled error while processing update: %s (%s: %s)", summary, type(err).__name__, str(err), exc_info=(type(err), err, getattr(err, "__traceback__", None)))
-            debug_print("[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary)
+            log.error(
+                "Unhandled error while processing update: %s (%s: %s)",
+                summary,
+                type(err).__name__,
+                str(err),
+                exc_info=(type(err), err, getattr(err, "__traceback__", None)),
+            )
+            debug_print(
+                "[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary
+            )
         else:
             log.error("Unhandled error while processing update: %s (no error)", summary)
             debug_print("[bot]", "[ERROR]", "<no error>", "|", summary)
@@ -258,10 +297,13 @@ ALLOWED_USERS: set[int] = _parse_allowed_users(_ALLOWED_USERS_RAW)
 @dataclass
 class Messenger:
     """Simple DI-friendly messenger wrapper."""
+
     context: ContextTypes.DEFAULT_TYPE
     update: Update
 
-    async def reply(self, text: str, *, parse_mode: Optional[str] = ParseMode.HTML) -> None:
+    async def reply(
+        self, text: str, *, parse_mode: Optional[str] = ParseMode.HTML
+    ) -> None:
         """Reply with sanitized text, safe truncation, retries, and fallback to plain text.
 
         - If parse_mode == HTML: escape everything, then allow minimal tags we control (<b>, <br>)
@@ -278,7 +320,9 @@ class Messenger:
                 use_parse_mode = pm
             elif parse_mode in (ParseMode.MARKDOWN, "Markdown", "MarkdownV2"):
                 # Default to MarkdownV2 escaping
-                prepared_text, pm = telegram_prepare_markdown(prepared_text, 4000, version="v2")
+                prepared_text, pm = telegram_prepare_markdown(
+                    prepared_text, 4000, version="v2"
+                )
                 use_parse_mode = pm
             else:
                 # Plain text path; enforce limit
@@ -288,7 +332,11 @@ class Messenger:
         except Exception:
             # If anything goes wrong, fallback to plain
             use_parse_mode = None
-            prepared_text = (prepared_text[:4095] + "…") if len(prepared_text) > 4096 else prepared_text
+            prepared_text = (
+                (prepared_text[:4095] + "…")
+                if len(prepared_text) > 4096
+                else prepared_text
+            )
 
         async def _send(pt: str, pmode: Optional[str]):
             debug_print("[bot]", "[SEND]", f"len={len(pt)}", f"pmode={pmode}")
@@ -297,8 +345,14 @@ class Messenger:
                 debug_print("[bot]", "[SENT]", "via reply_text")
                 return res
             elif self.update.effective_chat:
-                res = await self.context.bot.send_message(chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode)
-                debug_print("[bot]", "[SENT]", f"via send_message chat_id={getattr(self.update.effective_chat, 'id', None)}")
+                res = await self.context.bot.send_message(
+                    chat_id=self.update.effective_chat.id, text=pt, parse_mode=pmode
+                )
+                debug_print(
+                    "[bot]",
+                    "[SENT]",
+                    f"via send_message chat_id={getattr(self.update.effective_chat, 'id', None)}",
+                )
                 return res
 
         # Retry loop for transient timeouts
@@ -309,15 +363,27 @@ class Messenger:
             except BadRequest as e:
                 # Fallback to plain text if Telegram can't parse entities
                 msg = str(e).lower()
-                if "can't parse entities" in msg or "parse entities" in msg or "entity" in msg:
-                    debug_print("[bot]", "[WARN]", f"BadRequest parse error: {e}; falling back to plain")
+                if (
+                    "can't parse entities" in msg
+                    or "parse entities" in msg
+                    or "entity" in msg
+                ):
+                    debug_print(
+                        "[bot]",
+                        "[WARN]",
+                        f"BadRequest parse error: {e}; falling back to plain",
+                    )
                     plain = re.sub(r"<[^>]+>", "", prepared_text)
                     if len(plain) > 4096:
                         plain = plain[:4095] + "…"
                     try:
                         await _send(plain, None)
                     except Exception as e2:
-                        debug_print("[bot]", "[ERROR]", f"Fallback send failed: {type(e2).__name__}: {e2}")
+                        debug_print(
+                            "[bot]",
+                            "[ERROR]",
+                            f"Fallback send failed: {type(e2).__name__}: {e2}",
+                        )
                         raise
                     return
                 raise
@@ -325,10 +391,14 @@ class Messenger:
                 debug_print("[bot]", "[WARN]", f"TimedOut on attempt {attempt+1}/3")
                 if attempt == 2:
                     break
-                await asyncio.sleep(1 * (2 ** attempt))
+                await asyncio.sleep(1 * (2**attempt))
             except Exception as e:
                 # Last-resort fallback to plain
-                debug_print("[bot]", "[ERROR]", f"Send failed: {type(e).__name__}: {e}; falling back to plain")
+                debug_print(
+                    "[bot]",
+                    "[ERROR]",
+                    f"Send failed: {type(e).__name__}: {e}; falling back to plain",
+                )
                 plain = re.sub(r"<[^>]+>", "", prepared_text)
                 if len(plain) > 4096:
                     plain = plain[:4095] + "…"
@@ -336,38 +406,54 @@ class Messenger:
                     await _send(plain, None)
                     return
                 except Exception as e2:
-                    debug_print("[bot]", "[ERROR]", f"Plain fallback also failed: {type(e2).__name__}: {e2}")
+                    debug_print(
+                        "[bot]",
+                        "[ERROR]",
+                        f"Plain fallback also failed: {type(e2).__name__}: {e2}",
+                    )
                     raise
         # If retries exhausted due to TimedOut, send minimal plain notification
         fallback = "Service temporarily unavailable. Please try again later."
         try:
             await _send(fallback, None)
         except Exception as e3:
-            debug_print("[bot]", "[ERROR]", f"Minimal fallback failed: {type(e3).__name__}: {e3}")
+            debug_print(
+                "[bot]",
+                "[ERROR]",
+                f"Minimal fallback failed: {type(e3).__name__}: {e3}",
+            )
 
 
 # Authorization decorator
 
-def _require_allowed_users(func: Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]):
+
+def _require_allowed_users(
+    func: Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
+):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if ALLOWED_USERS:
             uid = update.effective_user.id if update.effective_user else None
             cid = update.effective_chat.id if update.effective_chat else None
             ok = (uid in ALLOWED_USERS) or (cid in ALLOWED_USERS)
             if not ok:
-                debug_print("[bot]", "[AUTH]", f"ignored unauthorized user={uid} chat={cid}")
+                debug_print(
+                    "[bot]", "[AUTH]", f"ignored unauthorized user={uid} chat={cid}"
+                )
                 return
         await func(update, context)
+
     return wrapper
 
 
 # Command parsing helpers
 
+
 def _extract_after(prefix: str, text: str) -> str:
-    return text[len(prefix):].strip()
+    return text[len(prefix) :].strip()
 
 
 # Shared helpers (deduplicated logic)
+
 
 def _strip_bot_suffix(s: str) -> str:
     s2 = s or ""
@@ -410,8 +496,10 @@ def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
 def _normalize_token(tok: str) -> str:
     try:
         s = (tok or "").strip()
-        if s.startswith("@"): s = s[1:].lstrip()
-        if s.endswith(".md"): s = s[:-3]
+        if s.startswith("@"):
+            s = s[1:].lstrip()
+        if s.endswith(".md"):
+            s = s[:-3]
         return s
     except Exception:
         return (tok or "").strip()
@@ -428,36 +516,53 @@ def _is_valid_target(token: str, base_project: str | None) -> bool:
         return False
     # Prefer central builder when available (validates prompt > agent > project)
     try:
-        builder = getattr(_services.call_api, "build_runnable_instructions_config", None)
+        builder = getattr(
+            _services.call_api, "build_runnable_instructions_config", None
+        )
         if callable(builder):
-            cfg, err = builder(project=(base_project or None), agent=None, prompt=None, target=t, input=None)
+            cfg, err = builder(
+                project=(base_project or None),
+                agent=None,
+                prompt=None,
+                target=t,
+                input=None,
+            )
             if err is None and cfg is not None:
                 return True
     except Exception:
         pass
     # Fallback: DB-only checks (resolve_agent for agent/prompt; list for project)
     try:
-        env = _services.call_api.resolve_agent(project=(base_project or None), agent=t, prompt=None, target=None)
+        env = _services.call_api.resolve_agent(
+            project=(base_project or None), agent=t, prompt=None, target=None
+        )
         if isinstance(env, dict) and env.get("ok"):
             return True
     except Exception:
         pass
     try:
-        envp = _services.call_api.resolve_agent(project=(base_project or None), agent=None, prompt=t, target=None)
+        envp = _services.call_api.resolve_agent(
+            project=(base_project or None), agent=None, prompt=t, target=None
+        )
         if isinstance(envp, dict) and envp.get("ok"):
             return True
     except Exception:
         pass
     try:
         lst = _services.call_api.list(project=t)
-        if any((isinstance(x, dict) and (str(x.get("name") or "").strip() == t)) for x in (lst or [])):
+        if any(
+            (isinstance(x, dict) and (str(x.get("name") or "").strip() == t))
+            for x in (lst or [])
+        ):
             return True
     except Exception:
         pass
     return False
 
 
-def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) -> tuple[str, str, bool]:
+def _resolve_agent_and_input(
+    text: str, base_project: str, *, is_private: bool
+) -> tuple[str, str, bool]:
     """Parse text into (target_name, input_text, should_handle) with conservative rules.
 
     - Group chats: require an explicit @-mention; support:
@@ -492,7 +597,7 @@ def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) 
         parts = body.lstrip().split(None, 1)
         head = _normalize_token(parts[0])
         rest = parts[1] if len(parts) > 1 else ""
-        
+
         # '@BotName ...' -> address bot explicitly; next token may be target
         if own and (head == own):
             if not rest.strip():
@@ -519,9 +624,17 @@ def _resolve_agent_and_input(text: str, base_project: str, *, is_private: bool) 
 
 @_require_allowed_users
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log.debug("handle_start: chat_id=%s user_id=%s", getattr(update.effective_chat, 'id', None), getattr(update.effective_user, 'id', None))
+    log.debug(
+        "handle_start: chat_id=%s user_id=%s",
+        getattr(update.effective_chat, "id", None),
+        getattr(update.effective_user, "id", None),
+    )
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[START]", f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}")
+    debug_print(
+        "[bot]",
+        "[START]",
+        f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}",
+    )
     await m.reply(
         """
 call-bot
@@ -555,11 +668,16 @@ Notes:
 @_require_allowed_users
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Concise help with guide link as the very first line."""
-    log.debug("handle_help: chat_id=%s user_id=%s", getattr(update.effective_chat, 'id', None), getattr(update.effective_user, 'id', None))
+    log.debug(
+        "handle_help: chat_id=%s user_id=%s",
+        getattr(update.effective_chat, "id", None),
+        getattr(update.effective_user, "id", None),
+    )
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[HELP]", f"entry chat_id={getattr(update.effective_chat, 'id', None)}")
-    txt = (
-        """
+    debug_print(
+        "[bot]", "[HELP]", f"entry chat_id={getattr(update.effective_chat, 'id', None)}"
+    )
+    txt = """
 https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
 
 Быстро:
@@ -572,15 +690,17 @@ https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
 - В личных чатах можно без @; в группах используйте @упоминание или /call
 - Приоритет target: prompt > точный project > agent > шаблонный project
         """.strip()
-    )
     await m.reply(txt, parse_mode=None)
     debug_print("[bot]", "[HELP]", "replied")
 
+
 @_require_allowed_users
 async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log.debug("handle_list: incoming text=%r", getattr(update.message, 'text', None))
+    log.debug("handle_list: incoming text=%r", getattr(update.message, "text", None))
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[AGENTS]", f"entry text={getattr(update.message, 'text', None)!r}")
+    debug_print(
+        "[bot]", "[AGENTS]", f"entry text={getattr(update.message, 'text', None)!r}"
+    )
 
     # Scope by project (derive from bot); StratoSpaceAiBot lists all projects
     proj = PROJECT_NAME or None
@@ -599,7 +719,7 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             _at, url = _project_to_bot_link(pname)
             visible = f"@{pname} Bot"
             if url:
-                lines.append(f"<b><a href=\"{url}\">{py_html.escape(visible)}</a></b>")
+                lines.append(f'<b><a href="{url}">{py_html.escape(visible)}</a></b>')
             else:
                 lines.append(f"<b>{py_html.escape(visible)}</b>")
             # Each agent as a list item (skip the first one if present)
@@ -621,11 +741,12 @@ async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # ---- Local formatting helpers for prompt listings ----
 
+
 def _format_prompt_markdown_row(item: dict) -> str:
-    name = str(item.get('name') or item.get('prompt_id') or '').strip()
-    url = item.get('url')
+    name = str(item.get("name") or item.get("prompt_id") or "").strip()
+    url = item.get("url")
     # Prefer Markdown link when URL is available; fallback to plain title
-    title = f"[{name}]({url})" if (url and name) else (name or '(untitled)')
+    title = f"[{name}]({url})" if (url and name) else (name or "(untitled)")
     return f"- {title}"
 
 
@@ -640,15 +761,23 @@ def _format_prompts_markdown(items: list[dict]) -> str:
     return "\n".join(rows)
 
 
-def _parse_prompts_filters(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+def _parse_prompts_filters(
+    text: str, *, command: str, default_project: str | None
+) -> tuple[str | None, str | None, str | None, str | None]:
     return _parse_filters_mod(text, command=command, default_project=default_project)
 
 
-def _parse_prompts_and_state(text: str, *, command: str, default_project: str | None) -> tuple[str | None, str | None, str | None, str | None, str | None]:
-    return _parse_filters_state_mod(text, command=command, default_project=default_project)
+def _parse_prompts_and_state(
+    text: str, *, command: str, default_project: str | None
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    return _parse_filters_state_mod(
+        text, command=command, default_project=default_project
+    )
 
 
-async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: str | None = None, max_len: int = 3800) -> None:
+async def _send_markdown_rows_chunked(
+    m: Messenger, rows: list[str], *, header: str | None = None, max_len: int = 3800
+) -> None:
     """Send a list of Markdown rows split across multiple Telegram messages.
 
     - max_len: conservative limit below 4000 to avoid entity boundary issues.
@@ -678,17 +807,31 @@ async def _send_markdown_rows_chunked(m: Messenger, rows: list[str], *, header: 
 
 
 @_require_allowed_users
-async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_prompts_ready(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """List ready prompts. Usage: /prompts_ready [<project>] [<agent>|@Agent]"""
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[PROMPTS_READY]", f"entry text={getattr(update.message, 'text', None)!r}")
+    debug_print(
+        "[bot]",
+        "[PROMPTS_READY]",
+        f"entry text={getattr(update.message, 'text', None)!r}",
+    )
     try:
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
-        project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_ready", default_project=proj_default)
-        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='ready')
-        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
-        debug_print("[bot]", "[PROMPTS_READY]", f"rows={len(rows)} project={project!r} agent={agent!r}")
+        project, agent, prompt, target = _parse_prompts_filters(
+            text, command="/prompts_ready", default_project=proj_default
+        )
+        items = _services.call_api.list_prompts(
+            project=project, agent=agent, prompt=prompt, target=target, state="ready"
+        )
+        rows = [_format_prompt_markdown_row({"name": it.get("prompt")}) for it in items]
+        debug_print(
+            "[bot]",
+            "[PROMPTS_READY]",
+            f"rows={len(rows)} project={project!r} agent={agent!r}",
+        )
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
         debug_print("[bot]", "[PROMPTS_READY]", f"error {type(e).__name__}: {e}")
@@ -696,16 +839,26 @@ async def handle_prompts_ready(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 @_require_allowed_users
-async def handle_prompts_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_prompts_draft(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """List draft prompts. Usage: /prompts_draft [<project>] [<agent>|@Agent]"""
     m = Messenger(context=context, update=update)
-    debug_print("[bot]", "[PROMPTS_DRAFT]", f"entry text={getattr(update.message, 'text', None)!r}")
+    debug_print(
+        "[bot]",
+        "[PROMPTS_DRAFT]",
+        f"entry text={getattr(update.message, 'text', None)!r}",
+    )
     try:
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
-        project, agent, prompt, target = _parse_prompts_filters(text, command="/prompts_draft", default_project=proj_default)
-        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state='draft')
-        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
+        project, agent, prompt, target = _parse_prompts_filters(
+            text, command="/prompts_draft", default_project=proj_default
+        )
+        items = _services.call_api.list_prompts(
+            project=project, agent=agent, prompt=prompt, target=target, state="draft"
+        )
+        rows = [_format_prompt_markdown_row({"name": it.get("prompt")}) for it in items]
         await _send_markdown_rows_chunked(m, rows)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
@@ -717,8 +870,10 @@ async def handle_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     m = Messenger(context=context, update=update)
     try:
         res = _services.call_api.reload()
-        scanned = int(res.get('scanned', 0)) if isinstance(res, dict) else 0
-        await m.reply(f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML)
+        scanned = int(res.get("scanned", 0)) if isinstance(res, dict) else 0
+        await m.reply(
+            f"Reload complete. Scanned: <b>{scanned}</b>", parse_mode=ParseMode.HTML
+        )
     except Exception as e:
         await m.reply(f"Reload failed: {type(e).__name__}: {e}", parse_mode=None)
 
@@ -733,15 +888,20 @@ async def handle_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         text = (update.message.text or "").strip() if update.message else ""
         proj_default = _get_bot_project(update) or None
-        project, agent, prompt, target, state = _parse_prompts_and_state(text, command="/prompts", default_project=proj_default)
-        items = _services.call_api.list_prompts(project=project, agent=agent, prompt=prompt, target=target, state=state)
-        rows = [_format_prompt_markdown_row({'name': it.get('prompt')}) for it in items]
+        project, agent, prompt, target, state = _parse_prompts_and_state(
+            text, command="/prompts", default_project=proj_default
+        )
+        items = _services.call_api.list_prompts(
+            project=project, agent=agent, prompt=prompt, target=target, state=state
+        )
+        rows = [_format_prompt_markdown_row({"name": it.get("prompt")}) for it in items]
         header = None
         if state:
             header = f"State: {state}"
         await _send_markdown_rows_chunked(m, rows, header=header)
     except Exception as e:
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+
 
 async def _call_task(
     m: Messenger,
@@ -756,16 +916,24 @@ async def _call_task(
         log.info(
             "_call_task: start name=%s input_len=%d echo=%s chat_id=%s thread_id=%s",
             name,
-            len(input_text or ''),
+            len(input_text or ""),
             echo,
             chat_id,
             thread_id,
         )
-        debug_print("[bot]", "[CALL_TASK]", f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}")
+        debug_print(
+            "[bot]",
+            "[CALL_TASK]",
+            f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}",
+        )
         # Delegate to lib; it will publish to Telegram via its own utilities
-        proj_baseline = None if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot" else (PROJECT_NAME or None)
+        proj_baseline = (
+            None
+            if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot"
+            else (PROJECT_NAME or None)
+        )
         # If no explicit target name, do not pass project — let library run a blank agent
-        proj = (proj_baseline if (name or "").strip() else None)
+        proj = proj_baseline if (name or "").strip() else None
         res = await _services.call_api.call_async(
             project=proj,
             agent=None,
@@ -786,17 +954,29 @@ async def _call_task(
         # On success: do not send an extra bot reply. On error: reply with a concise error.
         try:
             if not (isinstance(res, dict) and res.get("ok")):
-                code_raw = (res.get("code") if isinstance(res, dict) else None)
+                code_raw = res.get("code") if isinstance(res, dict) else None
                 code = str(code_raw or "ERROR")
                 if code.upper() == "NO_DATA_FOUND":
-                    debug_print("[bot]", "[CALL_TASK]", "suppressing NO_DATA_FOUND response")
+                    debug_print(
+                        "[bot]", "[CALL_TASK]", "suppressing NO_DATA_FOUND response"
+                    )
                     return
-                status = (res.get("error_code") if isinstance(res, dict) else None) or 500
-                desc = (res.get("description") if isinstance(res, dict) else None) or "Unknown error"
+                status = (
+                    res.get("error_code") if isinstance(res, dict) else None
+                ) or 500
+                desc = (
+                    res.get("description") if isinstance(res, dict) else None
+                ) or "Unknown error"
                 await m.reply(f"Error: {code} ({status}): {desc}", parse_mode=None)
-                debug_print("[bot]", "[CALL_TASK]", f"replied error code={code} status={status}")
+                debug_print(
+                    "[bot]", "[CALL_TASK]", f"replied error code={code} status={status}"
+                )
             else:
-                debug_print("[bot]", "[CALL_TASK]", "ok=true; no extra reply to avoid duplicates (pipeline published)")
+                debug_print(
+                    "[bot]",
+                    "[CALL_TASK]",
+                    "ok=true; no extra reply to avoid duplicates (pipeline published)",
+                )
         except Exception:
             # Never let reply errors crash the task
             pass
@@ -807,7 +987,9 @@ async def _call_task(
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
-async def build_input_payload_from_reply(name: str | None, main_text: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, dict | None]:
+async def build_input_payload_from_reply(
+    name: str | None, main_text: str, update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> tuple[str, dict | None]:
     """Build JSON payload from reply context if present and return (input_arg, payload_dict_or_None).
 
     - Includes target when provided
@@ -832,7 +1014,11 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
                     file = await context.bot.get_file(doc.file_id)
                     url = getattr(file, "file_path", "")
                     if url and not url.startswith("http"):
-                        token = os.environ.get("CALL_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or ""
+                        token = (
+                            os.environ.get("CALL_TELEGRAM_TOKEN")
+                            or os.environ.get("TELEGRAM_TOKEN")
+                            or ""
+                        )
                         if token:
                             url = f"https://api.telegram.org/file/bot{token}/{url}"
                     if url:
@@ -849,9 +1035,15 @@ async def build_input_payload_from_reply(name: str | None, main_text: str, updat
     except Exception:
         pass
     # Delegate to library for predictable, shared behavior (no FS fallback; ordered keys)
-    input_arg, payload = _services.call_api.build_input_payload(target=(name or None), main_text=(main_text or ""), extra_context=ctx_items or None, reply_text=(reply_text or None))
+    input_arg, payload = _services.call_api.build_input_payload(
+        target=(name or None),
+        main_text=(main_text or ""),
+        extra_context=ctx_items or None,
+        reply_text=(reply_text or None),
+    )
     try:
         import json as _json
+
         # Pretty-print payload with indentation; cap length to ~2000 chars to avoid noisy logs
         txt = _json.dumps(payload or {}, ensure_ascii=False, indent=2)
         if len(txt) > 2000:
@@ -878,10 +1070,14 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if t.lower().startswith("/call@"):  # explicit target bot mention
                 end = t.find(" ")
                 cmd_token = t if end == -1 else t[:end]
-                mentioned = cmd_token[len("/call@"):].strip()
-                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+                mentioned = cmd_token[len("/call@") :].strip()
+                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                    PROJECT_NAME
+                )
                 if mentioned and own and mentioned != own:
-                    debug_print("[bot]", "[CALL]", f"ignoring command addressed to @{mentioned}")
+                    debug_print(
+                        "[bot]", "[CALL]", f"ignoring command addressed to @{mentioned}"
+                    )
                     return
         except Exception:
             pass
@@ -891,11 +1087,13 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             t = _extract_after("call", t)
         # Drop optional @<own-bot-name> immediately following the command (e.g., "/call@StratoSpaceAiBot @Vasil3")
         try:
-            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                PROJECT_NAME
+            )
             own_at = ("@" + own) if own else ""
             # Quick path: if remainder starts with our @bot token, strip it
             if own_at and t.lstrip().startswith(own_at):
-                t = t.lstrip()[len(own_at):].lstrip()
+                t = t.lstrip()[len(own_at) :].lstrip()
         except Exception:
             pass
         # Tokenize and remove --echo occurrences (support ASCII and Unicode dashes) before parsing @Name
@@ -915,7 +1113,9 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Remove leading own @Bot token if present again after flags
         try:
             if filtered:
-                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                    PROJECT_NAME
+                )
                 own_at = ("@" + own) if own else ""
                 if own_at and filtered[0].lstrip().startswith(own_at):
                     filtered = filtered[1:]
@@ -945,10 +1145,14 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     tid = update.message.message_thread_id if update and update.message else None
     # Provide original message id for reply threading in the app pipeline
     try:
-        app_call.reply_to_message_id = update.message.message_id if update and update.message else None
+        app_call.reply_to_message_id = (
+            update.message.message_id if update and update.message else None
+        )
     except Exception:
         pass
-    input_arg, _ = await build_input_payload_from_reply(name or None, main_text or "", update, context)
+    input_arg, _ = await build_input_payload_from_reply(
+        name or None, main_text or "", update, context
+    )
 
     asyncio.create_task(
         _call_task(
@@ -969,7 +1173,9 @@ async def handle_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """List projects (StratoSpaceAiBot only)."""
     m = Messenger(context=context, update=update)
     if (SELECTED_BOT_NAME or "").strip() != "StratoSpaceAiBot":
-        await m.reply("/projects is available only for StratoSpaceAiBot", parse_mode=None)
+        await m.reply(
+            "/projects is available only for StratoSpaceAiBot", parse_mode=None
+        )
         return
     try:
         debug_print("[bot]", "[PROJECTS]", "entry")
@@ -1005,7 +1211,7 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parts = text.split(None, 1)
         arg = parts[1].strip() if len(parts) > 1 else ""
         if arg.startswith("/clear"):
-            arg = arg[len("/clear"):].strip()
+            arg = arg[len("/clear") :].strip()
         if arg.startswith("@"):
             arg = arg[1:]
         agent_name = arg or ""
@@ -1013,19 +1219,33 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         cid = update.effective_chat.id if update and update.effective_chat else None
         tid = update.message.message_thread_id if update and update.message else None
 
-        res = await _services.call_api.clear_session(agent_name or None, chat_id=cid, thread_id=tid)
+        res = await _services.call_api.clear_session(
+            agent_name or None, chat_id=cid, thread_id=tid
+        )
         if not isinstance(res, dict) or not res.get("ok"):
-            await m.reply(f"Clear failed: {res.get('description', 'unknown error')}", parse_mode=None)
+            await m.reply(
+                f"Clear failed: {res.get('description', 'unknown error')}",
+                parse_mode=None,
+            )
             return
 
         cleared = res.get("cleared") or []
-        head = f"Cleared session for @{agent_name}" if agent_name else "Cleared sessions for all agents"
-        body = "<code>" + "\n".join(cleared) + "</code>" if cleared else "(nothing to clear)"
+        head = (
+            f"Cleared session for @{agent_name}"
+            if agent_name
+            else "Cleared sessions for all agents"
+        )
+        body = (
+            "<code>" + "\n".join(cleared) + "</code>"
+            if cleared
+            else "(nothing to clear)"
+        )
         await m.reply(f"{head}\n\n{body}", parse_mode=ParseMode.HTML)
         debug_print("[bot]", "[CLEAR]", f"cleared_count={len(cleared)}")
     except Exception as e:
         debug_print("[bot]", "[CLEAR]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+
 
 @_require_allowed_users
 async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1035,16 +1255,20 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     # Determine chat type early (affects whether we strip own @Bot mention)
     try:
-        is_private = bool(getattr(getattr(update, "effective_chat", None), "type", "") == "private")
+        is_private = bool(
+            getattr(getattr(update, "effective_chat", None), "type", "") == "private"
+        )
     except Exception:
         is_private = False
     # In private DMs only: strip leading own @Bot mention to allow natural text parsing
     if is_private:
         try:
-            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                PROJECT_NAME
+            )
             own_at = ("@" + own) if own else ""
             if own_at and text.startswith(own_at):
-                text = text[len(own_at):].lstrip()
+                text = text[len(own_at) :].lstrip()
         except Exception:
             pass
     # Resolve agent and input according to chat type using shared helper
@@ -1053,7 +1277,9 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception:
         base = ""
     try:
-        name, main_text, should_handle = _resolve_agent_and_input(text, base, is_private=is_private)
+        name, main_text, should_handle = _resolve_agent_and_input(
+            text, base, is_private=is_private
+        )
     except Exception:
         # Conservative fallback: do not handle to avoid scheduling unwanted tasks
         name, main_text, should_handle = "", "", False
@@ -1062,7 +1288,9 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
-    input_arg, _ = await build_input_payload_from_reply(name or None, main_text or "", update, context)
+    input_arg, _ = await build_input_payload_from_reply(
+        name or None, main_text or "", update, context
+    )
     asyncio.create_task(
         _call_task(
             Messenger(context=context, update=update),
@@ -1094,7 +1322,9 @@ def main() -> None:
     global SELECTED_BOT_NAME, PROJECT_NAME
     SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
     PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
-    debug_print("[bot]", "[MAIN]", f"bot={SELECTED_BOT_NAME!r} project={PROJECT_NAME!r}")
+    debug_print(
+        "[bot]", "[MAIN]", f"bot={SELECTED_BOT_NAME!r} project={PROJECT_NAME!r}"
+    )
 
     # KISS: require project name to be provided; call layer will use it to fetch the token
     if not PROJECT_NAME:
@@ -1118,7 +1348,11 @@ def main() -> None:
     # Ensure repo index is loaded before polling to avoid NO_DATA_FOUND on first calls
     try:
         r = _services.call_api.reload()
-        debug_print("[bot]", "[MAIN]", f"reload scanned={getattr(r, 'get', lambda k, d=None: d)('scanned', None) if isinstance(r, dict) else r}")
+        debug_print(
+            "[bot]",
+            "[MAIN]",
+            f"reload scanned={getattr(r, 'get', lambda k, d=None: d)('scanned', None) if isinstance(r, dict) else r}",
+        )
     except Exception:
         pass
 
@@ -1150,7 +1384,9 @@ def main() -> None:
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
 
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_plain_text))
+    app.add_handler(
+        MessageHandler(filters.TEXT & (~filters.COMMAND), handle_plain_text)
+    )
     # Log all incoming updates at the end so it doesn't interfere with other handlers
     app.add_handler(TypeHandler(Update, _log_update), group=100)
     # Global error handler

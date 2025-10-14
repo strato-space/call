@@ -9,7 +9,9 @@ def _minimal_repo(monkeypatch):
     def _empty_find(**kwargs):
         return []
 
-    monkeypatch.setattr(api_module.call_repo, "find_projects", _empty_find, raising=True)
+    monkeypatch.setattr(
+        api_module.call_repo, "find_projects", _empty_find, raising=True
+    )
     monkeypatch.setattr(api_module.call_repo, "find_prompts", _empty_find, raising=True)
 
     def _find_agents(**kwargs):
@@ -23,7 +25,9 @@ def _minimal_repo(monkeypatch):
         ]
 
     monkeypatch.setattr(api_module.call_repo, "find_agents", _find_agents, raising=True)
-    monkeypatch.setattr(api_module.call_repo, "get_card", lambda cid: ({}, "", ""), raising=True)
+    monkeypatch.setattr(
+        api_module.call_repo, "get_card", lambda cid: ({}, "", ""), raising=True
+    )
 
     monkeypatch.setattr(
         api_module,

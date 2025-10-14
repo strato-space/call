@@ -130,6 +130,28 @@ mcpServers:
       Позволяет выбрать из промпта любой диалог использовать его как входные данные
       Проекты, персоны, поиск сессий, dialogue_reference
 
+  # python -m call.mcp.server
+  # note: должен запускаться из корневой директории strato-space, где установлен .venv
+  call:
+    enabled: true
+    command: python
+    args:
+      - -m
+      - call.mcp.server
+    capabilities: |
+      Запуск AI агентов и промптов из репозитория
+      Инструменты: agents, prompts, call, exec, notify, read, write, reload, models
+      - agents: список доступных агентов с фильтрацией по проекту и query
+      - prompts: список промптов с фильтрацией по project/agent/prompt/state
+      - call: вызов агента по имени с input и опциональным model override
+      - exec: выполнение через JSON payload с селекторами (project/agent/prompt/target)
+      - notify: отправка событий в runtime (session_transcription_done и др.)
+      - read/write: прямой доступ к карточкам агентов/промптов в repo.db
+      - reload: перезагрузка индекса репозитория
+      - models: список доступных OpenAI моделей
+      Поддержка session_id для Telegram-роутинга, model precedence (prompt>agent>project)
+      Unified error envelope с structured diagnostics
+
   # # OS env var:
   # GOOGLE_APPLICATION_CREDENTIALS=/home/strato-space/call/wallet/service-account-key.json
   # uv --directory mcp-google-sheets sync

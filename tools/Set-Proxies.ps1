@@ -2,9 +2,9 @@
 # Установить системные переменные окружения для прокси
 
 # === Настройки прокси ===
-$httpProxy  = "http://strato:way-to-win@prompt.stratospace.fun:10809"
-$httpsProxy = "http://strato:way-to-win@prompt.stratospace.fun:10809"
-$allProxy   = "socks5h://strato:way-to-win@prompt.stratospace.fun:10808"
+$httpProxy  = "http://localhost:10809"
+$httpsProxy = "http://localhost:10809"
+$allProxy   = "socks5h://localhost:10808"
 
 # NO_PROXY список (через запятую)
 $noProxy = "localhost,127.0.0.1,::1,github.com,*.github.com,api.telegram.org"

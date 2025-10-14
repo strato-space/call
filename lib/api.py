@@ -268,7 +268,10 @@ def _compile_wildcard_regex(pattern: str | None):
         return None
     try:
         import re as _re
-        return _re.compile("^" + _re.escape(pattern).replace("\\*", ".*") + "$", _re.IGNORECASE)
+
+        return _re.compile(
+            "^" + _re.escape(pattern).replace("\\*", ".*") + "$", _re.IGNORECASE
+        )
     except Exception:
         return None
 
@@ -288,12 +291,12 @@ def normalize_selector(val: Optional[str]) -> Optional[str]:
     s = val.strip()
     if not s:
         return ""
-    if s.startswith('@'):
+    if s.startswith("@"):
         s = s[1:]
     sl = s.lower()
-    if sl.endswith('.markdown'):
+    if sl.endswith(".markdown"):
         s = s[:-9]
-    elif sl.endswith('.md'):
+    elif sl.endswith(".md"):
         s = s[:-3]
     return s
 
@@ -302,6 +305,7 @@ def _maybe_inline_context_content(items: list[dict]) -> None:
     try:
         import mimetypes as _mimes
         import base64 as _b64
+
         try:
             import httpx as _httpx
         except Exception:
@@ -310,28 +314,36 @@ def _maybe_inline_context_content(items: list[dict]) -> None:
         def _is_text(mime: str | None, name: str) -> bool:
             if not mime:
                 lower = name.lower()
-                return lower.endswith(('.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.tsv'))
-            return mime.startswith('text/') or mime in ('application/json', 'application/yaml', 'application/x-yaml')
+                return lower.endswith(
+                    (".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".tsv")
+                )
+            return mime.startswith("text/") or mime in (
+                "application/json",
+                "application/yaml",
+                "application/x-yaml",
+            )
 
         for it in items:
             try:
                 if not isinstance(it, dict):
                     continue
-                if it.get('content') or it.get('base64'):
+                if it.get("content") or it.get("base64"):
                     continue
-                url_val = str(it.get('url') or '').strip()
-                path_val = str(it.get('path') or '').strip()
+                url_val = str(it.get("url") or "").strip()
+                path_val = str(it.get("path") or "").strip()
 
                 if url_val and _httpx:
                     try:
                         guess, _ = _mimes.guess_type(url_val)
-                        with _httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                        with _httpx.Client(
+                            timeout=15.0, follow_redirects=True
+                        ) as client:
                             resp = client.get(url_val)
                             data = resp.content or b""
                         if _is_text(guess, url_val):
-                            it['content'] = data.decode('utf-8', 'replace')
+                            it["content"] = data.decode("utf-8", "replace")
                         else:
-                            it['base64'] = _b64.b64encode(data).decode('ascii')
+                            it["base64"] = _b64.b64encode(data).decode("ascii")
                     except Exception:
                         continue
                     else:
@@ -346,11 +358,11 @@ def _maybe_inline_context_content(items: list[dict]) -> None:
                         data = p.read_bytes()
                         if _is_text(guess, p.name):
                             try:
-                                it['content'] = data.decode('utf-8')
+                                it["content"] = data.decode("utf-8")
                             except Exception:
-                                it['content'] = data.decode('utf-8', 'replace')
+                                it["content"] = data.decode("utf-8", "replace")
                         else:
-                            it['base64'] = _b64.b64encode(data).decode('ascii')
+                            it["base64"] = _b64.b64encode(data).decode("ascii")
                     except Exception:
                         continue
             except Exception:
@@ -358,13 +370,23 @@ def _maybe_inline_context_content(items: list[dict]) -> None:
     except Exception:
         return
 
-def list_prompts(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
+
+def list_prompts(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    prompt: Optional[str] = None,
+    state: Optional[str] = None,
+    target: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Flat prompts listing facade for upper layers (CLI, Actions, Bot, MCP).
 
     Delegates to repo_db.list_prompts() via compatibility alias 'repo'.
     Do not swallow exceptions; let callers see failures.
     """
-    return call_repo.list_prompts(project=project, agent=agent, state=state, target=target, prompt=prompt)
+    return call_repo.list_prompts(
+        project=project, agent=agent, state=state, target=target, prompt=prompt
+    )
 
 
 def interpret_target(
@@ -416,7 +438,15 @@ def interpret_target(
         filters={},
     )
 
-def build_input_payload(*, target: Optional[str], main_text: str, extra_context: Optional[list] = None, reply_text: Optional[str] = None, download: bool = False) -> tuple[str, dict | None]:
+
+def build_input_payload(
+    *,
+    target: Optional[str],
+    main_text: str,
+    extra_context: Optional[list] = None,
+    reply_text: Optional[str] = None,
+    download: bool = False,
+) -> tuple[str, dict | None]:
     """Build a structured JSON payload used by Telegram bot and CLI echo.
 
     - Ordered keys: target, replay, input, context
@@ -425,6 +455,7 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
     - When download=True, inlines content for text files and base64 for binaries (by url/path)
     """
     import re as _re
+
     payload: dict = {}
     if isinstance(target, str) and target.strip():
         payload["target"] = target.strip()
@@ -442,11 +473,11 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
         if s:
             raw = _re.findall(r"[@]?[A-Za-zА-Яа-я0-9*][A-Za-zА-Яа-я0-9._:/\\\-*]*", s)
             for t in raw:
-                u = t.lstrip('@').strip().strip(',.;:')
+                u = t.lstrip("@").strip().strip(",.;:")
                 ul = u.lower()
-                if ul.endswith('.md'):
+                if ul.endswith(".md"):
                     u = u[:-3]
-                elif ul.endswith('.markdown'):
+                elif ul.endswith(".markdown"):
                     u = u[:-9]
                 if u and u not in tokens:
                     tokens.append(u)
@@ -471,7 +502,19 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
                 "id": row_id,
                 "mutable": True,
             }
-            for key in ("id", "type", "target", "project", "agent", "prompt", "state", "goal", "engine", "orchestration", "url"):
+            for key in (
+                "id",
+                "type",
+                "target",
+                "project",
+                "agent",
+                "prompt",
+                "state",
+                "goal",
+                "engine",
+                "orchestration",
+                "url",
+            ):
                 if key in row and row[key] not in (None, ""):
                     ref[key] = row[key]
 
@@ -512,20 +555,22 @@ def build_input_payload(*, target: Optional[str], main_text: str, extra_context:
         _maybe_inline_context_content(ctx_items)
 
     ordered: dict = {}
-    if payload.get('target'):
-        ordered['target'] = payload['target']
+    if payload.get("target"):
+        ordered["target"] = payload["target"]
     if isinstance(reply_text, str) and reply_text.strip():
-        ordered['replay'] = reply_text.strip()
-    if (main_text or '').strip():
-        ordered['input'] = (main_text or '').strip()
+        ordered["replay"] = reply_text.strip()
+    if (main_text or "").strip():
+        ordered["input"] = (main_text or "").strip()
     if ctx_items:
-        ordered['context'] = ctx_items
+        ordered["context"] = ctx_items
     if ordered:
         return (json.dumps(ordered, ensure_ascii=False), ordered)
-    return ((main_text or ''), None)
+    return ((main_text or ""), None)
 
 
-def reload(*, repos: Optional[List[str]] = None, full_form: bool = True) -> Dict[str, Any]:
+def reload(
+    *, repos: Optional[List[str]] = None, full_form: bool = True
+) -> Dict[str, Any]:
     """Filesystem scan and DB refresh (uniform name).
 
     Delegates to repo_fs.reload() (or scan()) and returns its dict result.
@@ -533,7 +578,12 @@ def reload(*, repos: Optional[List[str]] = None, full_form: bool = True) -> Dict
     try:
         return repo_fs.reload(repos, full_form=full_form)
     except Exception as e:
-        return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR"}
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": str(e),
+            "code": "INTERNAL_ERROR",
+        }
 
 
 @dataclass
@@ -544,7 +594,7 @@ class RunnableConfig:
     id: str | None = None
     type: str | None = None  # 'project' | 'agent' | 'prompt'
     path: str | None = None  # Repo-relative card path when available
-    url: str | None = None   # Public URL (e.g., GitHub blob) for the selected card
+    url: str | None = None  # Public URL (e.g., GitHub blob) for the selected card
     goal: str | None = None
     role: str | None = None
 
@@ -558,8 +608,12 @@ class RunnableConfig:
     input: str = ""
 
     # Text payloads
-    prompt_text: str = ""  # Raw prompt body extracted from the primary card prior to merges
-    instructions: str = ""  # Final instructions dispatched to the runtime after merges/overlays
+    prompt_text: str = (
+        ""  # Raw prompt body extracted from the primary card prior to merges
+    )
+    instructions: str = (
+        ""  # Final instructions dispatched to the runtime after merges/overlays
+    )
     card_text: str = ""  # Raw Markdown/structured card text (if available)
 
     # Runtime configuration and attributes
@@ -567,13 +621,15 @@ class RunnableConfig:
     model_settings: ModelSettings = field(default_factory=ModelSettings)
     attributes: Dict[str, Any] = field(default_factory=dict)
     mcp: List[Dict[str, Any]] = field(default_factory=list)
-    # Declared tools to enable for the run (e.g., ["WebSearchTool", "image_genetation_tool"]) 
+    # Declared tools to enable for the run (e.g., ["WebSearchTool", "image_genetation_tool"])
     tools: List[str] = field(default_factory=list)
 
     # Additional execution context
     base_dir: str = ""
 
+
 # todo исключить обращение к файловой системе, использовать repo.db и радиально упростить код исключив взаимное влиние prompt / agent /project за исключением model и model-settings /  model-settings-${model}
+
 
 def build_runnable_instructions_config(
     *,
@@ -687,7 +743,9 @@ def build_runnable_instructions_config(
             project=requested_project or project,
         )
 
-    attributes: Dict[str, Any] = _dict_with_str_keys(meta if isinstance(meta, dict) else {})
+    attributes: Dict[str, Any] = _dict_with_str_keys(
+        meta if isinstance(meta, dict) else {}
+    )
     prompt_body = str(prompt_text or "")
     card_body = str(raw_text or "")
 
@@ -698,7 +756,9 @@ def build_runnable_instructions_config(
     role_value = role_raw if isinstance(role_raw, _bi.str) else None
 
     try:
-        env_model = str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+        env_model = (
+            str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+        )
     except Exception:
         env_model = "gpt-5"
 
@@ -720,7 +780,9 @@ def build_runnable_instructions_config(
         else:
             attributes[key] = value
 
-    def _build_model_settings(attrs: Dict[str, Any], model_name: Optional[str]) -> ModelSettings:
+    def _build_model_settings(
+        attrs: Dict[str, Any], model_name: Optional[str]
+    ) -> ModelSettings:
         if not isinstance(attrs, dict):
             return ModelSettings()
         scoped: Dict[str, Any] = {}
@@ -812,7 +874,9 @@ def _error_payload_event(
 ) -> Dict[str, Any]:
     if isinstance(exc, BaseException):
         msg_attr = getattr(exc, "message", None)
-        message = msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        message = (
+            msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        )
         code_attr = getattr(exc, "code", None)
         if isinstance(code_attr, int):
             effective_status = code_attr
@@ -847,6 +911,7 @@ def _error_payload_event(
     if debug:
         try:
             import traceback
+
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
         except Exception:
             pass
@@ -873,7 +938,9 @@ def _error_payload(
 ) -> Dict[str, Any]:
     if isinstance(exc, BaseException):
         msg_attr = getattr(exc, "message", None)
-        message = msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        message = (
+            msg_attr if isinstance(msg_attr, str) and msg_attr else str(exc) or "Error"
+        )
         code_attr = getattr(exc, "code", None)
         if isinstance(code_attr, int):
             effective_status = code_attr
@@ -914,6 +981,7 @@ def _error_payload(
     if debug:
         try:
             import traceback
+
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
         except Exception:
             pass
@@ -984,7 +1052,11 @@ async def call_async(
         try:
             call_repo.push_event(event_str, input)
         except Exception as push_exc:
-            debug_print("[api]", "[events]", f"Failed to persist event '{event_str}': {push_exc}")
+            debug_print(
+                "[api]",
+                "[events]",
+                f"Failed to persist event '{event_str}': {push_exc}",
+            )
         if event_str.strip().lower() == "error_test":
             return _error_payload_event(
                 event=event_str,
@@ -1033,7 +1105,9 @@ async def call_async(
 
     cfg_type = str(getattr(cfg, "type", "") or "").lower()
     if cfg_type == "project":
-        agent_probe = resolve_agent(project=getattr(cfg, "project", None), agent=None, prompt=None, target=None)
+        agent_probe = resolve_agent(
+            project=getattr(cfg, "project", None), agent=None, prompt=None, target=None
+        )
         if not isinstance(agent_probe, dict) or not agent_probe.get("ok"):
             if isinstance(agent_probe, dict):
                 if session_id and "session_id" not in agent_probe:
@@ -1056,14 +1130,18 @@ async def call_async(
     except Exception:
         cfg_payload = getattr(cfg, "__dict__", {})
     try:
-        debug_print("[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2))
+        debug_print(
+            "[api]", "[CFG]", json.dumps(cfg_payload, ensure_ascii=False, indent=2)
+        )
     except Exception:
         debug_print("[api]", "[CFG]", str(cfg_payload))
 
     # Initialize bot: if a project is provided, pass it; otherwise allow app layer
     # to prefer CALL_TELEGRAM_TOKEN or TELEGRAM_TOKEN per its own logic.
     try:
-        await app_call.init_bot(project_name=(project if (project or "").strip() else None))
+        await app_call.init_bot(
+            project_name=(project if (project or "").strip() else None)
+        )
     except Exception as _e:
         # If bot init fails, continue; downstream may still function without telegram
         pass
@@ -1103,7 +1181,11 @@ async def call_async(
     else:
         if (chat_id is not None) or (thread_id is not None):
             sel_chat = chat_id if chat_id is not None else app_call.TELEGRAM_CHAT_ID
-            sel_thread = thread_id if thread_id is not None else (app_call.TELEGRAM_THREAD_ID or None)
+            sel_thread = (
+                thread_id
+                if thread_id is not None
+                else (app_call.TELEGRAM_THREAD_ID or None)
+            )
         else:
             sel_chat, sel_thread = None, None
 
@@ -1140,11 +1222,15 @@ async def call_async(
                     dump_fp = open(dump_file_path, "a", encoding="utf-8", buffering=1)
                 except Exception:
                     dump_fp = None
-            dump_task = asyncio.create_task(_dump_tasks_periodically(dump_period_s, dump_fp))
+            dump_task = asyncio.create_task(
+                _dump_tasks_periodically(dump_period_s, dump_fp)
+            )
 
         try:
             # Use the app layer context manager to build and run the agent once with a ready config.
-            async with app_call.build_and_run_agent(cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")) as (agent_obj, _cfg, _session):
+            async with app_call.build_and_run_agent(
+                cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")
+            ) as (agent_obj, _cfg, _session):
                 final_output = getattr(_cfg, "_last_final_output", None)
                 try:
                     actual_sid = getattr(_session, "id", None)
@@ -1157,7 +1243,9 @@ async def call_async(
             err_code = "PIPELINE_ERROR"
             details = None
             if (
-                ("Tracing client error" in msg) or ("request_forbidden" in msg) or ("unsupported_country_region_territory" in msg)
+                ("Tracing client error" in msg)
+                or ("request_forbidden" in msg)
+                or ("unsupported_country_region_territory" in msg)
             ):
                 status = 403
                 err_code = "REQUEST_FORBIDDEN"
@@ -1180,7 +1268,18 @@ async def call_async(
                     details=details,
                     session_id=(session_id or None),
                 )
-            return _error_payload(agent=(cfg.id or ""), input=(input or ""), exc=e, status=status, echo=echo, debug=debug, code=err_code, project=cfg.project, details=details, session_id=(session_id or None))
+            return _error_payload(
+                agent=(cfg.id or ""),
+                input=(input or ""),
+                exc=e,
+                status=status,
+                echo=echo,
+                debug=debug,
+                code=err_code,
+                project=cfg.project,
+                details=details,
+                session_id=(session_id or None),
+            )
     finally:
         if dump_task is not None:
             try:
@@ -1196,11 +1295,17 @@ async def call_async(
 
     # If the pipeline returned a plain-text error (e.g., "Error: ...\n\nTraceback ..."),
     # convert it to a structured error envelope to avoid printing stack traces to users.
-    if isinstance(final_output, str) and final_output.strip().lower().startswith("error:"):
+    if isinstance(final_output, str) and final_output.strip().lower().startswith(
+        "error:"
+    ):
         msg = final_output.strip()
         # Derive a concise description (first line without "Error: ")
         first_line = msg.splitlines()[0]
-        desc = first_line[len("Error:"):].strip() if first_line.lower().startswith("error:") else first_line
+        desc = (
+            first_line[len("Error:") :].strip()
+            if first_line.lower().startswith("error:")
+            else first_line
+        )
         status = 502
         err_code = "PIPELINE_ERROR"
         if "connection error" in msg.lower():
@@ -1223,11 +1328,13 @@ async def call_async(
     try:
         if isinstance(session_id, str) and session_id.strip():
             session_id_out = session_id
-        elif 'actual_sid' in locals() and actual_sid:
+        elif "actual_sid" in locals() and actual_sid:
             session_id_out = actual_sid
         elif selected_chat_id is not None:
             session_id_out = (
-                f"{selected_chat_id}:{selected_thread_id}" if (selected_thread_id is not None) else f"{selected_chat_id}"
+                f"{selected_chat_id}:{selected_thread_id}"
+                if (selected_thread_id is not None)
+                else f"{selected_chat_id}"
             )
     except Exception:
         session_id_out = None
@@ -1280,7 +1387,17 @@ def call(
             )
         )
     except Exception as e:
-        return _error_payload(agent or "", input or "", e, status=500, echo=echo, debug=debug, code="INTERNAL_ERROR", project=project, session_id=(session_id or None))
+        return _error_payload(
+            agent or "",
+            input or "",
+            e,
+            status=500,
+            echo=echo,
+            debug=debug,
+            code="INTERNAL_ERROR",
+            project=project,
+            session_id=(session_id or None),
+        )
 
 
 # Projects/agents listing — monkeypatch-friendly wrappers for tests
@@ -1290,6 +1407,7 @@ def load_projects_index() -> List[str]:
     """Wrapper delegating to discovery.load_projects_index(); exposed for test monkeypatching."""
     try:
         from call.lib import discovery as _disc
+
         return _disc.load_projects_index()
     except Exception:
         return []
@@ -1300,6 +1418,7 @@ def scan_project_agents(project_dir: str) -> List[Dict[str, Any]]:
     try:
         from pathlib import Path as _Path
         from call.lib import discovery as _disc
+
         p = _Path(project_dir)
         if not p.exists():
             try:
@@ -1312,14 +1431,23 @@ def scan_project_agents(project_dir: str) -> List[Dict[str, Any]]:
         return []
 
 
-def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, Any]]:
+def list(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    prompt: Optional[str] = None,
+    state: Optional[str] = None,
+    target: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Return hierarchical structure from the repo DB.
 
     Delegates to call.lib.repo.list(), which applies wildcard filters and returns:
       [ { name: <project>, agents: [ { name, aliases, prompts, path, ... } ] } ]
     """
     try:
-        return call_repo.list(project=project, agent=agent, prompt=prompt, state=state, target=target)
+        return call_repo.list(
+            project=project, agent=agent, prompt=prompt, state=state, target=target
+        )
     except Exception:
         return []
 
@@ -1348,7 +1476,13 @@ def models() -> List[Dict[str, Any]]:
     return items
 
 
-def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, target: Optional[str] = None) -> Dict[str, Any]:
+def resolve_agent(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    prompt: Optional[str] = None,
+    target: Optional[str] = None,
+) -> Dict[str, Any]:
     """Resolve a single agent strictly via repo DB queries.
 
     Rules:
@@ -1364,9 +1498,26 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             rows = call_repo.find_agents(project=(project or None), agent=agent)
             if rows:
                 if len(rows) > 1:
-                    return _error_payload(agent=agent, input="", exc="Multiple agents matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=rows[:20])
+                    return _error_payload(
+                        agent=agent,
+                        input="",
+                        exc="Multiple agents matched your criteria",
+                        status=400,
+                        code="TOO_MANY_ROWS",
+                        project=project,
+                        options=rows[:20],
+                    )
                 r = rows[0]
-                return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+                return {
+                    "ok": True,
+                    "resolved": {
+                        "project": r.get("project"),
+                        "name": r.get("agent"),
+                        "path": r.get("path"),
+                        "aliases": [],
+                        "prompts": [],
+                    },
+                }
             if not (isinstance(prompt, str) and prompt.strip()):
                 return _error_payload(
                     agent=agent,
@@ -1380,15 +1531,26 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
 
         # 2) Resolve by prompt
         if isinstance(prompt, str) and prompt.strip():
-            recs = call_repo.list_prompts(project=(project or None), agent=(agent or None), prompt=prompt)
+            recs = call_repo.list_prompts(
+                project=(project or None), agent=(agent or None), prompt=prompt
+            )
             if not recs:
                 alt_recs: list[dict] = []
                 try:
-                    alt_recs = call_repo.list_prompts(project=None, agent=None, prompt=prompt)
+                    alt_recs = call_repo.list_prompts(
+                        project=None, agent=None, prompt=prompt
+                    )
                 except Exception:
                     alt_recs = []
                 if alt_recs:
-                    valid_alt = [r for r in alt_recs if (str(r.get("project") or "").strip() and str(r.get("agent") or "").strip())]
+                    valid_alt = [
+                        r
+                        for r in alt_recs
+                        if (
+                            str(r.get("project") or "").strip()
+                            and str(r.get("agent") or "").strip()
+                        )
+                    ]
                     if not valid_alt:
                         return _error_payload(
                             agent=(agent or ""),
@@ -1441,7 +1603,15 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
                     resolved_stub["prompts"] = [prompt.strip()]
                 return {"ok": True, "resolved": resolved_stub}
             if len(recs) > 1:
-                return _error_payload(agent=(agent or ""), input="", exc="Multiple prompts matched your criteria", status=400, code="TOO_MANY_ROWS", project=project, options=recs[:20])
+                return _error_payload(
+                    agent=(agent or ""),
+                    input="",
+                    exc="Multiple prompts matched your criteria",
+                    status=400,
+                    code="TOO_MANY_ROWS",
+                    project=project,
+                    options=recs[:20],
+                )
             pr = recs[0]
             pj = pr.get("project") or project
             ag = pr.get("agent") or agent
@@ -1458,18 +1628,40 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
                     options=(arows or []),
                 )
             ar = arows[0]
-            return {"ok": True, "resolved": {"project": ar.get("project"), "name": ar.get("agent"), "path": ar.get("path"), "aliases": [], "prompts": []}}
+            return {
+                "ok": True,
+                "resolved": {
+                    "project": ar.get("project"),
+                    "name": ar.get("agent"),
+                    "path": ar.get("path"),
+                    "aliases": [],
+                    "prompts": [],
+                },
+            }
 
         # 3) Only project provided -> ambiguous
         if isinstance(project, str) and project.strip():
             opts = call_repo.find_agents(project=project, agent=None)
             if len(opts) == 1:
                 r = opts[0]
-                return {"ok": True, "resolved": {"project": r.get("project"), "name": r.get("agent"), "path": r.get("path"), "aliases": [], "prompts": []}}
+                return {
+                    "ok": True,
+                    "resolved": {
+                        "project": r.get("project"),
+                        "name": r.get("agent"),
+                        "path": r.get("path"),
+                        "aliases": [],
+                        "prompts": [],
+                    },
+                }
             return _error_payload(
                 agent=(agent or ""),
                 input="",
-                exc=("No agent found matching criteria" if not opts else "Multiple agents matched your criteria"),
+                exc=(
+                    "No agent found matching criteria"
+                    if not opts
+                    else "Multiple agents matched your criteria"
+                ),
                 status=(404 if not opts else 400),
                 code=("NO_DATA_FOUND" if not opts else "TOO_MANY_ROWS"),
                 project=project,
@@ -1487,10 +1679,19 @@ def resolve_agent(*, project: Optional[str] = None, agent: Optional[str] = None,
             options=[],
         )
     except Exception as e:
-        return _error_payload(agent=(agent or ""), input="", exc=e, status=500, code="INTERNAL_ERROR", project=project)
+        return _error_payload(
+            agent=(agent or ""),
+            input="",
+            exc=e,
+            status=500,
+            code="INTERNAL_ERROR",
+            project=project,
+        )
 
 
-async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]) -> Dict[str, Any]:
+async def clear_session(
+    name: Optional[str], *, chat_id: Optional[int], thread_id: Optional[int]
+) -> Dict[str, Any]:
     """Clear conversation session(s) for this chat/thread from SQLite.
 
     Rules (agentless ids only):
@@ -1514,9 +1715,13 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
         cur = conn.cursor()
 
         # Detect existing tables once
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
+        )
         has_messages = bool(cur.fetchone())
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+        )
         has_sessions = bool(cur.fetchone())
 
         # Single candidate: new format only
@@ -1526,11 +1731,15 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
             cur.execute("SELECT id FROM sessions WHERE id = ?", (candidate,))
             sids += [row[0] for row in cur.fetchall()]
         if has_messages:
-            cur.execute("SELECT DISTINCT session_id FROM messages WHERE session_id = ?", (candidate,))
+            cur.execute(
+                "SELECT DISTINCT session_id FROM messages WHERE session_id = ?",
+                (candidate,),
+            )
             sids += [row[0] for row in cur.fetchall()]
 
         if not sids:
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             return {"ok": True, "cleared": []}
 
         # Deduplicate and delete
@@ -1559,7 +1768,9 @@ async def clear_session(name: Optional[str], *, chat_id: Optional[int], thread_i
     return {"ok": True, "cleared": cleared}
 
 
-def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, object], Optional[Dict[str, object]]]:
+def api_interpret_exec_payload(
+    payload: Dict[str, object],
+) -> Tuple[Dict[str, object], Optional[Dict[str, object]]]:
     """Validate and normalize a single exec payload into kwargs for call().
 
     Rules:
@@ -1571,8 +1782,9 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
     try:
         try:
             debug_print(
-                "[api]", "interpret_exec_payload:|-\n" + 
-                json.dumps(payload, ensure_ascii=False, indent=2),
+                "[api]",
+                "interpret_exec_payload:|-\n"
+                + json.dumps(payload, ensure_ascii=False, indent=2),
             )
         except Exception:
             pass
@@ -1582,7 +1794,11 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
         f_prompt = payload.get("prompt")
         f_target = payload.get("target")
         f_event = payload.get("event")
-        fields = [f for f in [f_project, f_agent, f_prompt, f_target] if (str(f or "").strip())]
+        fields = [
+            f
+            for f in [f_project, f_agent, f_prompt, f_target]
+            if (str(f or "").strip())
+        ]
         event_present = f_event is not None and str(f_event).strip() != ""
         if not event_present and len(fields) != 1:
             return {}, {
@@ -1641,4 +1857,3 @@ def api_interpret_exec_payload(payload: Dict[str, object]) -> Tuple[Dict[str, ob
             "description": str(e),
             "code": "BAD_REQUEST",
         }
-

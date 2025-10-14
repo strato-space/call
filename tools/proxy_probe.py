@@ -1,6 +1,7 @@
 # proxy_env_test.py
 import httpx
 
+
 def test_httpx_env():
     print("[info] httpx will honor HTTP(S)_PROXY/ALL_PROXY from environment")
     with httpx.Client(timeout=15.0) as client:
@@ -13,6 +14,7 @@ def test_httpx_env():
         print("status:", r.status_code)
         print("headers:", dict(r.headers))
         print("body:", r.text[:400])
+
 
 if __name__ == "__main__":
     test_httpx_env()

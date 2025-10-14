@@ -3,6 +3,7 @@ Pytest configuration for running tests inside the `call/` folder.
 Ensures repository root is importable as a package root so `import call.*` works,
 and loads call/.env for integration tests which rely on TELEGRAM_* variables.
 """
+
 from __future__ import annotations
 
 import os

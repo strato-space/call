@@ -30,9 +30,7 @@ REPLACEMENT = "<!-- METADATA:START -->"
 SKIP_DIRS = {".git", ".venv", "node_modules", ".pytest_cache", ".benchmarks"}
 
 # File extensions that are likely text for prompts; adjust as needed
-TEXT_EXTS = {
-    ".md", ".markdown", ".mdx", ".txt", ".yaml", ".yml", ".json", ".toml"
-}
+TEXT_EXTS = {".md", ".markdown", ".mdx", ".txt", ".yaml", ".yml", ".json", ".toml"}
 
 
 def iter_files(root: Path) -> Iterable[Path]:
@@ -69,7 +67,9 @@ def process_file(path: Path) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fix stray '>' after METADATA start tag across files.")
+    parser = argparse.ArgumentParser(
+        description="Fix stray '>' after METADATA start tag across files."
+    )
     parser.add_argument(
         "target_dir",
         nargs="?",

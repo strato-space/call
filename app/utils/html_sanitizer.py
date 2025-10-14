@@ -14,8 +14,21 @@ __all__ = [
 # Telegram Bot API — allowed HTML subset for parse_mode=HTML
 # https://core.telegram.org/bots/api#html-style
 ALLOWED_TELEGRAM_TAGS = {
-    "a", "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-    "code", "pre", "blockquote", "tg-spoiler", "tg-emoji"
+    "a",
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "ins",
+    "s",
+    "strike",
+    "del",
+    "code",
+    "pre",
+    "blockquote",
+    "tg-spoiler",
+    "tg-emoji",
 }
 
 
@@ -30,7 +43,10 @@ def clean_html_for_telegraph(html_content: str) -> str:
     # Some inputs may arrive HTML-escaped (e.g., '&lt;h3&gt;'). Unescape once.
     try:
         import html as _py_html
-        if isinstance(html_content, str) and ("&lt;" in html_content or "&gt;" in html_content):
+
+        if isinstance(html_content, str) and (
+            "&lt;" in html_content or "&gt;" in html_content
+        ):
             html_content = _py_html.unescape(html_content)
     except Exception:
         pass
@@ -58,13 +74,29 @@ def clean_html_for_telegraph(html_content: str) -> str:
         br1.insert_after(br2)
 
     # 4) Unwrap tags we explicitly don't want to keep as elements
-    for t in list(soup.find_all(["small", "div", "span", "section", "article", "header", "footer", "nav"])):
+    for t in list(
+        soup.find_all(
+            ["small", "div", "span", "section", "article", "header", "footer", "nav"]
+        )
+    ):
         t.unwrap()
 
     # 5) Whitelist allowed tags; unwrap everything else while preserving text
     allowed_tags = {
-        "p", "a", "em", "strong", "ul", "ol", "li",
-        "br", "img", "figure", "figcaption", "pre", "code", "blockquote"
+        "p",
+        "a",
+        "em",
+        "strong",
+        "ul",
+        "ol",
+        "li",
+        "br",
+        "img",
+        "figure",
+        "figcaption",
+        "pre",
+        "code",
+        "blockquote",
     }
     for tag in list(soup.find_all(True)):
         if tag.name not in allowed_tags:
@@ -84,7 +116,7 @@ def clean_html_for_telegraph(html_content: str) -> str:
         tag.attrs = allowed_attrs
 
     # 7) Final string without newlines; ensure non-empty content
-    cleaned = str(soup).replace('\n', '')
+    cleaned = str(soup).replace("\n", "")
     if not soup.get_text(strip=True):
         raise ValueError("Cleaned HTML has no text content!")
     return cleaned.strip()
@@ -102,6 +134,7 @@ def sanitize_telegram_html(html_content: str) -> str:
     # Some inputs may arrive HTML-escaped (e.g., '&lt;h3&gt;'). Unescape once so headers/lists can be normalized.
     try:
         import html as _py_html
+
         if "&lt;" in html_content or "&gt;" in html_content:
             html_content = _py_html.unescape(html_content)
     except Exception:
@@ -182,7 +215,9 @@ def sanitize_telegram_html(html_content: str) -> str:
             # Keep 'class' tokens that start with 'language-'
             cls = tag.get("class")
             if isinstance(cls, list):
-                keep = [c for c in cls if isinstance(c, str) and c.startswith("language-")]
+                keep = [
+                    c for c in cls if isinstance(c, str) and c.startswith("language-")
+                ]
                 if keep:
                     allowed_attrs["class"] = keep
         tag.attrs = allowed_attrs
@@ -190,10 +225,12 @@ def sanitize_telegram_html(html_content: str) -> str:
     cleaned = str(soup)
 
     # Fix self-closing tags that Telegram doesn't like
-    cleaned = re.sub(r'<(\w+)/>', r'<\1>', cleaned)
-    cleaned = re.sub(r'<(\w+)\s+/>', r'<\1>', cleaned)
+    cleaned = re.sub(r"<(\w+)/>", r"<\1>", cleaned)
+    cleaned = re.sub(r"<(\w+)\s+/>", r"<\1>", cleaned)
 
     return cleaned.strip()
+
+
 def truncate_telegram_html_safe(html: str, max_len: int) -> str:
     """Truncate a sanitized Telegram HTML string to <= max_len while preserving validity.
 
@@ -265,7 +302,7 @@ def truncate_telegram_html_safe(html: str, max_len: int) -> str:
 
         return (s[:max_len]).rstrip()
     except Exception:
-        return (str(html)[: max_len]).rstrip()
+        return (str(html)[:max_len]).rstrip()
 
 
 def prepare_telegram_html(html: str, max_len: int = 4000) -> tuple[str, str]:
@@ -278,7 +315,7 @@ def prepare_telegram_html(html: str, max_len: int = 4000) -> tuple[str, str]:
         safe = truncate_telegram_html_safe(sanitized, max_len)
         return safe, "HTML"
     except Exception:
-        s = (str(html) or "")
+        s = str(html) or ""
         if len(s) > max_len:
             s = s[: max_len - 1] + "…"
         return s, None

@@ -80,9 +80,18 @@ def process_file(path: Path, dry_run: bool = False) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Trim trailing blank lines at EOF for Markdown and YAML files.")
-    parser.add_argument("targets", nargs="*", default=["agent", "prompt"], help="Target directories to scan")
-    parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying files")
+    parser = argparse.ArgumentParser(
+        description="Trim trailing blank lines at EOF for Markdown and YAML files."
+    )
+    parser.add_argument(
+        "targets",
+        nargs="*",
+        default=["agent", "prompt"],
+        help="Target directories to scan",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without modifying files"
+    )
     args = parser.parse_args()
 
     # Resolve and validate targets
