@@ -2067,9 +2067,10 @@ class MCPServerStdioHook(MCPServerStdio):
         text = text.replace("\r\n", "\n").replace("\\n", "\n")
         try:
             import re as _re_collapse
-
-            text = _re_collapse.sub(r"\n{2}", r"\n\n", text)
-            text = _re_collapse.sub(r"\n{3,}", r"\n\n", text)
+            # Remove leading whitespace from each line
+            text = "\n".join(line.lstrip() for line in text.split("\n"))
+            # Collapse multiple consecutive newlines to exactly 2
+            text = _re_collapse.sub(r"\n{2,}", r"\n\n", text)
         except Exception:
             pass
         
