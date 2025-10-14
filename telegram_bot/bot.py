@@ -218,6 +218,7 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     debug_print("[bot]", "[UPDATE]", summary)
     try:
         from call.lib.logging import _env_true
+
         if _env_true("CALL_DEBUG"):
             raw_json = json.dumps(update.to_dict(), ensure_ascii=False)
             log.info("Update raw: %s", raw_json)

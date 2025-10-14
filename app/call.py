@@ -548,12 +548,12 @@ async def _git_pull_prompt_repo() -> None:
 
         git_env: dict[str, str] | None = None
         token = os.environ.get("GITHUB_TOKEN_PROMPT", "").strip()
-        
+
         try:
             debug_print("[git]", f"Token available: {bool(token)}")
         except Exception:
             pass
-        
+
         # Always set git_env to disable interactive prompts and bypass proxy for GitHub
         git_env = os.environ.copy()
         git_env["GIT_TERMINAL_PROMPT"] = "0"
@@ -562,20 +562,26 @@ async def _git_pull_prompt_repo() -> None:
         # Ensure GitHub is not proxied
         no_proxy = git_env.get("NO_PROXY", "")
         if "github.com" not in no_proxy:
-            git_env["NO_PROXY"] = f"{no_proxy},github.com,*.github.com" if no_proxy else "github.com,*.github.com"
+            git_env["NO_PROXY"] = (
+                f"{no_proxy},github.com,*.github.com"
+                if no_proxy
+                else "github.com,*.github.com"
+            )
         git_env["no_proxy"] = git_env["NO_PROXY"]
-        
+
         try:
             debug_print("[git]", f"NO_PROXY set to: {git_env['NO_PROXY']}")
         except Exception:
             pass
-        
+
         if token:
             git_env["GITHUB_TOKEN_PROMPT"] = token
             try:
                 rc_url, out_url, _ = await asyncio.wait_for(
-                    _run_git(["git", "config", "--get", "remote.origin.url"], env=git_env),
-                    timeout=5.0
+                    _run_git(
+                        ["git", "config", "--get", "remote.origin.url"], env=git_env
+                    ),
+                    timeout=5.0,
                 )
             except asyncio.TimeoutError:
                 debug_print("[git]", "git config timed out, skipping token setup")
@@ -583,15 +589,18 @@ async def _git_pull_prompt_repo() -> None:
             except Exception as e:
                 debug_print("[git]", f"git config failed: {type(e).__name__}: {e}")
                 return
-                
+
             if rc_url == 0:
                 remote_url = out_url.decode(errors="ignore").strip()
                 token_url = _remote_url_with_token(remote_url, token)
                 if token_url:
                     try:
                         await asyncio.wait_for(
-                            _run_git(["git", "remote", "set-url", "origin", token_url], env=git_env),
-                            timeout=5.0
+                            _run_git(
+                                ["git", "remote", "set-url", "origin", token_url],
+                                env=git_env,
+                            ),
+                            timeout=5.0,
                         )
                         try:
                             debug_print(
@@ -603,13 +612,15 @@ async def _git_pull_prompt_repo() -> None:
                     except asyncio.TimeoutError:
                         debug_print("[git]", "git remote set-url timed out")
                     except Exception as e:
-                        debug_print("[git]", f"git remote set-url failed: {type(e).__name__}: {e}")
+                        debug_print(
+                            "[git]",
+                            f"git remote set-url failed: {type(e).__name__}: {e}",
+                        )
 
         debug_print("[git]", f"Pulling prompt repo at {prompt_repo} with --rebase")
         try:
             rc, out_rebase, err_rebase = await asyncio.wait_for(
-                _run_git(["git", "pull", "--rebase"], env=git_env),
-                timeout=10.0
+                _run_git(["git", "pull", "--rebase"], env=git_env), timeout=10.0
             )
         except asyncio.TimeoutError:
             debug_print("[git]", "git pull --rebase timed out after 10s, skipping")
@@ -621,8 +632,7 @@ async def _git_pull_prompt_repo() -> None:
             debug_print("[git]", "--rebase failed; retrying plain pull")
             try:
                 rc_plain, out_plain, err_plain = await asyncio.wait_for(
-                    _run_git(["git", "pull"], env=git_env),
-                    timeout=10.0
+                    _run_git(["git", "pull"], env=git_env), timeout=10.0
                 )
             except asyncio.TimeoutError:
                 debug_print("[git]", "git pull timed out after 10s, skipping")
