@@ -30,13 +30,18 @@ def test_cli_call_parse_input_uses_shared_payload_builder(monkeypatch, capsys):
     from call.lib import api as call_api
 
     # Arrange: stub builder and call()
-    built_json = json.dumps({
-        "target": "AgentFab",
-        "input": "@3-OnlineChunkSummarization",
-        "context": [],
-    }, ensure_ascii=False)
+    built_json = json.dumps(
+        {
+            "target": "AgentFab",
+            "input": "@3-OnlineChunkSummarization",
+            "context": [],
+        },
+        ensure_ascii=False,
+    )
 
-    def fake_build_input_payload(*, target, main_text, extra_context=None, reply_text=None):
+    def fake_build_input_payload(
+        *, target, main_text, extra_context=None, reply_text=None
+    ):
         assert target == "AgentFab"
         assert main_text == "@3-OnlineChunkSummarization"
         return built_json, {"target": target, "input": main_text, "context": []}
@@ -47,7 +52,9 @@ def test_cli_call_parse_input_uses_shared_payload_builder(monkeypatch, capsys):
         captured.update(kwargs)
         return {"ok": True, "echo": {"used_cli": True}}
 
-    monkeypatch.setattr(call_api, "build_input_payload", fake_build_input_payload, raising=True)
+    monkeypatch.setattr(
+        call_api, "build_input_payload", fake_build_input_payload, raising=True
+    )
     monkeypatch.setattr(call_api, "call", fake_call, raising=True)
 
     # Act
@@ -77,7 +84,9 @@ def test_cli_call_raw_input_is_passed_as_is(monkeypatch, capsys):
         captured.update(kwargs)
         return {"ok": True}
 
-    monkeypatch.setattr(call_api, "build_input_payload", fake_build_input_payload, raising=True)
+    monkeypatch.setattr(
+        call_api, "build_input_payload", fake_build_input_payload, raising=True
+    )
     monkeypatch.setattr(call_api, "call", fake_call, raising=True)
 
     # Act

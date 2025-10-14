@@ -8,6 +8,7 @@ Functions:
 - find_agents(project?, agent?, target?) -> list[dict]
 - find_prompts(project?, agent?, prompt?, state?, target?) -> list[dict]
 """
+
 from __future__ import annotations
 
 import json
@@ -86,7 +87,9 @@ def _ensure_db() -> sqlite3.Connection:
 def _rx(pattern: Optional[str]):
     if not pattern:
         return None
-    return re.compile("^" + re.escape(pattern).replace("\\*", ".*") + "$", re.IGNORECASE)
+    return re.compile(
+        "^" + re.escape(pattern).replace("\\*", ".*") + "$", re.IGNORECASE
+    )
 
 
 def _like_pattern(pat: Optional[str]) -> Optional[str]:
@@ -96,8 +99,8 @@ def _like_pattern(pat: Optional[str]) -> Optional[str]:
     if not pat:
         return None
     s = str(pat)
-    s = s.replace('%', r'\%').replace('_', r'\_')
-    s = s.replace('*', '%')
+    s = s.replace("%", r"\%").replace("_", r"\_")
+    s = s.replace("*", "%")
     return s
 
 
@@ -153,7 +156,9 @@ def push_event(event: str, payload: Any = None) -> int:
     return int(row_id)
 
 
-def iter_events(*, after_id: Optional[int] = None, limit: Optional[int] = None) -> List[EventRow]:
+def iter_events(
+    *, after_id: Optional[int] = None, limit: Optional[int] = None
+) -> List[EventRow]:
     """Read a batch of events in ascending order.
 
     This helper mirrors a polling consumer API to ease migration to MQ backends.
@@ -182,11 +187,20 @@ def iter_events(*, after_id: Optional[int] = None, limit: Optional[int] = None) 
                 parsed_payload = json.loads(payload_text)
             except Exception:
                 parsed_payload = payload_text
-        event_rows.append(EventRow(id=int(row_id), event=str(event_name or ""), payload=parsed_payload))
+        event_rows.append(
+            EventRow(
+                id=int(row_id), event=str(event_name or ""), payload=parsed_payload
+            )
+        )
     return event_rows
 
 
-def _build_where_and_params(project: Optional[str], agent: Optional[str], prompt: Optional[str], state: Optional[str]) -> tuple[list[str], list[str]]:
+def _build_where_and_params(
+    project: Optional[str],
+    agent: Optional[str],
+    prompt: Optional[str],
+    state: Optional[str],
+) -> tuple[list[str], list[str]]:
     where: list[str] = ["1=1"]
     params: list[str] = []
     lp = _like_pattern(project)
@@ -194,38 +208,62 @@ def _build_where_and_params(project: Optional[str], agent: Optional[str], prompt
     lr = _like_pattern(prompt)
     ls = _like_pattern(state)
     if lp:
-        where.append(("project LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (project or '')) else ("project = ? COLLATE NOCASE"))
+        where.append(
+            ("project LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            if ("*" in (project or ""))
+            else ("project = ? COLLATE NOCASE")
+        )
         params.append(lp)
     if la:
-        where.append(("agent LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (agent or '')) else ("agent = ? COLLATE NOCASE"))
+        where.append(
+            ("agent LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            if ("*" in (agent or ""))
+            else ("agent = ? COLLATE NOCASE")
+        )
         params.append(la)
     if lr:
-        where.append(("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (prompt or '')) else ("prompt = ? COLLATE NOCASE"))
+        where.append(
+            ("prompt LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            if ("*" in (prompt or ""))
+            else ("prompt = ? COLLATE NOCASE")
+        )
         params.append(lr)
     if ls:
-        where.append(("state LIKE ? ESCAPE '\\' COLLATE NOCASE") if ('*' in (state or '')) else ("state = ? COLLATE NOCASE"))
+        where.append(
+            ("state LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            if ("*" in (state or ""))
+            else ("state = ? COLLATE NOCASE")
+        )
         params.append(ls)
     return where, params
 
 
-def list(*, project: Optional[str] = None, agent: Optional[str] = None, prompt: Optional[str] = None, state: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, object]]:
+def list(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    prompt: Optional[str] = None,
+    state: Optional[str] = None,
+    target: Optional[str] = None,
+) -> List[Dict[str, object]]:
     """Query the repo.db index and return a hierarchical structure (projects -> agents -> prompts).
 
     Wildcards: '*' supported in filters (case-insensitive, full-token match).
     """
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     rx_t = _rx(target)
     rx_p = _rx(prompt)
     # IMPORTANT: do NOT filter by prompt in SQL — we need agent-level rows (prompt="")
     where, params = _build_where_and_params(project, agent, None, state)
     sql = (
         "SELECT target as id, project, agent, prompt, path, state, target, type, rel_path, url, goal, card "
-        "FROM repo WHERE "
-        + " AND ".join(where)
+        "FROM repo WHERE " + " AND ".join(where)
     )
     cur.execute(sql, tuple(params))
     rows = cur.fetchall()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
     # Filter in Python for simplicity
     items: List[Tuple[str, str, str, str, str, str, str, str, str, str, str, str]] = []
@@ -316,11 +354,14 @@ def find_prompts(
       - Project-scoped queries also surface prompts whose project column is blank so that
         global prompts remain discoverable across projects.
     """
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     try:
         rx_t = _rx(target)
 
-        def _add_filter(column: str, value: Optional[str], *, allow_global: bool = False) -> tuple[Optional[str], Optional[str]]:
+        def _add_filter(
+            column: str, value: Optional[str], *, allow_global: bool = False
+        ) -> tuple[Optional[str], Optional[str]]:
             if value is None:
                 return None, None
             raw_value = str(value)
@@ -339,7 +380,9 @@ def find_prompts(
         filters: list[str] = ["prompt != ''"]
         params: list[str] = []
 
-        project_clause, project_param = _add_filter("project", project, allow_global=True)
+        project_clause, project_param = _add_filter(
+            "project", project, allow_global=True
+        )
         if project_clause:
             filters.append(project_clause)
         if project_param:
@@ -365,8 +408,7 @@ def find_prompts(
 
         sql = (
             "SELECT target as id, project, agent, prompt, path, state, target, engine, orchestration, type, rel_path, url, goal "
-            "FROM repo WHERE "
-            + " AND ".join(filters)
+            "FROM repo WHERE " + " AND ".join(filters)
         )
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
@@ -379,42 +421,52 @@ def find_prompts(
                 continue
             if not rel_path:
                 continue
-            out.append({
-                "id": row_id or tgt or pr or "",
-                "project": prj or "",
-                "agent": ag or "",
-                "prompt": pr or "",
-                "path": path or "",
-                "rel_path": rel or "",
-                "state": st or "",
-                "target": tgt or row_id or pr or "",
-                "engine": eng or "",
-                "orchestration": orch or "",
-                "type": (typ or "prompt"),
-                "url": url or "",
-                "goal": goal or "",
-            })
+            out.append(
+                {
+                    "id": row_id or tgt or pr or "",
+                    "project": prj or "",
+                    "agent": ag or "",
+                    "prompt": pr or "",
+                    "path": path or "",
+                    "rel_path": rel or "",
+                    "state": st or "",
+                    "target": tgt or row_id or pr or "",
+                    "engine": eng or "",
+                    "orchestration": orch or "",
+                    "type": (typ or "prompt"),
+                    "url": url or "",
+                    "goal": goal or "",
+                }
+            )
         return out
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
 
 # Backwards-compat alias
 list_prompts = find_prompts
 
 
-def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
+def find_agents(
+    *,
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
+    target: Optional[str] = None,
+) -> List[Dict[str, str]]:
     """Find agent rows (prompt-empty) with wildcard filters. Returns an array of rows."""
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     try:
         rx_t = _rx(target)
         where, params = _build_where_and_params(project, agent, None, None)
         # Only non-prompt agent rows
-        where = ["(prompt IS NULL OR prompt = '')", "agent != ''"] + [w for w in where if w != "1=1"]
+        where = ["(prompt IS NULL OR prompt = '')", "agent != ''"] + [
+            w for w in where if w != "1=1"
+        ]
         sql = (
             "SELECT target as id, project, agent, path, target, type, rel_path, url, goal "
-            "FROM repo WHERE "
-            + " AND ".join(where)
+            "FROM repo WHERE " + " AND ".join(where)
         )
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
@@ -427,34 +479,41 @@ def find_agents(*, project: Optional[str] = None, agent: Optional[str] = None, t
                 continue
             if not rel_path:
                 continue
-            out.append({
-                "id": row_id or tgt or ag or "",
-                "project": prj or "",
-                "agent": ag or "",
-                "path": path or "",
-                "rel_path": rel or "",
-                "target": tgt or row_id or ag or "",
-                "type": (typ or "agent"),
-                "url": url or "",
-                "goal": goal or "",
-            })
+            out.append(
+                {
+                    "id": row_id or tgt or ag or "",
+                    "project": prj or "",
+                    "agent": ag or "",
+                    "path": path or "",
+                    "rel_path": rel or "",
+                    "target": tgt or row_id or ag or "",
+                    "type": (typ or "agent"),
+                    "url": url or "",
+                    "goal": goal or "",
+                }
+            )
         return out
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
 
-def find_projects(*, project: Optional[str] = None, target: Optional[str] = None) -> List[Dict[str, str]]:
+def find_projects(
+    *, project: Optional[str] = None, target: Optional[str] = None
+) -> List[Dict[str, str]]:
     """Find project rows with wildcard filters. Returns an array of rows."""
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     try:
         rx_t = _rx(target)
         where, params = _build_where_and_params(project, None, None, None)
         # Only project-level rows
-        where = ["prompt = ''", "agent = ''", "project != ''"] + [w for w in where if w != "1=1"]
+        where = ["prompt = ''", "agent = ''", "project != ''"] + [
+            w for w in where if w != "1=1"
+        ]
         sql = (
             "SELECT target as id, project, path, target, type, rel_path, url, goal "
-            "FROM repo WHERE "
-            + " AND ".join(where)
+            "FROM repo WHERE " + " AND ".join(where)
         )
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
@@ -467,22 +526,27 @@ def find_projects(*, project: Optional[str] = None, target: Optional[str] = None
                 continue
             if not rel_path:
                 continue
-            out.append({
-                "id": row_id or tgt or prj or "",
-                "project": prj or "",
-                "path": path or "",
-                "rel_path": rel or "",
-                "target": tgt or row_id or prj or "",
-                "type": (typ or "project"),
-                "url": url or "",
-                "goal": goal or "",
-            })
+            out.append(
+                {
+                    "id": row_id or tgt or prj or "",
+                    "project": prj or "",
+                    "path": path or "",
+                    "rel_path": rel or "",
+                    "target": tgt or row_id or prj or "",
+                    "type": (typ or "project"),
+                    "url": url or "",
+                    "goal": goal or "",
+                }
+            )
         return out
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
 
-def _parse_card_text(text: str, *, hint: str = "") -> tuple[Dict[str, object], str, str]:
+def _parse_card_text(
+    text: str, *, hint: str = ""
+) -> tuple[Dict[str, object], str, str]:
     raw = text or ""
     if not raw.strip():
         return {}, "", ""
@@ -531,7 +595,8 @@ def get_card(card_id: str) -> tuple[Dict[str, object], str, str]:
     if not card_id or not str(card_id).strip():
         raise ValueError("card id is required")
 
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     try:
         cur.execute(
             "SELECT card FROM repo WHERE target = ? LIMIT 1",
@@ -539,7 +604,8 @@ def get_card(card_id: str) -> tuple[Dict[str, object], str, str]:
         )
         row = cur.fetchone()
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
     if not row:
         raise CardNotFoundError(f"card '{card_id}' not found")
@@ -579,7 +645,9 @@ class SelectionError(Exception):
 class TooManyRowsError(SelectionError):
     """Raised when more than one row satisfies the requested selector."""
 
-    def __init__(self, message: str, *, kind: str, options: Optional[List[Dict[str, str]]] = None) -> None:
+    def __init__(
+        self, message: str, *, kind: str, options: Optional[List[Dict[str, str]]] = None
+    ) -> None:
         super().__init__(
             message,
             kind=kind,
@@ -592,7 +660,9 @@ class TooManyRowsError(SelectionError):
 class SelectionNotFoundError(SelectionError):
     """Raised when a required row cannot be found for the provided selector."""
 
-    def __init__(self, message: str, *, kind: str, filters: Optional[Dict[str, str]] = None) -> None:
+    def __init__(
+        self, message: str, *, kind: str, filters: Optional[Dict[str, str]] = None
+    ) -> None:
         super().__init__(
             message,
             kind=kind,
@@ -622,7 +692,9 @@ class RepoCardRow:
     card: str | None
 
 
-def _add_filter_clause(where: List[str], params: List[str], *, column: str, value: Optional[str]) -> None:
+def _add_filter_clause(
+    where: List[str], params: List[str], *, column: str, value: Optional[str]
+) -> None:
     if value is None:
         return
     try:
@@ -670,7 +742,8 @@ def select_card(
         TooManyRowsError: When multiple rows satisfy the filters.
     """
 
-    conn = _ensure_db(); cur = conn.cursor()
+    conn = _ensure_db()
+    cur = conn.cursor()
     try:
         where: List[str] = ["1=1"]
         params: List[str] = []
@@ -697,7 +770,8 @@ def select_card(
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
     if not rows:
         clean_filters = {

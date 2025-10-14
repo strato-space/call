@@ -50,7 +50,14 @@ def _repo_card_loader(monkeypatch):
     monkeypatch.setattr(repo_db_module, "get_card", _fake_get_card, raising=True)
 
 
-def _row_from_path(path: Path, *, project: str = "", agent: str = "", prompt: str = "", type_name: str = "prompt") -> repo_db_module.RepoCardRow:
+def _row_from_path(
+    path: Path,
+    *,
+    project: str = "",
+    agent: str = "",
+    prompt: str = "",
+    type_name: str = "prompt",
+) -> repo_db_module.RepoCardRow:
     return repo_db_module.RepoCardRow(
         id=str(path),
         target=str(path),
@@ -77,7 +84,9 @@ def _row_from_path(path: Path, *, project: str = "", agent: str = "", prompt: st
     ],
 )
 def test_builder_minimal_fields_ok(project, agent, prompt):
-    cfg, err = build_runnable_instructions_config(project=project, agent=agent, prompt=prompt)
+    cfg, err = build_runnable_instructions_config(
+        project=project, agent=agent, prompt=prompt
+    )
     assert err is None
     assert cfg is not None
     # Required minimal fields
@@ -90,7 +99,9 @@ def test_builder_minimal_fields_ok(project, agent, prompt):
 
 
 def test_builder_prompt_override_set():
-    cfg, err = build_runnable_instructions_config(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning")
+    cfg, err = build_runnable_instructions_config(
+        project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning"
+    )
     assert err is None
     assert cfg and cfg.prompt == "33-Questioning"
 
@@ -152,7 +163,9 @@ def test_builder_target_prefers_prompt_over_agent(monkeypatch, tmp_path):
         ),
     )
 
-    cfg, err = build_runnable_instructions_config(project="ProjX", agent="AgentA", prompt=None, target="PromptBeta")
+    cfg, err = build_runnable_instructions_config(
+        project="ProjX", agent="AgentA", prompt=None, target="PromptBeta"
+    )
     assert err is None
     assert cfg.prompt == "PromptBeta"
     assert cfg.agent == "AgentB"
@@ -187,7 +200,9 @@ def test_builder_db_prompt_without_agent(monkeypatch, tmp_path):
         ),
     )
 
-    cfg, err = build_runnable_instructions_config(project=None, agent=None, prompt="StandalonePrompt")
+    cfg, err = build_runnable_instructions_config(
+        project=None, agent=None, prompt="StandalonePrompt"
+    )
     assert err is None
     assert cfg is not None
     assert cfg.prompt == "StandalonePrompt"
@@ -224,13 +239,16 @@ def test_builder_db_prompt_global_prompt(monkeypatch, tmp_path):
         ),
     )
 
-    cfg, err = build_runnable_instructions_config(project=None, agent=None, prompt="GlobalPrompt")
+    cfg, err = build_runnable_instructions_config(
+        project=None, agent=None, prompt="GlobalPrompt"
+    )
     assert err is None
     assert cfg is not None
     assert cfg.prompt == "GlobalPrompt"
     assert cfg.project == ""
     assert cfg.agent == ""
     assert cfg.model == "gpt-global"
+
 
 def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     from call.lib import api as api_module
@@ -348,9 +366,10 @@ def test_builder_nested_configs_and_lists(monkeypatch, tmp_path):
     assert cfg.instructions.strip().startswith("Prompt instructions")
 
 
-
 def test_builder_no_data_found_error():
-    cfg, err = build_runnable_instructions_config(project="UxFab", agent="NoSuchAgent", prompt=None)
+    cfg, err = build_runnable_instructions_config(
+        project="UxFab", agent="NoSuchAgent", prompt=None
+    )
     assert cfg is None
     assert isinstance(err, dict)
     assert err.get("ok") is False
@@ -594,7 +613,9 @@ def test_builder_prompt_attributes_only_inherit_model(monkeypatch, tmp_path):
 
     monkeypatch.setenv("LLM_MODEL", "gpt-env")
 
-    cfg, err = build_runnable_instructions_config(project="Proj", agent="Agent", prompt="PromptTest")
+    cfg, err = build_runnable_instructions_config(
+        project="Proj", agent="Agent", prompt="PromptTest"
+    )
 
     assert err is None
     assert cfg is not None

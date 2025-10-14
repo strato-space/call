@@ -6,29 +6,35 @@ from call.lib.api import build_input_payload, normalize_selector
 
 
 def test_normalize_selector_strips_prefix_suffix():
-    assert normalize_selector('@Agent.md') == 'Agent'
-    assert normalize_selector('name.markdown') == 'name'
-    assert normalize_selector('@UxFab') == 'UxFab'
-    assert normalize_selector('') == ''
+    assert normalize_selector("@Agent.md") == "Agent"
+    assert normalize_selector("name.markdown") == "name"
+    assert normalize_selector("@UxFab") == "UxFab"
+    assert normalize_selector("") == ""
     assert normalize_selector(None) is None
 
 
 def test_build_input_payload_uses_db_prompt_name(monkeypatch):
     from call.lib import api as call_api
 
-    def fake_list_prompts(project=None, agent=None, prompt=None, state=None, target=None):
-        return [{
-            "id": "50-DiscoveryAgent",
-            "prompt": "50-DiscoveryAgent",
-            "project": "AgentFab",
-            "agent": "DiscoveryAgent",
-            "type": "prompt",
-            "rel_path": "prompt/draft/50-Discoveryagent.md",
-        }]
+    def fake_list_prompts(
+        project=None, agent=None, prompt=None, state=None, target=None
+    ):
+        return [
+            {
+                "id": "50-DiscoveryAgent",
+                "prompt": "50-DiscoveryAgent",
+                "project": "AgentFab",
+                "agent": "DiscoveryAgent",
+                "type": "prompt",
+                "rel_path": "prompt/draft/50-Discoveryagent.md",
+            }
+        ]
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
 
-    payload_json, payload_dict = build_input_payload(target="AgentFab", main_text="50-DiscoveryAgent", download=False)
+    payload_json, payload_dict = build_input_payload(
+        target="AgentFab", main_text="50-DiscoveryAgent", download=False
+    )
 
     obj = json.loads(payload_json)
     ctx = obj.get("context") or []
@@ -53,10 +59,26 @@ def test_cli_echo_includes_resolved_when_flag(monkeypatch, capsys):
         return DummyCfg(), None
 
     def fake_build_input_payload(**kwargs):
-        return (json.dumps({"target": kwargs.get("target") or "AgentFab", "input": kwargs.get("main_text") or ""}, ensure_ascii=False), {})
+        return (
+            json.dumps(
+                {
+                    "target": kwargs.get("target") or "AgentFab",
+                    "input": kwargs.get("main_text") or "",
+                },
+                ensure_ascii=False,
+            ),
+            {},
+        )
 
-    monkeypatch.setattr(call_api, "build_runnable_instructions_config", fake_build_runnable_instructions_config, raising=True)
-    monkeypatch.setattr(call_api, "build_input_payload", fake_build_input_payload, raising=True)
+    monkeypatch.setattr(
+        call_api,
+        "build_runnable_instructions_config",
+        fake_build_runnable_instructions_config,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        call_api, "build_input_payload", fake_build_input_payload, raising=True
+    )
 
     args = types.SimpleNamespace(
         project="AgentFab",

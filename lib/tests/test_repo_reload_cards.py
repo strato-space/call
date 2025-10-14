@@ -7,7 +7,9 @@ from call.lib import repo_db, repo_fs
 
 
 @pytest.mark.parametrize("project_has_metadata", [False, True])
-def test_reload_stores_card_text_and_skips_placeholder_prompts(tmp_path, monkeypatch, project_has_metadata):
+def test_reload_stores_card_text_and_skips_placeholder_prompts(
+    tmp_path, monkeypatch, project_has_metadata
+):
     """Reloading the repo should persist full card text and avoid placeholder prompt rows."""
 
     # Build isolated agent/prompt repos in the temporary directory
@@ -59,7 +61,10 @@ def test_reload_stores_card_text_and_skips_placeholder_prompts(tmp_path, monkeyp
     finally:
         conn.close()
 
-    records = {(proj or "", agent or "", prompt or ""): card for proj, agent, prompt, card in rows}
+    records = {
+        (proj or "", agent or "", prompt or ""): card
+        for proj, agent, prompt, card in rows
+    }
 
     # Project row should contain the project card content (regardless of metadata)
     assert ("ProjectX", "", "") in records

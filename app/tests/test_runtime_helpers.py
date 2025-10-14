@@ -19,11 +19,13 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
     sent_payload = {}
 
     async def fake_send_telegram_welcome_message(*, text, chat_id, message_thread_id):
-        sent_payload.update({
-            "text": text,
-            "chat_id": chat_id,
-            "thread_id": message_thread_id,
-        })
+        sent_payload.update(
+            {
+                "text": text,
+                "chat_id": chat_id,
+                "thread_id": message_thread_id,
+            }
+        )
 
     cfg = SimpleNamespace(
         id="FooAgent",
@@ -34,8 +36,15 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
         tools=["FileSearchTool[ExampleStore]"],
     )
 
-    monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
-    monkeypatch.setattr(app_call, "send_telegram_welcome_message", fake_send_telegram_welcome_message, raising=False)
+    monkeypatch.setattr(
+        app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False
+    )
+    monkeypatch.setattr(
+        app_call,
+        "send_telegram_welcome_message",
+        fake_send_telegram_welcome_message,
+        raising=False,
+    )
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 
     result = await app_call._send_welcome_banner(
@@ -64,10 +73,21 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
     async def fake_send(**kwargs):  # pragma: no cover - should not be called
         calls.append("send")
 
-    cfg = SimpleNamespace(id="Foo", path=None, attributes={}, model=None, model_settings=ModelSettings(), tools=[])
+    cfg = SimpleNamespace(
+        id="Foo",
+        path=None,
+        attributes={},
+        model=None,
+        model_settings=ModelSettings(),
+        tools=[],
+    )
 
-    monkeypatch.setattr(app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False)
-    monkeypatch.setattr(app_call, "send_telegram_welcome_message", fake_send, raising=False)
+    monkeypatch.setattr(
+        app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False
+    )
+    monkeypatch.setattr(
+        app_call, "send_telegram_welcome_message", fake_send, raising=False
+    )
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 
     result = await app_call._send_welcome_banner(
@@ -134,7 +154,9 @@ def test_get_tool_by_name_direct_vector_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_build_tools_for_cfg_skips_when_no_ids(monkeypatch):
     class DummyFileSearchTool:
-        def __init__(self, *, vector_store_ids):  # pragma: no cover - should not be called
+        def __init__(
+            self, *, vector_store_ids
+        ):  # pragma: no cover - should not be called
             raise AssertionError("FileSearchTool should not be constructed")
 
     async def fake_resolve(vs_val):
@@ -174,16 +196,20 @@ async def test_embed_files_in_user_input_adds_base64(monkeypatch):
 
         return _Client()
 
-    payload = json.dumps({
-        "context": [
-            {"type": "file", "url": "https://example.com/file.txt"},
-            {"type": "text", "value": "skip"},
-        ]
-    })
+    payload = json.dumps(
+        {
+            "context": [
+                {"type": "file", "url": "https://example.com/file.txt"},
+                {"type": "text", "value": "skip"},
+            ]
+        }
+    )
 
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 
-    result = await app_call._embed_files_in_user_input(payload, client_factory=client_factory)
+    result = await app_call._embed_files_in_user_input(
+        payload, client_factory=client_factory
+    )
 
     data = json.loads(result)
     assert calls == ["https://example.com/file.txt"]
@@ -209,20 +235,29 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
         banner_calls.append(kwargs)
         return "HTML"
 
-    monkeypatch.setattr(app_call, "_send_welcome_banner", fake_send_banner, raising=False)
+    monkeypatch.setattr(
+        app_call, "_send_welcome_banner", fake_send_banner, raising=False
+    )
+
     async def fake_prepare_mcp_servers(astack):
         return [], None
 
-    monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False)
+    monkeypatch.setattr(
+        app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False
+    )
 
     async def fake_build_tools(cfg):
         return []
 
-    monkeypatch.setattr(app_call, "build_tools_for_cfg", fake_build_tools, raising=False)
+    monkeypatch.setattr(
+        app_call, "build_tools_for_cfg", fake_build_tools, raising=False
+    )
     monkeypatch.setattr(app_call, "_collect_tool_entries", lambda *_: [], raising=False)
     monkeypatch.setattr(app_call, "_merge_outputs", lambda *a, **k: {})
     monkeypatch.setattr(app_call, "_extract_tg_targets", lambda *_: (None, None))
-    monkeypatch.setattr(app_call, "send_digest_notification", lambda **_: None, raising=False)
+    monkeypatch.setattr(
+        app_call, "send_digest_notification", lambda **_: None, raising=False
+    )
     monkeypatch.setattr(app_call, "post_run_git_push", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "init_bot", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
@@ -275,17 +310,23 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
         embed_calls.append(payload)
         return payload
 
-    monkeypatch.setattr(app_call, "_embed_files_in_user_input", fake_embed, raising=False)
+    monkeypatch.setattr(
+        app_call, "_embed_files_in_user_input", fake_embed, raising=False
+    )
 
     async def fake_send_banner(**kwargs):
         return "HTML"
 
-    monkeypatch.setattr(app_call, "_send_welcome_banner", fake_send_banner, raising=False)
+    monkeypatch.setattr(
+        app_call, "_send_welcome_banner", fake_send_banner, raising=False
+    )
 
     async def fake_prepare_mcp_servers(astack):
         return [], None
 
-    monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False)
+    monkeypatch.setattr(
+        app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False
+    )
 
     async def fake_base_tools(cfg):
         return []
@@ -296,7 +337,9 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
     monkeypatch.setattr(app_call, "WebSearchTool", lambda: "web", raising=False)
     monkeypatch.setattr(app_call, "_merge_outputs", lambda *a, **k: {})
     monkeypatch.setattr(app_call, "_extract_tg_targets", lambda *_: (None, None))
-    monkeypatch.setattr(app_call, "send_digest_notification", lambda **_: None, raising=False)
+    monkeypatch.setattr(
+        app_call, "send_digest_notification", lambda **_: None, raising=False
+    )
     monkeypatch.setattr(app_call, "post_run_git_push", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "init_bot", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)

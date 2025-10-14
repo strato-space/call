@@ -28,7 +28,11 @@ def test_call_ok(monkeypatch, client: TestClient, auth_headers):
 
     monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
 
-    r = client.get("/call", params={"name": "TestAgent", "input": "hi", "echo": "1"}, headers=auth_headers)
+    r = client.get(
+        "/call",
+        params={"name": "TestAgent", "input": "hi", "echo": "1"},
+        headers=auth_headers,
+    )
     assert r.status_code == 200
     data = r.json()
     assert data.get("ok") is True
@@ -68,7 +72,11 @@ def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_header
 
     monkeypatch.setattr(main, "api_call", fake_api_call, raising=True)
 
-    payload = {"agent": "DialogPostAnalysis", "context": {"text": "hello"}, "model": "gpt-exec"}
+    payload = {
+        "agent": "DialogPostAnalysis",
+        "context": {"text": "hello"},
+        "model": "gpt-exec",
+    }
     r = client.post("/exec", params={"echo": "1"}, json=payload, headers=auth_headers)
     assert r.status_code == 200
     data = r.json()
@@ -76,9 +84,13 @@ def test_exec_post_agent_context_ok(monkeypatch, client: TestClient, auth_header
     assert data.get("agent") == "DialogPostAnalysis"
 
 
-def test_exec_post_both_agent_and_prompt_400(monkeypatch, client: TestClient, auth_headers):
+def test_exec_post_both_agent_and_prompt_400(
+    monkeypatch, client: TestClient, auth_headers
+):
     def _fail_if_called(**kwargs):
-        raise AssertionError("api_call should not be invoked when multiple selectors are provided")
+        raise AssertionError(
+            "api_call should not be invoked when multiple selectors are provided"
+        )
 
     monkeypatch.setattr(main, "api_call", _fail_if_called, raising=True)
 
@@ -88,12 +100,23 @@ def test_exec_post_both_agent_and_prompt_400(monkeypatch, client: TestClient, au
 
 
 def test_prompts_ok(monkeypatch, client: TestClient, auth_headers):
-    monkeypatch.setattr(main, "list_prompts", lambda **kwargs: [
-        {"prompt_id": "33-Questioning", "agent": "DialogPostAnalysis", "project": "UxFab"},
-        {"prompt_id": "main", "agent": "Stratoslav", "project": "FanFab"},
-    ], raising=True)
+    monkeypatch.setattr(
+        main,
+        "list_prompts",
+        lambda **kwargs: [
+            {
+                "prompt_id": "33-Questioning",
+                "agent": "DialogPostAnalysis",
+                "project": "UxFab",
+            },
+            {"prompt_id": "main", "agent": "Stratoslav", "project": "FanFab"},
+        ],
+        raising=True,
+    )
 
-    r = client.get("/prompts", params={"project": "UxFab", "prompt": "33-*"}, headers=auth_headers)
+    r = client.get(
+        "/prompts", params={"project": "UxFab", "prompt": "33-*"}, headers=auth_headers
+    )
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list) and data
@@ -101,11 +124,26 @@ def test_prompts_ok(monkeypatch, client: TestClient, auth_headers):
 
 
 def test_agents_ok(monkeypatch, client: TestClient, auth_headers):
-    monkeypatch.setattr(main, "api_list", lambda **kwargs: [
-        {"name": "UxFab", "type": "project", "agents": [
-            {"id": "DialogPostAnalysis", "name": "DialogPostAnalysis", "aliases": [], "prompts": ["33-Questioning"], "path": "..."}
-        ]}
-    ], raising=True)
+    monkeypatch.setattr(
+        main,
+        "api_list",
+        lambda **kwargs: [
+            {
+                "name": "UxFab",
+                "type": "project",
+                "agents": [
+                    {
+                        "id": "DialogPostAnalysis",
+                        "name": "DialogPostAnalysis",
+                        "aliases": [],
+                        "prompts": ["33-Questioning"],
+                        "path": "...",
+                    }
+                ],
+            }
+        ],
+        raising=True,
+    )
 
     r = client.get("/agents", headers=auth_headers)
     assert r.status_code == 200
@@ -114,7 +152,9 @@ def test_agents_ok(monkeypatch, client: TestClient, auth_headers):
 
 
 def test_models_endpoint(monkeypatch, client: TestClient, auth_headers):
-    monkeypatch.setattr(main, "api_models", lambda: [{"id": "gpt-4o-mini"}], raising=True)
+    monkeypatch.setattr(
+        main, "api_models", lambda: [{"id": "gpt-4o-mini"}], raising=True
+    )
 
     r = client.get("/models", headers=auth_headers)
     assert r.status_code == 200

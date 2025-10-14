@@ -21,7 +21,9 @@ def test_interpret_target_project_exact():
 
 def test_interpret_target_prompt_single_known():
     # With project filter, resolving a known prompt should be unambiguous
-    row = interpret_target(project="UxFab", agent=None, prompt=None, target="33-Questioning")
+    row = interpret_target(
+        project="UxFab", agent=None, prompt=None, target="33-Questioning"
+    )
     assert row.prompt == "33-Questioning"
     assert row.type == "prompt"
 

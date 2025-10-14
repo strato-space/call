@@ -23,21 +23,38 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(app_call, "init_bot", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(app_call, "safe_send_message", lambda **k: None, raising=False)
-    monkeypatch.setattr(app_call, "safe_edit_message_text", lambda **k: None, raising=False)
-    monkeypatch.setattr(app_call, "send_telegram_welcome_message", lambda **k: None, raising=False)
-    monkeypatch.setattr(app_call, "send_digest_notification", lambda **k: None, raising=False)
+    monkeypatch.setattr(
+        app_call, "safe_edit_message_text", lambda **k: None, raising=False
+    )
+    monkeypatch.setattr(
+        app_call, "send_telegram_welcome_message", lambda **k: None, raising=False
+    )
+    monkeypatch.setattr(
+        app_call, "send_digest_notification", lambda **k: None, raising=False
+    )
     monkeypatch.setattr(app_call, "post_run_git_push", lambda **k: None, raising=False)
     monkeypatch.setattr(app_call, "_merge_outputs", lambda *a, **k: {})
     monkeypatch.setattr(app_call, "_extract_tg_targets", lambda merged: (None, None))
+
     async def fake_prepare_mcp_servers(astack):
         return [], None
 
-    monkeypatch.setattr(app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False)
+    monkeypatch.setattr(
+        app_call, "_prepare_mcp_servers", fake_prepare_mcp_servers, raising=False
+    )
+
     async def fake_build_tools_for_cfg(cfg):
         return ["web"]
 
-    monkeypatch.setattr(app_call, "build_tools_for_cfg", fake_build_tools_for_cfg, raising=False)
-    monkeypatch.setattr(app_call, "_collect_tool_entries", lambda cfg: [("HelperAgent", "desc")], raising=False)
+    monkeypatch.setattr(
+        app_call, "build_tools_for_cfg", fake_build_tools_for_cfg, raising=False
+    )
+    monkeypatch.setattr(
+        app_call,
+        "_collect_tool_entries",
+        lambda cfg: [("HelperAgent", "desc")],
+        raising=False,
+    )
 
     # Stub async runner + session types
     async def fake_run(agent, *args, **kwargs):
@@ -71,7 +88,11 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
                 tool = FunctionTool(
                     name=tool_name,
                     description=tool_description,
-                    params_json_schema={"type": "object", "properties": {}, "required": []},
+                    params_json_schema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
                     on_invoke_tool=orig_invoke,
                 )
                 created_tools.append(tool)
@@ -79,7 +100,9 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
 
         return _Agent()
 
-    monkeypatch.setattr(app_call, "get_or_create_agent", fake_get_or_create_agent, raising=False)
+    monkeypatch.setattr(
+        app_call, "get_or_create_agent", fake_get_or_create_agent, raising=False
+    )
 
     sub_cfg = SimpleNamespace(
         id="HelperAgent",
@@ -88,7 +111,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         model="gpt-4.1-mini",
         model_settings=ModelSettings(),
         attributes={},
-        tools=["FileSearchTool[foo]"] ,
+        tools=["FileSearchTool[foo]"],
         mcp=[],
     )
 
@@ -118,6 +141,6 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     assert wrapped_handler is not orig_invoke
 
     # Invoke wrapper to ensure original handler still executes
-    result = await wrapped_handler(None, "{\"foo\": \"bar\"}")
+    result = await wrapped_handler(None, '{"foo": "bar"}')
     assert result == "wrapped-ok"
     assert orig_invocations == ['{"foo": "bar"}']

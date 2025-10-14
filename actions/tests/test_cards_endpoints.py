@@ -19,7 +19,9 @@ def actions_env(monkeypatch, tmp_path):
     deps_module = importlib.import_module("call.actions.deps")
     monkeypatch.setattr(repo_db, "DB_PATH", str(db_path), raising=False)
     monkeypatch.setattr(api_module.call_repo, "DB_PATH", str(db_path), raising=False)
-    monkeypatch.setattr(actions_main.repo_db_module, "DB_PATH", str(db_path), raising=False)
+    monkeypatch.setattr(
+        actions_main.repo_db_module, "DB_PATH", str(db_path), raising=False
+    )
 
     card_path.parent.mkdir(parents=True, exist_ok=True)
     card_path.write_text("initial", encoding="utf-8")
