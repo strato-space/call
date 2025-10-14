@@ -629,7 +629,8 @@ async def _git_pull_prompt_repo() -> None:
             debug_print("[git]", f"git pull --rebase failed: {type(e).__name__}: {e}")
             return
         if rc != 0:
-            debug_print("[git]", "--rebase failed; retrying plain pull")
+            debug_print("[git]", f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}")
+            debug_print("[git]", "retrying plain pull")
             try:
                 rc_plain, out_plain, err_plain = await asyncio.wait_for(
                     _run_git(["git", "pull"], env=git_env), timeout=10.0
@@ -1063,8 +1064,10 @@ async def _send_welcome_banner(
 ) -> str | None:
     """Compose and send the Telegram welcome banner for the current agent run."""
     if selected_chat_id is None:
+        debug_print("[app]", "[BANNER] skipped: selected_chat_id is None")
         return None
 
+    debug_print("[app]", f"[BANNER] target: chat_id={selected_chat_id}, thread_id={selected_thread_id}")
     try:
         welcome_html = compose_welcome_html(
             agent_name=(cfg.id or ""),
@@ -1966,6 +1969,7 @@ async def safe_send_message(
     - Honors reply_to_message_id via ReplyParameters when available.
     - On BadRequest 'thread not found', retries without message_thread_id and without reply params.
     """
+    debug_print("[app]", f"[TG] Sending message to chat_id={chat_id}, thread_id={message_thread_id}, text_len={len(text)}")
     await init_bot()
     try:
         from telegram import ReplyParameters as _ReplyParameters
@@ -1988,13 +1992,15 @@ async def safe_send_message(
         return await bot.send_message(**kwargs)
 
     try:
-        return await async_retry(
+        result = await async_retry(
             _op,
             retries=2,
             base_delay=1.0,
             jitter=0.2,
             retry_on=(TimedOut, NetworkError, httpx.TimeoutException),
         )
+        debug_print("[app]", f"[TG] Message sent successfully: msg_id={result.message_id}, chat_id={result.chat_id}")
+        return result
     except BadRequest as e:
         msg = str(e).lower()
         if "thread not found" in msg:
@@ -2505,8 +2511,8 @@ class MCPServerStdioHook(MCPServerStdio):
 
             # Remove leading whitespace from each line
             text = "\n".join(line.lstrip() for line in text.split("\n"))
-            # Collapse multiple consecutive newlines to exactly 2
-            text = _re_collapse.sub(r"\n{2,}", r"\n\n", text)
+            # Collapse multiple consecutive newlines to exactly 1
+            text = _re_collapse.sub(r"\n{2,}", r"\n", text)
         except Exception:
             pass
 
