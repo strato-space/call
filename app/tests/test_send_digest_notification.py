@@ -20,7 +20,9 @@ def test_send_digest_notification_empty_text_fallback(monkeypatch):
     def fake_publish_results(**kwargs):  # should not be called in this case
         raise AssertionError("publish_results must not be called for empty text")
 
-    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+    async def fake_send_message(
+        *, chat_id, text, reply_markup=None, message_thread_id=None
+    ):
         sent["text"] = text
         sent["chat_id"] = chat_id
         sent["reply_markup"] = reply_markup
@@ -55,7 +57,9 @@ def test_send_digest_notification_publishes_on_long_text(monkeypatch):
         published["url"] = "https://example.com/digest"
         return published["url"]
 
-    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+    async def fake_send_message(
+        *, chat_id, text, reply_markup=None, message_thread_id=None
+    ):
         sent["text"] = text
         sent["reply_markup"] = reply_markup
         return DummyMsg()
@@ -64,6 +68,7 @@ def test_send_digest_notification_publishes_on_long_text(monkeypatch):
     monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
 
     long_text = "x" * 5000
+
     async def _run():
         return await send_digest_notification(
             text=long_text,
@@ -88,7 +93,9 @@ def test_send_digest_notification_buttons_macro(monkeypatch):
         published["url"] = "https://example.com/digest"
         return published["url"]
 
-    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+    async def fake_send_message(
+        *, chat_id, text, reply_markup=None, message_thread_id=None
+    ):
         captured["reply_markup"] = reply_markup
         return DummyMsg()
 
@@ -119,11 +126,15 @@ def test_send_digest_notification_multiple_buttons(monkeypatch):
 
     captured = {"reply_markup": None}
 
-    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+    async def fake_send_message(
+        *, chat_id, text, reply_markup=None, message_thread_id=None
+    ):
         captured["reply_markup"] = reply_markup
         return DummyMsg()
 
-    monkeypatch.setattr("call.app.call.publish_results", lambda *a, **k: "https://example.com/digest")
+    monkeypatch.setattr(
+        "call.app.call.publish_results", lambda *a, **k: "https://example.com/digest"
+    )
     monkeypatch.setattr("call.app.call.telegram_send_message", fake_send_message)
 
     buttons = [
@@ -155,9 +166,13 @@ def test_send_digest_notification_button_rows(monkeypatch):
 
     captured = {"reply_markup": None}
 
-    monkeypatch.setattr("call.app.call.publish_results", lambda *a, **k: "https://example.com/digest")
+    monkeypatch.setattr(
+        "call.app.call.publish_results", lambda *a, **k: "https://example.com/digest"
+    )
 
-    async def fake_send_message(*, chat_id, text, reply_markup=None, message_thread_id=None):
+    async def fake_send_message(
+        *, chat_id, text, reply_markup=None, message_thread_id=None
+    ):
         captured["reply_markup"] = reply_markup
         return DummyMsg()
 

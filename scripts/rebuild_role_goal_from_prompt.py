@@ -96,20 +96,24 @@ def extract_goal(prompt_text: str) -> Optional[str]:
         r"|\n\s*Важные\s+требования[^\n]*:"  # 'Important requirements'
         r"|\n\s*Формат\s+вывода[^\n]*"  # 'Output format'
         r"|\n\s*\[Формат\s+вывода\]"  # bracketed label
-        r"|\n\s*```"  # code fence
-        , tail, flags=re.IGNORECASE)
+        r"|\n\s*```",  # code fence
+        tail,
+        flags=re.IGNORECASE,
+    )
     if cut:
         tail = tail[: cut.start()].rstrip()
     return tail if tail else None
 
 
-def update_metadata_block(text: str, meta_slice: Tuple[int, int], new_meta: Dict) -> str:
+def update_metadata_block(
+    text: str, meta_slice: Tuple[int, int], new_meta: Dict
+) -> str:
     y1, y2 = meta_slice
     dumped = yaml.safe_dump(new_meta, allow_unicode=True, sort_keys=False)
     # Ensure a newline right after the ```yaml fence so content doesn't concatenate
     needs_nl = True
     try:
-        ch = text[y1:y1+1]
+        ch = text[y1 : y1 + 1]
         if ch in ("\n", "\r"):
             needs_nl = False
     except Exception:
@@ -157,9 +161,19 @@ def process_file(path: Path, write: bool = True) -> Tuple[bool, str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Rebuild role/goal from PROMPT body and write to METADATA")
-    parser.add_argument("--root", default=str(Path("agent") / "prompt_flow_engine" / "prompt_repository"), help="Root directory to scan recursively for .md files")
-    parser.add_argument("--dry", action="store_true", help="Dry run: do not write files, only print changes")
+    parser = argparse.ArgumentParser(
+        description="Rebuild role/goal from PROMPT body and write to METADATA"
+    )
+    parser.add_argument(
+        "--root",
+        default=str(Path("agent") / "prompt_flow_engine" / "prompt_repository"),
+        help="Root directory to scan recursively for .md files",
+    )
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="Dry run: do not write files, only print changes",
+    )
     args = parser.parse_args()
 
     root = Path(args.root).resolve()

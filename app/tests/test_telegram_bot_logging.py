@@ -8,10 +8,12 @@ from types import SimpleNamespace
 def test_bot_log_update_uses_central_debug_print(monkeypatch):
     # Arrange: import module and patch debug_print
     import importlib
+
     logging_calls = []
 
     def _recorder(*parts):
         logging_calls.append(parts)
+
     # Ensure debug output is enabled regardless of runner env
     monkeypatch.setenv("CALL_DEBUG", "1")
 
@@ -42,7 +44,9 @@ def test_bot_log_update_uses_central_debug_print(monkeypatch):
     # Assert: centralized debug_print was invoked with module prefix then tag
     assert logging_calls, "debug_print was not called"
     first = logging_calls[0]
-    assert first and first[0] == "[bot]" and first[1] == "[UPDATE]", f"unexpected debug_print payload: {first}"
+    assert (
+        first and first[0] == "[bot]" and first[1] == "[UPDATE]"
+    ), f"unexpected debug_print payload: {first}"
 
 
 def test_bot_log_update_emits_raw_json(monkeypatch, caplog):
@@ -67,7 +71,11 @@ def test_bot_log_update_emits_raw_json(monkeypatch, caplog):
     asyncio.run(mod._log_update(DummyUpdate(), None))
 
     # Assert
-    expected = json.dumps({"update_id": 7, "message": {"text": "hello"}}, ensure_ascii=False)
-    raw_entries = [rec.message for rec in caplog.records if rec.message.startswith("Update raw: ")]
+    expected = json.dumps(
+        {"update_id": 7, "message": {"text": "hello"}}, ensure_ascii=False
+    )
+    raw_entries = [
+        rec.message for rec in caplog.records if rec.message.startswith("Update raw: ")
+    ]
     assert raw_entries, "raw update log not emitted"
     assert raw_entries[0] == f"Update raw: {expected}"

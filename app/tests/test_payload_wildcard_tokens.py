@@ -12,20 +12,32 @@ def test_build_input_payload_wildcard_single(monkeypatch):
     from call.lib import api as call_api
 
     # Simulate DB prompts with a single match for '31-*'
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         items = [
-            {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
+            {
+                "id": "31-OnlineQuestionsBabook",
+                "prompt": "31-OnlineQuestionsBabook",
+                "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md",
+                "path": "prompt/draft/31-OnlineQuestionsBabook.md",
+                "type": "prompt",
+            },
         ]
         if prompt:
             if "*" in prompt:
-                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                rx = re.compile(
+                    "^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE
+                )
                 return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
 
-    payload_json, payload_dict = call_api.build_input_payload(target="AgentFab", main_text="@31-*")
+    payload_json, payload_dict = call_api.build_input_payload(
+        target="AgentFab", main_text="@31-*"
+    )
     assert isinstance(payload_json, str)
     obj = json.loads(payload_json)
     assert obj["target"] == "AgentFab"
@@ -43,21 +55,39 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
     from call.lib import api as call_api
 
     # Simulate DB prompts with two independent wildcard hits: '31-*' and '32-*'
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         items = [
-            {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
-            {"id": "32-InterviewSummary", "prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md", "type": "prompt"},
+            {
+                "id": "31-OnlineQuestionsBabook",
+                "prompt": "31-OnlineQuestionsBabook",
+                "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md",
+                "path": "prompt/draft/31-OnlineQuestionsBabook.md",
+                "type": "prompt",
+            },
+            {
+                "id": "32-InterviewSummary",
+                "prompt": "32-InterviewSummary",
+                "rel_path": "prompt/draft/32-InterviewSummary.md",
+                "path": "prompt/draft/32-InterviewSummary.md",
+                "type": "prompt",
+            },
         ]
         if prompt:
             if "*" in prompt:
-                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                rx = re.compile(
+                    "^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE
+                )
                 return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
 
-    payload_json, payload_dict = call_api.build_input_payload(target="AgentFab", main_text="31-* 32-*")
+    payload_json, payload_dict = call_api.build_input_payload(
+        target="AgentFab", main_text="31-* 32-*"
+    )
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 2
@@ -75,13 +105,17 @@ def test_build_input_payload_multiple_wildcards(monkeypatch):
 def test_build_input_payload_wildcard_no_matches(monkeypatch):
     from call.lib import api as call_api
 
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         # No items in DB
         return []
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
 
-    payload_json, payload_dict = call_api.build_input_payload(target="AgentFab", main_text="@99-*")
+    payload_json, payload_dict = call_api.build_input_payload(
+        target="AgentFab", main_text="@99-*"
+    )
     obj = json.loads(payload_json)
     assert obj["target"] == "AgentFab"
     # No context array when nothing matched
@@ -92,16 +126,26 @@ def test_build_input_payload_deduplicate_refs(monkeypatch):
     from call.lib import api as call_api
 
     items = [
-        {"id": "31-OnlineQuestionsBabook", "prompt": "31-OnlineQuestionsBabook", "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md", "path": "prompt/draft/31-OnlineQuestionsBabook.md", "type": "prompt"},
+        {
+            "id": "31-OnlineQuestionsBabook",
+            "prompt": "31-OnlineQuestionsBabook",
+            "rel_path": "prompt/draft/31-OnlineQuestionsBabook.md",
+            "path": "prompt/draft/31-OnlineQuestionsBabook.md",
+            "type": "prompt",
+        },
     ]
 
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         if prompt:
             return [it for it in items if it["prompt"] == prompt]
         return items
 
     # Provide both exact and wildcard that resolve to the same item
-    payload_json, _ = call_api.build_input_payload(target="AgentFab", main_text="31-OnlineQuestionsBabook 31-*")
+    payload_json, _ = call_api.build_input_payload(
+        target="AgentFab", main_text="31-OnlineQuestionsBabook 31-*"
+    )
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
@@ -111,13 +155,23 @@ def test_build_input_payload_deduplicate_refs(monkeypatch):
 def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
     from call.lib import api as call_api
 
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         items = [
-            {"id": "32-InterviewSummary", "prompt": "32-InterviewSummary", "rel_path": "prompt/draft/32-InterviewSummary.md", "path": "prompt/draft/32-InterviewSummary.md", "type": "prompt"},
+            {
+                "id": "32-InterviewSummary",
+                "prompt": "32-InterviewSummary",
+                "rel_path": "prompt/draft/32-InterviewSummary.md",
+                "path": "prompt/draft/32-InterviewSummary.md",
+                "type": "prompt",
+            },
         ]
         if prompt:
             if "*" in prompt:
-                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                rx = re.compile(
+                    "^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE
+                )
                 return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
@@ -125,7 +179,9 @@ def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
 
     # Token includes .markdown suffix and leading '@'
-    payload_json, _ = call_api.build_input_payload(target="AgentFab", main_text="@32-InterviewSummary.markdown")
+    payload_json, _ = call_api.build_input_payload(
+        target="AgentFab", main_text="@32-InterviewSummary.markdown"
+    )
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
@@ -135,7 +191,9 @@ def test_build_input_payload_markdown_suffix_stripping(monkeypatch):
 def test_cli_prompt_wildcard_context(monkeypatch):
     from call.lib import api as call_api
 
-    def fake_list_prompts(*, project=None, agent=None, prompt=None, state=None, target=None):
+    def fake_list_prompts(
+        *, project=None, agent=None, prompt=None, state=None, target=None
+    ):
         items = [
             {
                 "project": "AgentFab",
@@ -160,14 +218,20 @@ def test_cli_prompt_wildcard_context(monkeypatch):
         ]
         if prompt:
             if "*" in prompt:
-                rx = re.compile("^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE)
+                rx = re.compile(
+                    "^" + re.escape(prompt).replace("\\*", ".*") + "$", re.IGNORECASE
+                )
                 return [it for it in items if rx.match(it["prompt"])]
             return [it for it in items if it["prompt"] == prompt]
         return items
 
     monkeypatch.setattr(call_api, "list_prompts", fake_list_prompts, raising=True)
-    monkeypatch.setattr(call_api.call_repo, "find_projects", lambda **_: [], raising=False)
-    monkeypatch.setattr(call_api.call_repo, "find_agents", lambda **_: [], raising=False)
+    monkeypatch.setattr(
+        call_api.call_repo, "find_projects", lambda **_: [], raising=False
+    )
+    monkeypatch.setattr(
+        call_api.call_repo, "find_agents", lambda **_: [], raising=False
+    )
 
     payload_json, _ = call_api.build_input_payload(target=None, main_text="@33-*")
     obj = json.loads(payload_json)
@@ -200,11 +264,17 @@ def test_cli_agent_exact_context(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(call_api.call_repo, "find_agents", fake_find_agents, raising=True)
-    monkeypatch.setattr(call_api.call_repo, "find_projects", lambda **_: [], raising=False)
+    monkeypatch.setattr(
+        call_api.call_repo, "find_agents", fake_find_agents, raising=True
+    )
+    monkeypatch.setattr(
+        call_api.call_repo, "find_projects", lambda **_: [], raising=False
+    )
     monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
 
-    payload_json, _ = call_api.build_input_payload(target=None, main_text="@DiscoveryAgent")
+    payload_json, _ = call_api.build_input_payload(
+        target=None, main_text="@DiscoveryAgent"
+    )
     obj = json.loads(payload_json)
     ctx = obj.get("context")
     assert isinstance(ctx, list) and len(ctx) == 1
@@ -212,7 +282,9 @@ def test_cli_agent_exact_context(monkeypatch):
     assert ref["id"] == "DiscoveryAgent"
     assert ref["type"] == "agent"
     assert ref["path"].replace("\\", "/") == "prompt/AgentFab/DiscoveryAgent/agent.md"
-    assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md")
+    assert ref["url"].startswith(
+        "https://github.com/strato-space/prompt/blob/master/AgentFab/DiscoveryAgent/agent.md"
+    )
 
 
 def test_cli_project_exact_context(monkeypatch):
@@ -229,8 +301,12 @@ def test_cli_project_exact_context(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(call_api.call_repo, "find_projects", fake_find_projects, raising=True)
-    monkeypatch.setattr(call_api.call_repo, "find_agents", lambda **_: [], raising=False)
+    monkeypatch.setattr(
+        call_api.call_repo, "find_projects", fake_find_projects, raising=True
+    )
+    monkeypatch.setattr(
+        call_api.call_repo, "find_agents", lambda **_: [], raising=False
+    )
     monkeypatch.setattr(call_api, "list_prompts", lambda **_: [], raising=False)
 
     payload_json, _ = call_api.build_input_payload(target=None, main_text="@AgentFab")
@@ -241,4 +317,6 @@ def test_cli_project_exact_context(monkeypatch):
     assert ref["id"] == "AgentFab"
     assert ref["type"] == "project"
     assert ref["path"].replace("\\", "/") == "prompt/AgentFab/project.md"
-    assert ref["url"].startswith("https://github.com/strato-space/prompt/blob/master/AgentFab/project.md")
+    assert ref["url"].startswith(
+        "https://github.com/strato-space/prompt/blob/master/AgentFab/project.md"
+    )

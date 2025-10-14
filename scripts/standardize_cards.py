@@ -26,7 +26,9 @@ DEFAULT_ROOTS = [
     Path("./agent"),
 ]
 
-META_BLOCK_RE = re.compile(r"<!--\s*(METADATA|META):START\s*-->(.*?)<!--\s*(METADATA|META):END\s*-->", re.S)
+META_BLOCK_RE = re.compile(
+    r"<!--\s*(METADATA|META):START\s*-->(.*?)<!--\s*(METADATA|META):END\s*-->", re.S
+)
 
 
 def _strip_trailing_blank_lines(text: str) -> Tuple[str, bool]:
@@ -84,8 +86,12 @@ def _standardize_meta_block(md: str) -> Tuple[str, bool]:
     # Pre-normalize malformed tags and unify META -> METADATA in-place
     pre = md
     # Fix broken start tag missing '>' (e.g., '<!-- META:START --')
-    pre = re.sub(r"<!--\s*(META|METADATA):START\s*--\s*\n", "<!-- METADATA:START -->\n", pre)
-    pre = re.sub(r"<!--\s*(META|METADATA):START\s*--\s*", "<!-- METADATA:START -->", pre)
+    pre = re.sub(
+        r"<!--\s*(META|METADATA):START\s*--\s*\n", "<!-- METADATA:START -->\n", pre
+    )
+    pre = re.sub(
+        r"<!--\s*(META|METADATA):START\s*--\s*", "<!-- METADATA:START -->", pre
+    )
     # Unify proper tags to METADATA
     pre = re.sub(r"<!--\s*(META|METADATA):START\s*-->", "<!-- METADATA:START -->", pre)
     pre = re.sub(r"<!--\s*(META|METADATA):END\s*-->", "<!-- METADATA:END -->", pre)
@@ -140,7 +146,11 @@ def _process_yaml(path: Path) -> Tuple[bool, List[str]]:
 def _git_last_change(path: Path) -> str:
     try:
         # Return short one-line for last change
-        out = subprocess.check_output(["git", "log", "-n", "1", "--pretty=%h %an %ad %s", "--", str(path)], cwd=str(path.parent), stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(
+            ["git", "log", "-n", "1", "--pretty=%h %an %ad %s", "--", str(path)],
+            cwd=str(path.parent),
+            stderr=subprocess.DEVNULL,
+        )
         return out.decode("utf-8", "replace").strip()
     except Exception:
         return ""
@@ -149,8 +159,15 @@ def _git_last_change(path: Path) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fix", action="store_true", help="Write changes to files")
-    ap.add_argument("--roots", nargs="*", default=[str(p) for p in DEFAULT_ROOTS], help="Roots to scan")
-    ap.add_argument("--blame", action="store_true", help="Print last git change for modified files")
+    ap.add_argument(
+        "--roots",
+        nargs="*",
+        default=[str(p) for p in DEFAULT_ROOTS],
+        help="Roots to scan",
+    )
+    ap.add_argument(
+        "--blame", action="store_true", help="Print last git change for modified files"
+    )
     args = ap.parse_args()
 
     roots = [Path(p) for p in args.roots]
@@ -172,7 +189,9 @@ def main() -> int:
             if changed:
                 modified.append(p)
                 blame = _git_last_change(p) if args.blame else ""
-                info = f"[FIX] {p} {';'.join(msg)}" + (f" | last: {blame}" if blame else "")
+                info = f"[FIX] {p} {';'.join(msg)}" + (
+                    f" | last: {blame}" if blame else ""
+                )
                 print(info)
 
     print(f"Done. Modified {len(modified)} files.")

@@ -21,7 +21,7 @@ def test_clean_html_for_telegram_converts_lists_and_strips_attrs():
     assert "<ul" not in out and "<li" not in out
     assert "• First" in out and "• Second" in out
     # Only href should remain on links
-    assert "onclick" not in out and "href=\"https://example.com\"" in out
+    assert "onclick" not in out and 'href="https://example.com"' in out
 
 
 def test_clean_html_for_telegraph_unwraps_headings_and_disallowed_tags():

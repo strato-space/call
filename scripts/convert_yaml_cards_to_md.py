@@ -67,20 +67,30 @@ def _split_yaml_for_md(data: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
 
 def _render_md(meta: Dict[str, Any], body: str) -> str:
     try:
-        meta_yaml = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) if yaml else ""
+        meta_yaml = (
+            yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) if yaml else ""
+        )
     except Exception:
         meta_yaml = ""
     # Ensure trailing newline in fenced blocks
     meta_yaml = meta_yaml.rstrip() + "\n"
     parts: List[str] = []
-    parts.append("<!-- METADATA:START -->\n```yaml\n" + meta_yaml + "```\n<!-- METADATA:END -->\n")
+    parts.append(
+        "<!-- METADATA:START -->\n```yaml\n"
+        + meta_yaml
+        + "```\n<!-- METADATA:END -->\n"
+    )
     # Only include PROMPT block if non-empty
     if body and body.strip():
-        parts.append("\n<!-- PROMPT:START -->\n" + body.strip() + "\n<!-- PROMPT:END -->\n")
+        parts.append(
+            "\n<!-- PROMPT:START -->\n" + body.strip() + "\n<!-- PROMPT:END -->\n"
+        )
     return "".join(parts)
 
 
-def convert_file(yaml_path: Path, *, fix: bool, force: bool, delete_yaml: bool) -> Tuple[bool, str, Path | None]:
+def convert_file(
+    yaml_path: Path, *, fix: bool, force: bool, delete_yaml: bool
+) -> Tuple[bool, str, Path | None]:
     kind = None
     if yaml_path.name.lower() == "project.yaml":
         kind = "project"
@@ -117,7 +127,9 @@ def convert_file(yaml_path: Path, *, fix: bool, force: bool, delete_yaml: bool) 
     return True, "converted", md_target
 
 
-def walk_and_convert(root: Path, *, fix: bool, force: bool, delete_yaml: bool) -> List[Tuple[Path, str]]:
+def walk_and_convert(
+    root: Path, *, fix: bool, force: bool, delete_yaml: bool
+) -> List[Tuple[Path, str]]:
     out: List[Tuple[Path, str]] = []
     if not root.exists():
         return out
@@ -125,7 +137,9 @@ def walk_and_convert(root: Path, *, fix: bool, force: bool, delete_yaml: bool) -
         # Only project.yaml / agent.yaml
         if p.name.lower() not in ("project.yaml", "agent.yaml"):
             continue
-        changed, msg, target = convert_file(p, fix=fix, force=force, delete_yaml=delete_yaml)
+        changed, msg, target = convert_file(
+            p, fix=fix, force=force, delete_yaml=delete_yaml
+        )
         if changed:
             out.append((target or p, msg))
     return out
@@ -133,10 +147,23 @@ def walk_and_convert(root: Path, *, fix: bool, force: bool, delete_yaml: bool) -
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fix", action="store_true", help="Write changes to disk (default is dry-run)")
-    ap.add_argument("--force", action="store_true", help="Overwrite existing .md files if present")
-    ap.add_argument("--delete-yaml", action="store_true", help="Delete the source YAML files after successful conversion")
-    ap.add_argument("--roots", nargs="*", default=[], help="Directories to scan (agent/prompt roots)")
+    ap.add_argument(
+        "--fix", action="store_true", help="Write changes to disk (default is dry-run)"
+    )
+    ap.add_argument(
+        "--force", action="store_true", help="Overwrite existing .md files if present"
+    )
+    ap.add_argument(
+        "--delete-yaml",
+        action="store_true",
+        help="Delete the source YAML files after successful conversion",
+    )
+    ap.add_argument(
+        "--roots",
+        nargs="*",
+        default=[],
+        help="Directories to scan (agent/prompt roots)",
+    )
     args = ap.parse_args()
 
     roots = [Path(p) for p in (args.roots or [])]
@@ -148,7 +175,9 @@ def main() -> int:
         ]
     total: List[Tuple[Path, str]] = []
     for r in roots:
-        total += walk_and_convert(r, fix=args.fix, force=args.force, delete_yaml=args.delete_yaml)
+        total += walk_and_convert(
+            r, fix=args.fix, force=args.force, delete_yaml=args.delete_yaml
+        )
 
     print(f"Converted/updated: {len(total)} files")
     for t, msg in total:

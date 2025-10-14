@@ -10,13 +10,40 @@ def test_list_hierarchical(monkeypatch):
         repo_mod,
         "list",
         lambda **kwargs: [
-            {"name": "AgentFab", "agents": [
-                {"type": "agent", "id": "AgentFab", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"}
-            ]},
-            {"name": "UxFab", "agents": [
-                {"type": "agent", "id": "NewsAggr", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
-                {"type": "agent", "id": "DialogSummary", "name": "DialogSummary", "aliases": [], "prompts": [], "path": "/p/UxFab/DialogSummary/agent.yaml"},
-            ]},
+            {
+                "name": "AgentFab",
+                "agents": [
+                    {
+                        "type": "agent",
+                        "id": "AgentFab",
+                        "name": "AgentFab",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/agent.yaml",
+                    }
+                ],
+            },
+            {
+                "name": "UxFab",
+                "agents": [
+                    {
+                        "type": "agent",
+                        "id": "NewsAggr",
+                        "name": "NewsAggr",
+                        "aliases": [],
+                        "prompts": ["Daily", "Weekly"],
+                        "path": "/p/UxFab/NewsAggr/agent.yaml",
+                    },
+                    {
+                        "type": "agent",
+                        "id": "DialogSummary",
+                        "name": "DialogSummary",
+                        "aliases": [],
+                        "prompts": [],
+                        "path": "/p/UxFab/DialogSummary/agent.yaml",
+                    },
+                ],
+            },
         ],
         raising=True,
     )
@@ -36,24 +63,45 @@ def test_list_filters_and_wildcards(monkeypatch):
 
     def _list(**kwargs):
         agents = [
-            {"type": "agent", "id": "NewsAggr", "name": "NewsAggr", "aliases": [], "prompts": ["Daily", "Weekly"], "path": "/p/UxFab/NewsAggr/agent.yaml"},
-            {"type": "agent", "id": "DialogSummary", "name": "DialogSummary", "aliases": [], "prompts": ["Short"], "path": "/p/UxFab/DialogSummary/agent.yaml"},
+            {
+                "type": "agent",
+                "id": "NewsAggr",
+                "name": "NewsAggr",
+                "aliases": [],
+                "prompts": ["Daily", "Weekly"],
+                "path": "/p/UxFab/NewsAggr/agent.yaml",
+            },
+            {
+                "type": "agent",
+                "id": "DialogSummary",
+                "name": "DialogSummary",
+                "aliases": [],
+                "prompts": ["Short"],
+                "path": "/p/UxFab/DialogSummary/agent.yaml",
+            },
         ]
         agent_pat = (kwargs.get("agent") or "").strip()
         prompt_pat = (kwargs.get("prompt") or "").strip()
+
         def _match(name: str, pat: str) -> bool:
             if not pat:
                 return True
             if "*" in pat:
                 import fnmatch
+
                 return fnmatch.fnmatch(name, pat)
             return name == pat
+
         # apply agent filter
         if agent_pat:
             agents = [a for a in agents if _match(a["name"], agent_pat)]
         # apply prompt filter
         if prompt_pat:
-            agents = [a for a in agents if any(_match(p, prompt_pat) for p in (a.get("prompts") or []))]
+            agents = [
+                a
+                for a in agents
+                if any(_match(p, prompt_pat) for p in (a.get("prompts") or []))
+            ]
         return [{"name": "UxFab", "agents": agents}]
 
     monkeypatch.setattr(repo_mod, "list", _list, raising=True)
@@ -72,9 +120,17 @@ def test_list_filters_and_wildcards(monkeypatch):
 def test_resolve_agent(monkeypatch):
     mod = importlib.import_module("call.lib.api")
     repo_mod = importlib.import_module("call.lib.repo_db")
-    monkeypatch.setattr(repo_mod, "find_agents", lambda **kw: [
-        {"project": "UxFab", "agent": "NewsAggr", "path": "/p/UxFab/NewsAggr/agent.yaml"}
-    ])
+    monkeypatch.setattr(
+        repo_mod,
+        "find_agents",
+        lambda **kw: [
+            {
+                "project": "UxFab",
+                "agent": "NewsAggr",
+                "path": "/p/UxFab/NewsAggr/agent.yaml",
+            }
+        ],
+    )
 
     ok = mod.resolve_agent(project="UxFab", agent="NewsAggr")
     assert ok.get("ok") is True
@@ -91,9 +147,21 @@ def test_resolve_agent_across_projects_when_project_none(monkeypatch):
         p = kw.get("project")
         a = kw.get("agent")
         if (p in (None, "AgentFab")) and a == "BusinessAnalyticAgent":
-            return [{"project": "AgentFab", "agent": "BusinessAnalyticAgent", "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"}]
+            return [
+                {
+                    "project": "AgentFab",
+                    "agent": "BusinessAnalyticAgent",
+                    "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml",
+                }
+            ]
         if (p in (None, "UxFab")) and a == "NewsAggr":
-            return [{"project": "UxFab", "agent": "NewsAggr", "path": "/p/UxFab/NewsAggr/agent.yaml"}]
+            return [
+                {
+                    "project": "UxFab",
+                    "agent": "NewsAggr",
+                    "path": "/p/UxFab/NewsAggr/agent.yaml",
+                }
+            ]
         return []
 
     monkeypatch.setattr(repo_mod, "find_agents", _find_agents)
@@ -107,6 +175,7 @@ def test_resolve_agent_across_projects_when_project_none(monkeypatch):
 
 def test_list_agentfab_contains_core_agents(monkeypatch):
     import importlib
+
     mod = importlib.import_module("call.lib.api")
     repo_mod = importlib.import_module("call.lib.repo_db")
 
@@ -115,13 +184,51 @@ def test_list_agentfab_contains_core_agents(monkeypatch):
         repo_mod,
         "list",
         lambda **kwargs: [
-            {"name": "AgentFab", "agents": [
-                {"type": "agent", "id": "AgentFab", "name": "AgentFab", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/agent.yaml"},
-                {"type": "agent", "id": "BusinessAnalyticAgent", "name": "BusinessAnalyticAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml"},
-                {"type": "agent", "id": "SelfReflection", "name": "SelfReflection", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/SelfReflection/agent.yaml"},
-                {"type": "agent", "id": "DiscoveryAgent", "name": "DiscoveryAgent", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/DiscoveryAgent/agent.yaml"},
-                {"type": "agent", "id": "StratoFormatter", "name": "StratoFormatter", "aliases": [], "prompts": ["Default"], "path": "/p/AgentFab/StratoFormater/agent.md"},
-            ]}
+            {
+                "name": "AgentFab",
+                "agents": [
+                    {
+                        "type": "agent",
+                        "id": "AgentFab",
+                        "name": "AgentFab",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/agent.yaml",
+                    },
+                    {
+                        "type": "agent",
+                        "id": "BusinessAnalyticAgent",
+                        "name": "BusinessAnalyticAgent",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/BusinessAnalyticAgent/agent.yaml",
+                    },
+                    {
+                        "type": "agent",
+                        "id": "SelfReflection",
+                        "name": "SelfReflection",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/SelfReflection/agent.yaml",
+                    },
+                    {
+                        "type": "agent",
+                        "id": "DiscoveryAgent",
+                        "name": "DiscoveryAgent",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/DiscoveryAgent/agent.yaml",
+                    },
+                    {
+                        "type": "agent",
+                        "id": "StratoFormatter",
+                        "name": "StratoFormatter",
+                        "aliases": [],
+                        "prompts": ["Default"],
+                        "path": "/p/AgentFab/StratoFormater/agent.md",
+                    },
+                ],
+            }
         ],
         raising=True,
     )
@@ -129,6 +236,11 @@ def test_list_agentfab_contains_core_agents(monkeypatch):
     tree = mod.list(project="AgentFab")
     assert len(tree) == 1
     agents = {a["name"] for a in (tree[0].get("agents") or [])}
-    expected = {"BusinessAnalyticAgent", "SelfReflection", "DiscoveryAgent", "StratoFormatter"}
+    expected = {
+        "BusinessAnalyticAgent",
+        "SelfReflection",
+        "DiscoveryAgent",
+        "StratoFormatter",
+    }
     # At least 4 required agents present
     assert expected.issubset(agents)

@@ -8,6 +8,7 @@ Policy:
 Functions:
 - scan(repos?: list[str]) -> dict { ok: bool, scanned: int }
 """
+
 from __future__ import annotations
 
 import builtins
@@ -42,7 +43,8 @@ def _load_repos_from_env() -> List[str]:
     toks = [t.strip().lower() for t in raw.replace(";", ",").split(",") if t.strip()]
     return [t for t in toks if t in {"agent", "prompt"}]
 
-# todo - add othes repos of any structurue 0 not jusy agent and prompt 
+
+# todo - add othes repos of any structurue 0 not jusy agent and prompt
 def _validate_env_repos(repos: List[str]) -> None:
     tokens = [str(r).strip().lower() for r in repos if str(r).strip()]
     missing: set[str] = set()
@@ -120,8 +122,11 @@ def _read_agent_name(path: Path, *, default: str) -> str:
                 y1 = text.index("```yaml", y0) + len("```yaml")
                 y2 = text.index("```", y1)
                 import yaml
+
                 meta = yaml.safe_load(text[y1:y2]) or {}
-                cand = (meta.get("id") or meta.get("name") or meta.get("title") or "").strip()
+                cand = (
+                    meta.get("id") or meta.get("name") or meta.get("title") or ""
+                ).strip()
                 if not cand:
                     cand = path.stem
                 name = str(cand)
@@ -143,12 +148,17 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
 
     # Enumerate projects (filesystem only in sync)
     try:
-        projects = [d.name for d in Path(arepo).iterdir() if d.is_dir() and not d.name.startswith('.')]
+        projects = [
+            d.name
+            for d in Path(arepo).iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        ]
     except Exception:
         projects = []
 
     # Helpers for path/url composition
     import os as _os
+
     GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
     GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
 
@@ -158,7 +168,11 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
         except Exception:
             rel_inside = abs_path.name
         rel_with_repo = f"agent/{rel_inside}"
-        url = f"{GITHUB_ORG}/agent/blob/{GITHUB_BRANCH}/{rel_inside}" if (GITHUB_ORG and rel_inside) else ""
+        url = (
+            f"{GITHUB_ORG}/agent/blob/{GITHUB_BRANCH}/{rel_inside}"
+            if (GITHUB_ORG and rel_inside)
+            else ""
+        )
         return rel_with_repo, url
 
     def _read_meta(md_path: Path) -> dict:
@@ -168,6 +182,7 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
             y1 = text.index("```yaml", y0) + len("```yaml")
             y2 = text.index("```", y1)
             import yaml as _yaml
+
             meta = _yaml.safe_load(text[y1:y2]) or {}
             return meta if isinstance(meta, dict) else {}
         except Exception:
@@ -180,7 +195,8 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
         per_project_agents = 0
         # Project-level MD
         proj_md = pdir / "project.md"
-        eng = ""; orch = ""
+        eng = ""
+        orch = ""
         if proj_md.exists():
             meta = _read_meta(proj_md)
             eng = str(meta.get("engine") or "")
@@ -209,7 +225,9 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
         f = pdir / "agent.md"
         if f.exists():
             ag_name = _read_agent_name(f, default=pname)
-            eng = ""; orch = ""; prompts_list: list[str] = []
+            eng = ""
+            orch = ""
+            prompts_list: list[str] = []
             meta = _read_meta(f)
             eng = str(meta.get("engine") or "")
             orch = str(meta.get("orchestration") or "")
@@ -237,13 +255,14 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
         try:
             for child in pdir.iterdir():
                 try:
-                    if not child.is_dir() or child.name.startswith('.'):
+                    if not child.is_dir() or child.name.startswith("."):
                         continue
                     f = child / "agent.md"
                     if not f.exists():
                         continue
                     ag_name = _read_agent_name(f, default=child.name)
-                    eng = ""; orch = ""
+                    eng = ""
+                    orch = ""
                     meta = {}
                     try:
                         text = f.read_text(encoding="utf-8")
@@ -251,6 +270,7 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                         y1 = text.index("```yaml", y0) + len("```yaml")
                         y2 = text.index("```", y1)
                         import yaml as _yaml
+
                         meta = _yaml.safe_load(text[y1:y2]) or {}
                         eng = str(meta.get("engine") or "")
                         orch = str(meta.get("orchestration") or "")
@@ -270,7 +290,11 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                         type="agent",
                         rel_path=relp,
                         url=url,
-                        goal=str((meta.get("goal") if isinstance(meta, dict) else "") or (meta.get("purpose") if isinstance(meta, dict) else "") or ""),
+                        goal=str(
+                            (meta.get("goal") if isinstance(meta, dict) else "")
+                            or (meta.get("purpose") if isinstance(meta, dict) else "")
+                            or ""
+                        ),
                         card=_read_card_text(f),
                     )
                     scanned += 1
@@ -281,7 +305,9 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
             pass
         # Record per-project stats
         try:
-            directories.append({"project": pname, "path": str(pdir), "agents": int(per_project_agents)})
+            directories.append(
+                {"project": pname, "path": str(pdir), "agents": int(per_project_agents)}
+            )
         except Exception:
             pass
     return scanned, directories
@@ -305,6 +331,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
     per_project_agents_prompt_repo: dict[str, int] = {}
     per_project_has_project_card: set[str] = set()
     import os as _os
+
     GITHUB_ORG = _os.environ.get("GITHUB_REMOTE_ORGANIZATION_URL", "").rstrip("/")
     GITHUB_BRANCH = _os.environ.get("GITHUB_BRANCH", "main").strip()
 
@@ -315,12 +342,21 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
         except Exception:
             rel_inside = abs_path.name
         rel_with_repo = f"prompt/{rel_inside}"
-        url = f"{GITHUB_ORG}/prompt/blob/{GITHUB_BRANCH}/{rel_inside}" if (GITHUB_ORG and rel_inside) else ""
+        url = (
+            f"{GITHUB_ORG}/prompt/blob/{GITHUB_BRANCH}/{rel_inside}"
+            if (GITHUB_ORG and rel_inside)
+            else ""
+        )
         return rel_with_repo, url
+
     # Phase 1A: scan top-level project directories in prompt repo for project.md (hierarchical)
     try:
         for child in Path(prepo).iterdir():
-            if not child.is_dir() or child.name.startswith('.') or child.name in ("ready", "draft"):
+            if (
+                not child.is_dir()
+                or child.name.startswith(".")
+                or child.name in ("ready", "draft")
+            ):
                 continue
             proj_name = child.name
             proj_md = child / "project.md"
@@ -406,11 +442,13 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
             try:
                 _pname = str(meta.get("project") or proj_name or "")
                 if _pname:
-                    per_project_agents_prompt_repo[_pname] = int(per_project_agents_prompt_repo.get(_pname, 0)) + 1
+                    per_project_agents_prompt_repo[_pname] = (
+                        int(per_project_agents_prompt_repo.get(_pname, 0)) + 1
+                    )
             except Exception:
                 pass
             # Insert placeholder prompts declared on the agent card
-            for pr_id in (prompts_list or []):
+            for pr_id in prompts_list or []:
                 try:
                     _upsert_row(
                         cur,
@@ -444,14 +482,23 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
             except Exception as ge:
                 debug_print("[repo.scan] prompt glob error", f"root={root}", str(ge))
                 files = []
-            debug_print("[repo.scan] prompt root", f"path={root}", f"files={len(files)}")
+            debug_print(
+                "[repo.scan] prompt root", f"path={root}", f"files={len(files)}"
+            )
             for p in files:
-                proj = ""; agent = ""; pr_id = ""; eng = ""; orch = ""; goal = ""
+                proj = ""
+                agent = ""
+                pr_id = ""
+                eng = ""
+                orch = ""
+                goal = ""
                 # Treat every file in ready/draft as a prompt card
                 try:
                     meta = _read_prompt_metadata(p) or {}
                     if not meta:
-                        debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}")
+                        debug_print(
+                            "[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}"
+                        )
                     pr_id = str(meta.get("id") or p.stem)
                     proj = str(meta.get("project") or "")
                     agent = str(meta.get("agent") or "")
@@ -459,7 +506,11 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     orch = str(meta.get("orchestration") or "")
                     goal = str(meta.get("goal") or meta.get("purpose") or "")
                     if (not proj) or (not agent):
-                        debug_print("[repo.scan]", "[WARN]", f"Prompt MD missing project/agent: {p}")
+                        debug_print(
+                            "[repo.scan]",
+                            "[WARN]",
+                            f"Prompt MD missing project/agent: {p}",
+                        )
                 except Exception:
                     pr_id = p.stem
                 target = pr_id
@@ -467,7 +518,13 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 try:
                     state = root.name.lower()
                     if state not in ("ready", "draft"):
-                        state = "ready" if ("ready" in str(root).lower()) else ("draft" if ("draft" in str(root).lower()) else "ready")
+                        state = (
+                            "ready"
+                            if ("ready" in str(root).lower())
+                            else (
+                                "draft" if ("draft" in str(root).lower()) else "ready"
+                            )
+                        )
                 except Exception:
                     state = "ready" if ("ready" in str(p).lower()) else "draft"
                 relp, url = _rel_url(p)
@@ -484,7 +541,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     type="prompt",
                     rel_path=relp,
                     url=url,
-                    goal=(goal if 'goal' in locals() else ""),
+                    goal=(goal if "goal" in locals() else ""),
                     card=_read_card_text(p),
                 )
                 scanned += 1
@@ -505,21 +562,27 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
             continue
     # Emit directories summary for REAL directories under prompt root only (no virtual)
     try:
-        all_projects: set[str] = set(per_project.keys()) | set(per_project_agents_prompt_repo.keys()) | set(per_project_has_project_card)
+        all_projects: set[str] = (
+            set(per_project.keys())
+            | set(per_project_agents_prompt_repo.keys())
+            | set(per_project_has_project_card)
+        )
         for proj in sorted(all_projects):
             try:
                 pdir = Path(prepo) / proj
                 if not pdir.exists() or not pdir.is_dir():
                     continue
                 counts = per_project.get(proj, {})
-                total_prompts = int(counts.get("ready", 0)) + int(counts.get("draft", 0))
+                total_prompts = int(counts.get("ready", 0)) + int(
+                    counts.get("draft", 0)
+                )
                 entry = {
                     "project": proj,
                     "path": str(pdir),
                     "prompts": total_prompts,
                 }
                 # Indicate presence of project card (project.md) in this directory
-                has_proj_card = (proj in per_project_has_project_card)
+                has_proj_card = proj in per_project_has_project_card
                 if has_proj_card:
                     entry["project_card"] = True
                     # Include agents count discovered hierarchically under prompt/<Project>/** if > 0
@@ -535,11 +598,13 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 sdir = Path(prepo) / state_name
                 if not sdir.exists() or not sdir.is_dir():
                     continue
-                directories.append({
-                    "project": state_name,
-                    "path": str(sdir),
-                    "prompts": int(per_root_counts.get(state_name, 0)),
-                })
+                directories.append(
+                    {
+                        "project": state_name,
+                        "path": str(sdir),
+                        "prompts": int(per_root_counts.get(state_name, 0)),
+                    }
+                )
             except Exception:
                 continue
     except Exception:
@@ -547,7 +612,9 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
     return scanned, directories
 
 
-def reload(repos: Optional[List[str]] = None, *, full_form: bool = True) -> Dict[str, object]:
+def reload(
+    repos: Optional[List[str]] = None, *, full_form: bool = True
+) -> Dict[str, object]:
     """Scan configured repos and update the repo.db index. (Filesystem only)"""
     conn = repo_db._ensure_db()
     cur = conn.cursor()
@@ -571,7 +638,9 @@ def reload(repos: Optional[List[str]] = None, *, full_form: bool = True) -> Dict
                 if full_form:
                     try:
                         arepo = discover_agent_repo()
-                        repos_out.append({"name": "agent", "root": str(arepo), "directories": dirs})
+                        repos_out.append(
+                            {"name": "agent", "root": str(arepo), "directories": dirs}
+                        )
                     except Exception:
                         repos_out.append({"name": "agent", "directories": dirs})
                 else:
@@ -582,7 +651,9 @@ def reload(repos: Optional[List[str]] = None, *, full_form: bool = True) -> Dict
                 if full_form:
                     try:
                         prepo = discover_prompt_repo()
-                        repos_out.append({"name": "prompt", "root": str(prepo), "directories": dirs})
+                        repos_out.append(
+                            {"name": "prompt", "root": str(prepo), "directories": dirs}
+                        )
                     except Exception:
                         repos_out.append({"name": "prompt", "directories": dirs})
                 else:
@@ -603,7 +674,13 @@ def reload(repos: Optional[List[str]] = None, *, full_form: bool = True) -> Dict
         return {"ok": True, "scanned": scanned, "repos": repos_out}
     except Exception as e:
         conn.rollback()
-        return {"ok": False, "error_code": 500, "description": str(e), "code": "INTERNAL_ERROR", "scanned": scanned}
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": str(e),
+            "code": "INTERNAL_ERROR",
+            "scanned": scanned,
+        }
     finally:
         try:
             cur.close()

@@ -38,26 +38,42 @@ def test_call_success_with_prompt_override(monkeypatch):
 
     # Patch build_and_run_agent to avoid heavy runtime and return a cfg with _last_final_output
     app_call = importlib.import_module("call.app.call")
+
     class _Cfg:
         def __init__(self, out):
             self._last_final_output = out
-    class _DummyAgent: pass
-    class _DummySession: pass
+
+    class _DummyAgent:
+        pass
+
+    class _DummySession:
+        pass
+
     class _CM:
         def __init__(self, out):
             self.out = out
+
         async def __aenter__(self):
             return _DummyAgent(), _Cfg(self.out), _DummySession()
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
     def fake_build_and_run_agent(*, cfg, user_input=""):
         return _CM(f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{user_input}")
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
 
-    res = api.call(project="UxFab", agent="DialogPostAnalysis", prompt="33-Questioning", input="hello")
+    res = api.call(
+        project="UxFab",
+        agent="DialogPostAnalysis",
+        prompt="33-Questioning",
+        input="hello",
+    )
     assert res.get("ok") is True
-    assert res.get("final_output", "").startswith("ok:DialogPostAnalysis:33-Questioning:UxFab")
+    assert res.get("final_output", "").startswith(
+        "ok:DialogPostAnalysis:33-Questioning:UxFab"
+    )
     resolved = res.get("resolved") or {}
     assert resolved.get("agent") == "DialogPostAnalysis"
     assert resolved.get("project") == "UxFab"
@@ -68,6 +84,7 @@ def test_call_event_ack(monkeypatch):
 
     # Ensure pipeline is not invoked by tracking import attempts
     import sys
+
     marker = object()
     monkeypatch.setitem(sys.modules, "call.app.call", marker)
 
@@ -84,6 +101,7 @@ def test_call_event_error_test(monkeypatch):
     api = importlib.import_module("call.lib.api")
 
     import sys
+
     marker = object()
     monkeypatch.setitem(sys.modules, "call.app.call", marker)
 
@@ -126,7 +144,11 @@ def test_api_interpret_exec_payload_event_with_target():
 def test_api_interpret_exec_payload_event_with_multiple_selectors_error():
     api = importlib.import_module("call.lib.api")
 
-    payload = {"event": "session_transcription_done", "project": "UxFab", "agent": "DialogPostAnalysis"}
+    payload = {
+        "event": "session_transcription_done",
+        "project": "UxFab",
+        "agent": "DialogPostAnalysis",
+    }
     kwargs, err = api.api_interpret_exec_payload(payload)
     assert kwargs == {}
     assert err is not None

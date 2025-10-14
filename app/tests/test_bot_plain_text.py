@@ -14,6 +14,7 @@ async def test_handle_plain_text_no_nameerror(monkeypatch):
     We force should_handle=False to avoid scheduling background tasks.
     """
     import importlib
+
     bot = importlib.import_module("call.telegram_bot.bot")
 
     # Ensure auth wrapper does not access update.effective_user
@@ -21,7 +22,9 @@ async def test_handle_plain_text_no_nameerror(monkeypatch):
 
     # Return a valid base project and avoid scheduling a call
     monkeypatch.setattr(bot, "_get_bot_project", lambda update: "AgentFab")
-    monkeypatch.setattr(bot, "_resolve_agent_and_input", lambda text, base, is_private: ("", "", False))
+    monkeypatch.setattr(
+        bot, "_resolve_agent_and_input", lambda text, base, is_private: ("", "", False)
+    )
 
     class _Msg:
         text = "@Name hi"
