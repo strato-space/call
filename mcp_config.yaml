@@ -95,7 +95,7 @@ mcpServers:
       Перечень функций: https://github.com/chigwell/telegram-mcp
       
   # uv --directory mcp-telegram-bot sync 
-  # uv --directory mcp-telegram-bot run main.py
+  # uv --directory mcp-telegram-bot run mcp-telegram-bot start
   # note: the app should load call/.env itself (e.g., via python-dotenv)
   tgbot:
     enabled: true
