@@ -1981,6 +1981,7 @@ async def safe_send_message(
     parse_mode: str | None = None,
     reply_markup: InlineKeyboardMarkup | None = None,
     reply_to_message_id: int | None = None,
+    disable_notification: bool = True,
 ) -> Message:
     """Wrapper around bot.send_message with retry and 'thread not found' fallback.
 
@@ -1996,7 +1997,8 @@ async def safe_send_message(
 
     async def _op():
         kwargs = dict(
-            chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup
+            chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup,
+            disable_notification=disable_notification
         )
         if message_thread_id is not None:
             kwargs["message_thread_id"] = message_thread_id
@@ -2029,6 +2031,7 @@ async def safe_send_message(
                     text=text,
                     parse_mode=parse_mode,
                     reply_markup=reply_markup,
+                    disable_notification=disable_notification,
                 )
 
             return await async_retry(
@@ -2258,18 +2261,18 @@ def compose_welcome_html(
     )
 
     preview = (user_input or "").strip()
-    # Try to pretty print JSON payloads for readability
+    # Try to pretty print JSON/dict payloads as YAML for readability
     pretty_preview: str | None = None
     try:
         if preview and (preview.startswith("{") or preview.startswith("[")):
             import json as _json
 
             obj = _json.loads(preview)
-            pretty = _json.dumps(obj, ensure_ascii=False, indent=2)
+            pretty = _dump_yaml_literal(obj, width=80)
             # Clamp to safe length
             if len(pretty) > 3600:
                 pretty = pretty[:3597] + "..."
-            pretty_preview = f'<pre><code class="language-json">{pretty}</code></pre>'
+            pretty_preview = f'<pre><code class="language-yaml">{_html.escape(pretty)}</code></pre>'
     except Exception:
         pretty_preview = None
     if not pretty_preview:
@@ -2426,6 +2429,8 @@ class MCPServerStdioHook(MCPServerStdio):
         self.__telegram_last_message: Optional[Message] = None
         # Cache last cleaned+truncated text to avoid redundant edits
         self.__last_tg_text: Optional[str] = None
+        # Service message queue: track intermediate MCP messages for cleanup
+        self.__service_message_ids: list[tuple[int, int]] = []  # [(chat_id, msg_id), ...]
         # Try to derive a readable MCP title
         self._mcp_title: str = (
             str(getattr(self, "name", "") or "").strip()
@@ -2547,9 +2552,13 @@ class MCPServerStdioHook(MCPServerStdio):
                 message_thread_id=selected_thread_id,
                 text=cleaned,
                 parse_mode=ParseMode.HTML,
+                disable_notification=True,
             )
             self.__telegram_last_message = msg
             self.__last_tg_text = cleaned
+            # Track service message for cleanup
+            if msg:
+                self.__service_message_ids.append((msg.chat_id, msg.message_id))
             return msg
         except Exception:
             # Swallow errors to keep MCP flow running
@@ -2659,10 +2668,17 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
+                result_text = self._format_tool_result(result)
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + self._format_tool_result(result)
+                    + result_text
                 )
+                # Send result to Telegram
+                try:
+                    result_body = f"✅ {tool_name}\n\n{result_text}".strip()
+                    await self.__edit_message_text(result_body)
+                except Exception:
+                    pass
                 return result
             except Exception as e:
                 try:
@@ -2789,6 +2805,18 @@ class MCPServerStdioHook(MCPServerStdio):
         except Exception as e:
             print(f"[MCP Hook] Error in tool {tool_name}: {str(e)}")
             raise
+
+    async def cleanup_service_messages(self) -> None:
+        """Delete all tracked service messages from Telegram."""
+        if not self.__service_message_ids:
+            return
+        await _init_bot_safe()
+        for chat_id, msg_id in self.__service_message_ids:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+        self.__service_message_ids.clear()
 
 
 # -------- Call subsystem helpers --------
@@ -3594,3 +3622,11 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             pass
 
         yield agent, cfg, session
+
+        # Cleanup: delete all MCP service messages after final result is delivered
+        try:
+            for srv in mcp_servers:
+                if isinstance(srv, MCPServerStdioHook):
+                    await srv.cleanup_service_messages()
+        except Exception:
+            pass
