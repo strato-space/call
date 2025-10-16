@@ -58,6 +58,46 @@ import html as _html
 
 from call.lib import api as call_api
 
+
+class _LiteralYamlDumper(yaml.SafeDumper):
+    """YAML dumper that renders multiline strings as block scalars."""
+
+
+def _literal_yaml_str_representer(dumper, data):
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
+
+
+def _dump_yaml_literal(obj: Any, *, width: int = 1000) -> str:
+    """Serialize Python data to YAML with readable multiline formatting."""
+
+    try:
+        return yaml.dump(
+            obj,
+            Dumper=_LiteralYamlDumper,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+            width=width,
+        )
+    except Exception:
+        try:
+            return yaml.safe_dump(
+                obj,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+                width=width,
+            )
+        except Exception:
+            try:
+                return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+            except Exception:
+                return str(obj)
+
 # Import agent utilities (internal copy)
 try:
     from .utils.agent_utils import extract_agent_attributes, get_agent_instructions
@@ -279,29 +319,7 @@ def _attrs_to_yaml_text(attrs) -> str | None:
     """
     if not isinstance(attrs, dict) or not attrs:
         return None
-
-    class _BlockStrDumper(yaml.SafeDumper):
-        pass
-
-    def _str_representer(dumper, data):
-        style = "|" if ("\n" in data) else None
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
-
-    _BlockStrDumper.add_representer(str, _str_representer)
-    try:
-        return yaml.dump(
-            attrs,
-            Dumper=_BlockStrDumper,
-            allow_unicode=True,
-            sort_keys=False,
-            default_flow_style=False,
-            width=1000,
-        )
-    except Exception:
-        try:
-            return yaml.safe_dump(attrs, allow_unicode=True, sort_keys=False)
-        except Exception:
-            return None
+    return _dump_yaml_literal(attrs, width=1000)
 
 
 def debug_dump_cfg_preview(cfg) -> None:
@@ -2481,20 +2499,12 @@ class MCPServerStdioHook(MCPServerStdio):
                 if isinstance(value, set):
                     seq = sorted(list(value), key=str)
                 try:
-                    import yaml
-
-                    text = yaml.safe_dump(
-                        seq, allow_unicode=True, sort_keys=False
-                    )
+                    text = _dump_yaml_literal(seq)
                 except Exception:
                     text = json.dumps(seq, ensure_ascii=False, indent=2, default=str)
             elif isinstance(value, dict):
                 try:
-                    import yaml
-
-                    text = yaml.safe_dump(
-                        value, allow_unicode=True, sort_keys=False
-                    )
+                    text = _dump_yaml_literal(value)
                 except Exception:
                     text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
             else:
@@ -2517,7 +2527,7 @@ class MCPServerStdioHook(MCPServerStdio):
         debug_mode = bool(os.getenv("DEBUG_MODE"))
         if not debug_mode and len(text) > max_len:
             text = text[: max_len - 3] + "..."
-        return text.strip("\n")
+        return text.rstrip("\n")
 
     async def __send_message(self, text: str) -> Message:
         """Send a new Telegram message for this MCP instance and cache it. Never raises."""
@@ -2586,61 +2596,34 @@ class MCPServerStdioHook(MCPServerStdio):
         # Bind parent method to avoid 'super(): no arguments' inside nested closures
         parent_call_tool = super(MCPServerStdioHook, self).call_tool
 
+        def _deep_unescape(o):
+            if isinstance(o, str):
+                # Only basic escapes to improve readability
+                return o.replace("\\n", "\n").replace("\\t", "\t")
+            if isinstance(o, list):
+                return [_deep_unescape(i) for i in o]
+            if isinstance(o, tuple):
+                return tuple(_deep_unescape(i) for i in o)
+            if isinstance(o, set):
+                return {_deep_unescape(i) for i in o}
+            if isinstance(o, dict):
+                return {k: _deep_unescape(v) for k, v in o.items()}
+            return o
+
         # Try to present arguments in YAML for readability (console)
         def _to_yaml_text(obj) -> str:
-            """Dump arguments to YAML with better readability:
-            - Convert literal "\\n" sequences inside strings to real newlines
-            - Use YAML block style (|) for multiline strings
-            """
-
-            def _deep_unescape(o):
-                if isinstance(o, str):
-                    # Only basic escapes to improve readability
-                    return o.replace("\\n", "\n").replace("\\t", "\t")
-                if isinstance(o, list):
-                    return [_deep_unescape(i) for i in o]
-                if isinstance(o, dict):
-                    return {k: _deep_unescape(v) for k, v in o.items()}
-                return o
-
-            class _BlockStrDumper(yaml.SafeDumper):
-                pass
-
-            def str_representer(dumper, data):
-                style = "|" if ("\n" in data) else None
-                return dumper.represent_scalar(
-                    "tag:yaml.org,2002:str", data, style=style
-                )
-
-            _BlockStrDumper.add_representer(str, str_representer)
-
+            """Dump arguments to YAML with better readability."""
+            prepared = _deep_unescape(obj or {})
             try:
-                prepared = _deep_unescape(obj or {})
-                return yaml.dump(
-                    prepared,
-                    Dumper=_BlockStrDumper,
-                    allow_unicode=True,
-                    sort_keys=False,
-                    default_flow_style=False,
-                    width=1000,
-                )
+                return _dump_yaml_literal(prepared, width=1000)
             except Exception:
                 try:
-                    # JSON roundtrip with default=str to sanitize non-serializable objects
                     json_text = json.dumps(
                         obj or {}, ensure_ascii=False, indent=2, default=str
                     )
                     prepared = _deep_unescape(json.loads(json_text))
-                    return yaml.dump(
-                        prepared,
-                        Dumper=_BlockStrDumper,
-                        allow_unicode=True,
-                        sort_keys=False,
-                        default_flow_style=False,
-                        width=1000,
-                    )
+                    return _dump_yaml_literal(prepared, width=1000)
                 except Exception:
-                    # Last resort: pretty JSON string (also unescape newlines)
                     try:
                         s = json.dumps(
                             obj or {}, ensure_ascii=False, indent=2, default=str
@@ -3475,7 +3458,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
 
         debug_print(
             "[call]",
-            "input (sanitized from target / repaced empty to go): |-"
+            "input (sanitized from target / repaced empty to go): |-\n"
             + str(normalized_input),
         )
 
