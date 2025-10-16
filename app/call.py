@@ -2484,7 +2484,7 @@ class MCPServerStdioHook(MCPServerStdio):
                     import yaml
 
                     text = yaml.safe_dump(
-                        seq, allow_unicode=True, sort_keys=False, width=1000
+                        seq, allow_unicode=True, sort_keys=False
                     )
                 except Exception:
                     text = json.dumps(seq, ensure_ascii=False, indent=2, default=str)
@@ -2493,7 +2493,7 @@ class MCPServerStdioHook(MCPServerStdio):
                     import yaml
 
                     text = yaml.safe_dump(
-                        value, allow_unicode=True, sort_keys=False, width=1000
+                        value, allow_unicode=True, sort_keys=False
                     )
                 except Exception:
                     text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
@@ -2509,8 +2509,6 @@ class MCPServerStdioHook(MCPServerStdio):
         try:
             import re as _re_collapse
 
-            # Remove leading whitespace from each line
-            text = "\n".join(line.lstrip() for line in text.split("\n"))
             # Collapse multiple consecutive newlines to exactly 1
             text = _re_collapse.sub(r"\n{2,}", r"\n", text)
         except Exception:
