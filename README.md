@@ -202,6 +202,17 @@ model-settings-gpt-4.1:
   - Targets are validated via DB-only calls before scheduling runs: `resolve_agent()` for agents/prompts and `list(project=...)` for projects. Project scoping is derived from the bot name (e.g., `AgentFabBot` scopes to `AgentFab`), while `StratoSpaceAiBot` lists all projects.
   - Enable rich debug logs with `CALL_DEBUG=1` to see `[bot]` parsing decisions.
 
+- Input normalization (New)
+  - Trailing punctuation is stripped from agent/prompt names: `@220-PM-Status!` resolves to `220-PM-Status`.
+  - Newlines in `/call` input are preserved: multiline prompts remain intact after parsing.
+  - `--echo` flags are removed via regex without collapsing whitespace.
+
+- MCP Hook messages (New)
+  - All MCP server tool arguments and results are sent to Telegram in **silent mode** (`disable_notification=True`).
+  - Messages are wrapped in **expandable blockquotes** (`<blockquote expandable>`) to reduce visual clutter.
+  - Service messages are tracked and **deleted automatically** after the final agent result is delivered.
+  - Preview payloads (welcome banners) use **YAML formatting** instead of JSON for improved readability.
+
 ### CLI Quickstart
 
 Use the project virtual environment interpreter for consistency.

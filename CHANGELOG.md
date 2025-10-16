@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 
+## 2025-10-16
+
+- **Telegram Bot:** Agent/prompt name normalization now strips trailing punctuation (`,`, `.`, `;`, `:`, `!`, `?`, etc.) so `@220-PM-Status!` resolves to `220-PM-Status`. (`telegram_bot/bot.py`)
+- **Telegram Bot:** `/call` parser preserves newlines in multiline input by using regex-based flag removal and slicing without `.split()`. (`telegram_bot/bot.py`)
+- **Telegram Bot:** Echo flag detection simplified to direct string comparison instead of nested closures. (`telegram_bot/bot.py`)
+- **MCP Hook:** All MCP server tool arguments and results are now sent to Telegram in silent mode (`disable_notification=True`) and wrapped in expandable blockquotes (`<blockquote expandable>`) to reduce visual clutter. (`app/call.py`)
+- **MCP Hook:** Service messages are tracked and deleted automatically after the final agent result is delivered via `cleanup_service_messages()`. (`app/call.py`)
+- **MCP Hook:** Preview payloads (welcome banners) now use YAML formatting instead of JSON for improved readability. (`app/call.py`)
+- **Tests:** Added `test_normalize_token_strips_trailing_punctuation()`, `test_handle_call_with_trailing_punctuation_in_agent_name()`, and `test_handle_call_preserves_newlines_in_input()` to cover new parsing behavior. (`app/tests/test_telegram_bot_handlers.py`)
+- **Docs:** Updated README with "Input normalization" and "MCP Hook messages" sections documenting trailing punctuation stripping, newline preservation, silent MCP messages, expandable blockquotes, and automatic service message cleanup. (`README.md`)
+
 ## 2025-10-11
 
 - **CLI:** call exec now reloads repositories when CALL_DEBUG is set before payload construction so local prompt/agent edits are picked up without restarting. (call/cli/main.py, call/README.md)

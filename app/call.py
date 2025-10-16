@@ -2541,7 +2541,7 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         payload = (
-            header + f'<pre><code class="language-text">{escaped_body}</code></pre>'
+            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
         )
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
         try:
@@ -2570,7 +2570,7 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         safe_text = (
-            header + f'<pre><code class="language-text">{escaped_body}</code></pre>'
+            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
         )
         if not self.__telegram_last_message:
             # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
