@@ -1328,13 +1328,17 @@ async def call_async(
         )
 
     # Emit session id: prefer explicit override; else actual runtime; else agentless chat[:thread]
+    # Only emit when: override provided, session created, or routing explicitly configured
     session_id_out = None
     try:
         if isinstance(session_id, str) and session_id.strip():
+            # Explicit override provided
             session_id_out = session_id
         elif "actual_sid" in locals() and actual_sid:
+            # Session was created
             session_id_out = actual_sid
-        elif selected_chat_id is not None:
+        elif (chat_id is not None or thread_id is not None) and selected_chat_id is not None:
+            # Routing was explicitly configured via args
             session_id_out = (
                 f"{selected_chat_id}:{selected_thread_id}"
                 if (selected_thread_id is not None)
