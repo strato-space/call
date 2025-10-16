@@ -64,8 +64,11 @@ class _LiteralYamlDumper(yaml.SafeDumper):
 
 
 def _literal_yaml_str_representer(dumper, data):
-    style = "|" if "\n" in data else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+    # Always use literal block scalar for multiline strings to preserve formatting
+    if "\n" in data:
+        # Use |- (literal with strip chomping) to avoid trailing newline
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|-")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=None)
 
 
 _LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
