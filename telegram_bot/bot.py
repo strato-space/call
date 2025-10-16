@@ -493,11 +493,15 @@ def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
     return at, f"https://t.me/{handle}"
 
 
+_TRAILING_PUNCT_RE = re.compile(r"[\s\.,;:!\?…'\"`“”‘’\)\]\}›»]+$")
+
+
 def _normalize_token(tok: str) -> str:
     try:
         s = (tok or "").strip()
         if s.startswith("@"):
             s = s[1:].lstrip()
+        s = _TRAILING_PUNCT_RE.sub("", s)
         if s.endswith(".md"):
             s = s[:-3]
         return s
@@ -1096,39 +1100,32 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 t = t.lstrip()[len(own_at) :].lstrip()
         except Exception:
             pass
-        # Tokenize and remove --echo occurrences (support ASCII and Unicode dashes) before parsing @Name
-        parts = t.split()
-        filtered: list[str] = []
-        for p in parts:
-            token = p.strip()
-            # Normalize leading dashes: '-', '--', '–', '—' (en/em dash). We only check for 'echo' flag.
-            normalized = token.lstrip("-–—")
-            if normalized == "echo" and token != "echo":
-                echo_flag = True
-                continue
-            if token == "--echo":
-                echo_flag = True
-                continue
-            filtered.append(p)
-        # Remove leading own @Bot token if present again after flags
+        # Remove --echo/—echo flags without collapsing whitespace
+        _echo_pattern = re.compile(r"(?i)(?<!\S)(?:--|—|–)?echo(?!\S)")
+        t_no_flags = _echo_pattern.sub("", t)
+        if t_no_flags != t:
+            echo_flag = True
+        # Remove leading own @Bot token if present again after flags (preserving spacing)
         try:
-            if filtered:
-                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
-                    PROJECT_NAME
-                )
-                own_at = ("@" + own) if own else ""
-                if own_at and filtered[0].lstrip().startswith(own_at):
-                    filtered = filtered[1:]
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own_at = ("@" + own) if own else ""
+            if own_at:
+                leading_pat = re.compile(rf"^\s*{re.escape(own_at)}(?=\s|$)")
+                t_no_flags = leading_pat.sub("", t_no_flags)
         except Exception:
             pass
-        t2 = " ".join(filtered).lstrip()
+
+        # Extract first token and remainder, preserving newlines
+        t2 = t_no_flags.lstrip()
         if not t2:
             raise ValueError("Usage: /call [--echo] @Name <input>")
-        name_tok, rest = (t2.split(maxsplit=1) + [""])[:2]
-        # Only treat target when first token starts with '@'; otherwise no target
+        ws_match = re.search(r"\s", t2)
+        name_tok = t2[: ws_match.start()] if ws_match else t2
+        remainder = t2[ws_match.start() :] if ws_match else ""
+        # Parse target if first token starts with '@'
         if name_tok.startswith("@"):
-            name = name_tok[1:]
-            main_text = rest
+            name = _normalize_token(name_tok)
+            main_text = remainder.lstrip(" \t")
         else:
             name = ""
             main_text = t2

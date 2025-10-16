@@ -258,3 +258,57 @@ def test_plain_group_at_target_invalid_is_ignored(monkeypatch):
 
     asyncio.run(_runner())
     assert services.last_call is None
+
+
+def test_normalize_token_strips_trailing_punctuation():
+    """Test that _normalize_token removes trailing punctuation from agent names."""
+    assert tg_bot._normalize_token("@220-PM-Status!") == "220-PM-Status"
+    assert tg_bot._normalize_token("@Agent...") == "Agent"
+    assert tg_bot._normalize_token("@Test,") == "Test"
+    assert tg_bot._normalize_token("@Name;:!?") == "Name"
+    assert tg_bot._normalize_token("@Clean") == "Clean"
+    assert tg_bot._normalize_token("Agent!") == "Agent"
+
+
+def test_handle_call_with_trailing_punctuation_in_agent_name(monkeypatch):
+    """Test that /call @Agent! input correctly targets Agent after stripping punctuation."""
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("/call @Vasil3! do work")
+    ctx = DummyContext()
+
+    async def _runner():
+        await tg_bot.handle_call(upd, ctx)
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert services.last_call["target"] == "Vasil3"
+    assert "do work" in (services.last_call["input"] or "")
+
+
+def test_handle_call_preserves_newlines_in_input(monkeypatch):
+    """Test that /call preserves newlines in multiline input."""
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    upd = DummyUpdate("/call @Vasil3 line1\nline2\nline3")
+    ctx = DummyContext()
+
+    async def _runner():
+        await tg_bot.handle_call(upd, ctx)
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert services.last_call["target"] == "Vasil3"
+    # Check the payload dict directly (not the JSON string)
+    payload = services.last_payload
+    assert payload is not None
+    input_text = payload.get("input", "")
+    assert "line1" in input_text
+    assert "line2" in input_text
+    assert "line3" in input_text
+    # Verify newlines are preserved in the dict
+    assert "\n" in input_text
