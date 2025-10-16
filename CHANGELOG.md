@@ -10,7 +10,8 @@ All notable changes to this project will be documented in this file.
 - **Telegram Bot:** Echo flag detection simplified to direct string comparison instead of nested closures. (`telegram_bot/bot.py`)
 - **MCP Hook:** All MCP server tool arguments and results are now sent to Telegram in silent mode (`disable_notification=True`) and wrapped in expandable blockquotes (`<blockquote expandable>`) to reduce visual clutter. (`app/call.py`)
 - **MCP Hook:** Service messages are tracked and deleted automatically after the final agent result is delivered via `cleanup_service_messages()`. (`app/call.py`)
-- **MCP Hook:** Preview payloads (welcome banners) now use YAML formatting instead of JSON for improved readability. (`app/call.py`)
+- **MCP Hook:** Preview payloads (welcome banners) now use YAML formatting with literal block scalars (`|`) for multiline strings instead of JSON for improved readability. (`app/call.py`)
+- **YAML Dumper:** Fixed `_literal_yaml_str_representer` to always use literal block scalar style (`|`) for strings containing newlines, ensuring proper formatting in Telegram messages. (`app/call.py`)
 - **Tests:** Added `test_normalize_token_strips_trailing_punctuation()`, `test_handle_call_with_trailing_punctuation_in_agent_name()`, and `test_handle_call_preserves_newlines_in_input()` to cover new parsing behavior. (`app/tests/test_telegram_bot_handlers.py`)
 - **Docs:** Updated README with "Input normalization" and "MCP Hook messages" sections documenting trailing punctuation stripping, newline preservation, silent MCP messages, expandable blockquotes, and automatic service message cleanup. (`README.md`)
 
