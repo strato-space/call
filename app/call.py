@@ -2475,6 +2475,23 @@ class MCPServerStdioHook(MCPServerStdio):
 
         value = _dump_like_mapping(value)
 
+        def _unescape_strings(obj: Any) -> Any:
+            """Unescape common escape sequences in strings for cleaner YAML output."""
+            if isinstance(obj, str):
+                # Unescape only the most common sequences to preserve readability
+                return obj.replace("\\n", "\n").replace("\\t", "\t")
+            if isinstance(obj, dict):
+                return {k: _unescape_strings(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_unescape_strings(v) for v in obj]
+            if isinstance(obj, tuple):
+                return tuple(_unescape_strings(v) for v in obj)
+            if isinstance(obj, set):
+                return {_unescape_strings(v) for v in obj}
+            return obj
+
+        value = _unescape_strings(value)
+
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
                 structured_value = obj.get("structuredContent")
