@@ -3613,7 +3613,7 @@ async def _build_mcp_servers_from_yaml(
                 disabled_names.append(name)
                 continue
             if "command" in spec:
-                timeout = int(spec.get("timeoutSeconds", 120))
+                timeout = int(spec.get("timeoutSeconds", 1200))
                 srv = await _open_stdio(name, spec, timeout)
                 if srv:
                     mcp_servers_started.append(srv)
@@ -3633,7 +3633,7 @@ async def _build_mcp_servers_from_yaml(
                             )
                         fmt_args.append(a)
                     bridge_spec = {"command": bcmd, "args": fmt_args}
-                    timeout = int(spec.get("timeoutSeconds", 120))
+                    timeout = int(spec.get("timeoutSeconds", 1200))
                     srv = await _open_stdio(name, bridge_spec, timeout)
                     if srv:
                         mcp_servers_started.append(srv)
