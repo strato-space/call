@@ -606,12 +606,15 @@ class RunnableConfig:
     # Convenience selectors mirroring the original user request
     target: str | None = None
     # User-provided input text (never used as instructions)
-    input: str = ""  
+    input: str = ""
 
     # Text payloads
-    prompt_text: str = ""  # Raw prompt body extracted from the primary card prior to merges
-    instructions: str = ""  # Final instructions dispatched to the runtime after merges/overlays
-    card_text: str = ""  # Raw Markdown/structured card text (if available)
+    # Raw prompt body extracted from the primary card prior to merges
+    prompt_text: str = ""
+    # Final instructions dispatched to the runtime after merges/overlays
+    instructions: str = ""
+    # Raw Markdown/structured card text (if available)
+    card_text: str = ""
 
     # Runtime configuration and attributes
     model: str = "gpt-5"

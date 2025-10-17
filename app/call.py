@@ -2475,6 +2475,33 @@ class MCPServerStdioHook(MCPServerStdio):
 
         value = _dump_like_mapping(value)
 
+        def _parse_json_in_content(obj: Any) -> Any:
+            """Parse JSON strings in content[].text fields for cleaner output."""
+            if isinstance(obj, dict):
+                # Handle content array with text fields containing JSON
+                if "content" in obj and isinstance(obj["content"], list):
+                    parsed_content = []
+                    for item in obj["content"]:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_val = item.get("text", "")
+                            if isinstance(text_val, str) and text_val.strip().startswith("{"):
+                                try:
+                                    parsed = json.loads(text_val)
+                                    parsed_content.append({**item, "text": parsed})
+                                except Exception:
+                                    parsed_content.append(item)
+                            else:
+                                parsed_content.append(item)
+                        else:
+                            parsed_content.append(item)
+                    return {**obj, "content": parsed_content}
+                return {k: _parse_json_in_content(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_parse_json_in_content(v) for v in obj]
+            return obj
+
+        value = _parse_json_in_content(value)
+
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
                 structured_value = obj.get("structuredContent")
