@@ -629,3 +629,103 @@ def test_builder_prompt_attributes_only_inherit_model(monkeypatch, tmp_path):
     assert "project-only" not in attrs
     assert "model-settings-gpt-agent" not in attrs
     assert "model-settings-gpt-project" not in attrs
+
+
+def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
+    """Test pure GPT call without any selectors - should return minimal config with env model."""
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    
+    cfg, err = build_runnable_instructions_config(
+        project=None,
+        agent=None,
+        prompt=None,
+        target=None,
+        input="сообщи дату-время и прекрати работу",
+    )
+    
+    assert err is None
+    assert cfg is not None
+    assert cfg.model == "gpt-4o-mini"
+    assert cfg.instructions == ""
+    assert cfg.project is None
+    assert cfg.agent is None
+    assert cfg.prompt is None
+    assert cfg.attributes == {"model": "gpt-4o-mini"}
+    assert cfg.input == "сообщи дату-время и прекрати работу"
+
+
+def test_builder_pure_gpt_with_model_override(monkeypatch):
+    """Test pure GPT call with model override."""
+    monkeypatch.setenv("LLM_MODEL", "gpt-5")
+    
+    cfg, err = build_runnable_instructions_config(
+        project=None,
+        agent=None,
+        prompt=None,
+        target=None,
+        input="test input",
+        attributes_override={"model": "gpt-4.1-large"},
+    )
+    
+    assert err is None
+    assert cfg is not None
+    assert cfg.model == "gpt-4.1-large"
+    assert cfg.instructions == ""
+    assert cfg.attributes == {"model": "gpt-4.1-large"}
+
+
+def test_builder_pure_gpt_defaults_to_gpt5_when_no_env(monkeypatch):
+    """Test pure GPT call defaults to gpt-5 when LLM_MODEL is not set."""
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    
+    cfg, err = build_runnable_instructions_config(
+        input="test input",
+    )
+    
+    assert err is None
+    assert cfg is not None
+    assert cfg.model == "gpt-5"
+    assert cfg.instructions == ""
+
+
+def test_builder_instructions_never_use_input(monkeypatch, tmp_path):
+    """Test that instructions come from prompt body only, never from user input."""
+    prompt_path = tmp_path / "empty_prompt.md"
+    prompt_path.write_text(
+        """
+        <!-- METADATA:START -->
+        ```yaml
+        model: gpt-5
+        ```
+        <!-- METADATA:END -->
+        
+        <!-- PROMPT:START -->
+        <!-- PROMPT:END -->
+        """,
+        encoding="utf-8",
+    )
+    
+    monkeypatch.setattr(
+        api_module,
+        "interpret_target",
+        lambda **_: _row_from_path(
+            prompt_path,
+            project="TestProj",
+            agent="TestAgent",
+            prompt="EmptyPrompt",
+            type_name="prompt",
+        ),
+    )
+    
+    cfg, err = build_runnable_instructions_config(
+        project="TestProj",
+        agent="TestAgent",
+        prompt="EmptyPrompt",
+        input="This should NOT become instructions",
+    )
+    
+    assert err is None
+    assert cfg is not None
+    # Instructions should be empty, not the input
+    assert cfg.instructions == ""
+    assert "This should NOT become instructions" not in cfg.instructions
