@@ -705,7 +705,28 @@ def _add_filter_clause(
         where.append(f"{column} = ''")
         return
     pattern = _like_pattern(raw)
-    if "*" in raw:
+    has_wildcard = "*" in raw
+
+    if column == "prompt" and (raw == "" or raw is None):
+        # Allow fallback to prompt-less rows when empty string is requested explicitly.
+        where.append("(prompt = '' OR prompt IS NULL)")
+        return
+
+    if column == "prompt" and not has_wildcard and isinstance(raw, str) and raw:
+        # Allow matching prompt names within YAML mapping where they are stored as
+        # "project/prompt" target entries without an explicit agent.
+        where.append(
+            "(prompt = ? COLLATE NOCASE OR target = ? COLLATE NOCASE"
+            " OR target = ? COLLATE NOCASE)"
+        )
+        if pattern is not None:
+            params.append(pattern)
+        normalized = raw if pattern is None else raw
+        params.append(f"{raw}")
+        params.append(f"{raw}")
+        return
+
+    if has_wildcard:
         where.append(f"{column} LIKE ? ESCAPE '\\' COLLATE NOCASE")
     else:
         where.append(f"{column} = ? COLLATE NOCASE")

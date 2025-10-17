@@ -70,6 +70,9 @@ def _literal_yaml_str_representer(dumper, data):
     if "\n" in data:
         # Use | (literal) for clean multiline display
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    # For strings starting with special YAML chars, use quoted style to avoid ambiguity
+    if data and data[0] in "#-:>|&*![]{}?@`":
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=None)
 
 
@@ -956,9 +959,14 @@ def _collect_tools(cfg) -> list[tuple[str, str]]:
             except Exception:
                 continue
     elif isinstance(pr_map, list):
-        for name in pr_map:
+        for item in pr_map:
             try:
-                entries.append((str(name), ""))
+                # Handle both plain strings and single-key dicts (YAML list of mappings)
+                if isinstance(item, dict):
+                    for name, desc in item.items():
+                        entries.append((str(name), "" if desc is None else str(desc)))
+                else:
+                    entries.append((str(item), ""))
             except Exception:
                 continue
 
@@ -1195,16 +1203,17 @@ def _build_agent_tool(
     mcp_servers: list[Any],
 ):
     """Create a sub-agent tool and return it (or None on failure)."""
+    
+    # Don't filter by project when resolving helper prompts - let target resolution work independently
     try:
         debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
     except Exception:
         pass
 
-    project_scope = None if cfg.id.strip() == "AgentFab" else (cfg.project or None)
     try:
         # Resolve at call-time so tests can monkeypatch call_api.build_runnable_instructions_config
         sub_cfg, sub_err = call_api.build_runnable_instructions_config(
-            project=project_scope,
+            project=None,
             agent=None,
             prompt=None,
             target=sub_name,
@@ -2719,8 +2728,17 @@ class MCPServerStdioHook(MCPServerStdio):
         def _unescape_strings(obj: Any) -> Any:
             """Unescape common escape sequences in strings for cleaner YAML output."""
             if isinstance(obj, str):
-                # Unescape only the most common sequences to preserve readability
-                return obj.replace("\\n", "\n").replace("\\t", "\t")
+                # Unescape common JSON/string escape sequences for better readability
+                # Process escaped backslash first to avoid double-processing
+                result = obj
+                result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                result = result.replace("\\n", "\n")
+                result = result.replace("\\r", "\r")
+                result = result.replace("\\t", "\t")
+                result = result.replace('\\"', '"')
+                result = result.replace("\\'", "'")
+                result = result.replace("\x00", "\\")  # Restore literal backslash
+                return result
             if isinstance(obj, dict):
                 return {k: _unescape_strings(v) for k, v in obj.items()}
             if isinstance(obj, list):
@@ -2868,8 +2886,17 @@ class MCPServerStdioHook(MCPServerStdio):
 
         def _deep_unescape(o):
             if isinstance(o, str):
-                # Only basic escapes to improve readability
-                return o.replace("\\n", "\n").replace("\\t", "\t")
+                # Unescape common JSON/string escape sequences for better readability
+                # Process escaped backslash first to avoid double-processing
+                result = o
+                result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                result = result.replace("\\n", "\n")
+                result = result.replace("\\r", "\r")
+                result = result.replace("\\t", "\t")
+                result = result.replace('\\"', '"')
+                result = result.replace("\\'", "'")
+                result = result.replace("\x00", "\\")  # Restore literal backslash
+                return result
             if isinstance(o, list):
                 return [_deep_unescape(i) for i in o]
             if isinstance(o, tuple):
