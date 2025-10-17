@@ -633,17 +633,24 @@ class RunnableConfig:
 
 def build_runnable_instructions_config(
     *,
-    project: Optional[str],
-    agent: Optional[str],
+    project: Optional[str] = None,
+    agent: Optional[str] = None,
     prompt: Optional[str] = None,
     target: Optional[str] = None,
     input: Optional[str] = None,
     attributes_override: Optional[Dict[str, Any]] = None,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
-    """Build a minimal runnable configuration DTO from repository selection."""
+    """Build a minimal runnable configuration DTO from repository selection.
+    
+    When all selectors (project, agent, prompt, target) are None, returns a minimal
+    config with only the default model and input, allowing pure GPT calls without instructions.
+    """
 
     import os as _os
     from pathlib import Path as _Path
+    
+    # Get default model from environment
+    default_env_model = str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
 
     missing_card_exc = getattr(call_repo, "CardNotFoundError", FileNotFoundError)
     malformed_card_exc = getattr(call_repo, "CardFormatError", ValueError)
@@ -678,6 +685,37 @@ def build_runnable_instructions_config(
     requested_project = normalize_selector(project)
     requested_agent = normalize_selector(agent)
     requested_prompt = normalize_selector(prompt)
+    
+    # Pure GPT path: if all selectors are None, return minimal config with input only
+    if not any([requested_project, requested_agent, requested_prompt, target]):
+        final_model = default_env_model
+        override_model = attribute_overrides.get("model")
+        if isinstance(override_model, _bi.str) and override_model.strip():
+            final_model = override_model.strip()
+        
+        minimal_config = RunnableConfig(
+            id=None,
+            type=None,
+            path=None,
+            url=None,
+            goal=None,
+            role=None,
+            project=None,
+            agent=None,
+            prompt=None,
+            target=None,
+            input=str(input or ""),
+            prompt_text="",
+            instructions="",
+            card_text="",
+            model=final_model,
+            model_settings=ModelSettings(),
+            attributes={"model": final_model},
+            mcp=[],
+            tools=[],
+            base_dir="",
+        )
+        return minimal_config, None
 
     try:
         selected_row = interpret_target(
@@ -749,20 +787,14 @@ def build_runnable_instructions_config(
     prompt_body = str(prompt_text or "")
     card_body = str(raw_text or "")
 
-    instructions_text = prompt_body if prompt_body.strip() else str(input or "")
+    # Instructions come from prompt body only, never from user input
+    instructions_text = prompt_body
 
     goal_value = selected_row.goal
     role_raw = attributes.get("role") if isinstance(attributes, dict) else None
     role_value = role_raw if isinstance(role_raw, _bi.str) else None
 
-    try:
-        env_model = (
-            str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
-        )
-    except Exception:
-        env_model = "gpt-5"
-
-    final_model = env_model
+    final_model = default_env_model
     meta_model = attributes.get("model")
     if isinstance(meta_model, _bi.str) and meta_model.strip():
         final_model = meta_model.strip()

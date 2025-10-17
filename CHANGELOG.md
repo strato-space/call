@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 
+## 2025-10-17
+
+- **API:** `build_runnable_instructions_config()` now supports pure GPT calls without instructions. When all selectors (`project`, `agent`, `prompt`, `target`) are `None`, returns a minimal config with only the model from `LLM_MODEL` env (default: `gpt-5`) and empty instructions, allowing direct input-only calls. (`lib/api.py`)
+- **API:** Instructions now come exclusively from prompt body, never from user input. Removed fallback `instructions_text = prompt_body if prompt_body.strip() else str(input or "")` to enforce separation of concerns. (`lib/api.py`)
+- **API:** Moved environment model resolution to function top and renamed `env_model` to `default_env_model` for clarity. Removed try/except wrapper as it's unnecessary. (`lib/api.py`)
+- **API:** `project` and `agent` parameters in `build_runnable_instructions_config()` now default to `None` for consistency with optional selectors. (`lib/api.py`)
+- **CLI:** Added pure GPT usage example: `python -m call.cli.main call --input "text"` runs without any prompt/agent instructions. (`README.md`)
+- **Tests:** Added 4 new tests covering pure GPT path, model override, env fallback, and instructions-never-use-input guarantee. All 151 tests pass. (`app/tests/test_builder_config.py`)
+- **Docs:** Updated CLI usage section with pure GPT call example and clarified that `LLM_MODEL` env var controls the default model. (`README.md`)
+
 ## 2025-10-16
 
 - **Telegram Bot:** Agent/prompt name normalization now strips trailing punctuation (`,`, `.`, `;`, `:`, `!`, `?`, etc.) so `@220-PM-Status!` resolves to `220-PM-Status`. (`telegram_bot/bot.py`)

@@ -705,6 +705,10 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
   # Call an agent (keyword-only API). Use exact case-sensitive names.
   python -m call.cli.main call --project UxFab --agent AgentName --input "text" [--prompt PromptName] [--session-id AgentName:-100123[:thread]] [--print-instructions] [--echo] [--trace SECONDS] [--trace-file PATH]
 
+  # Pure GPT call without instructions (NEW) - omit all selectors to use only input
+  python -m call.cli.main call --input "сообщи дату-время и прекрати работу"
+  # Uses LLM_MODEL env var (default: gpt-5) and sends input directly without any prompt/agent instructions
+
   # List prompts (flat). Filters: --project, --agent, --prompt, --state, --target (all support *). Formats: json|yaml|table|text
   python -m call.cli.main prompts --project FanFab --prompt 13* --format json
   python -m call.cli.main prompts --project * --agent * --prompt 10* --state ready --target r:* --format yaml
