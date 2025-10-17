@@ -4,6 +4,7 @@ from agents.model_settings import ModelSettings
 from dataclasses import dataclass
 
 from call.lib.api import RunnableConfig
+from call.lib.logging import debug_print
 
 
 # Local YAML loader for MCP configuration (simple safe_load)
@@ -37,6 +38,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None):
 import os
 import argparse
 import asyncio
+import importlib
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
@@ -52,7 +54,7 @@ import tempfile
 import yaml
 import inspect
 import httpx
-from openai import OpenAI
+from openai import OpenAI, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
@@ -209,9 +211,202 @@ from telegram.error import TelegramError, TimedOut, NetworkError, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
-from call.lib.logging import debug_print
+
+
+def _ensure_proxy_env_defaults() -> None:
+    """Populate HTTP(S)_PROXY env vars from ALL_PROXY when missing."""
+
+    try:
+        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        if not all_proxy:
+            return
+
+        updated: list[str] = []
+        for key in ("HTTP_PROXY", "HTTPS_PROXY"):
+            if not os.environ.get(key):
+                os.environ[key] = all_proxy
+                updated.append(key)
+        for key in ("http_proxy", "https_proxy"):
+            if not os.environ.get(key):
+                os.environ[key] = all_proxy
+                updated.append(key)
+
+        if updated:
+            try:
+                debug_print(
+                    "[proxy]",
+                    "Filled missing proxy env vars from ALL_PROXY:",
+                    ", ".join(updated),
+                )
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            debug_print("[proxy]", f"Failed to mirror ALL_PROXY: {exc}")
+        except Exception:
+            pass
+
+
+def _build_proxy_proxies_map() -> dict[str, str]:
+    """Construct an httpx proxies mapping from the current environment."""
+
+    env = os.environ
+    all_proxy = env.get("ALL_PROXY") or env.get("all_proxy")
+    http_proxy = env.get("HTTP_PROXY") or env.get("http_proxy") or all_proxy
+    https_proxy = env.get("HTTPS_PROXY") or env.get("https_proxy") or all_proxy
+
+    proxies: dict[str, str] = {}
+    if http_proxy:
+        proxies["http://"] = http_proxy
+    if https_proxy:
+        proxies["https://"] = https_proxy
+    if not proxies and all_proxy:
+        proxies["all://"] = all_proxy
+
+    return proxies
+
+
+def _collect_proxy_snapshot() -> dict[str, Any]:
+    """Gather proxy-related diagnostics for debugging and tools."""
+
+    snapshot: dict[str, Any] = {
+        "env": {key: os.environ.get(key) for key in (
+            "ALL_PROXY",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+        )},
+        "packages": {},
+        "egress": {},
+    }
+
+    packages = snapshot["packages"]
+
+    try:
+        import requests  # type: ignore
+
+        packages["requests"] = getattr(requests, "__version__", "installed")
+        try:
+            import socks  # type: ignore
+
+            packages["PySocks"] = getattr(socks, "__version__", "installed")
+        except Exception as exc:
+            packages["PySocks_error"] = str(exc)
+    except Exception as exc:
+        packages["requests_error"] = str(exc)
+
+    try:
+        packages["httpx"] = httpx.__version__
+    except Exception as exc:
+        packages["httpx_error"] = str(exc)
+
+    egress = snapshot["egress"]
+    try:
+        ip_httpx = httpx.get("https://api.ipify.org", timeout=10.0).text.strip()
+        if ip_httpx:
+            egress["httpx"] = ip_httpx
+    except Exception as exc:
+        egress["httpx_error"] = str(exc)
+
+    try:
+        import requests  # type: ignore
+
+        ip_requests = requests.get("https://api.ipify.org", timeout=10.0).text.strip()
+        if ip_requests:
+            egress["requests"] = ip_requests
+    except Exception as exc:
+        egress["requests_error"] = str(exc)
+
+    return snapshot
+
+
+def proxy_diagnostics() -> dict[str, Any]:
+    """Log proxy diagnostics at startup for visibility."""
+
+    snapshot = _collect_proxy_snapshot()
+    try:
+        debug_print("[proxy]", "startup diagnostics:\n" + _dump_yaml_literal(snapshot))
+    except Exception:
+        pass
+    return snapshot
+
+
+def _configure_agents_proxy_http_client() -> None:
+    """Ensure OpenAI Agents SDK shares our proxy-aware HTTP client."""
+
+    proxies = _build_proxy_proxies_map()
+    if not proxies:
+        return
+
+    client: DefaultAsyncHttpxClient | None = None
+    configured_modules: list[str] = []
+
+    for module_path, attr in [
+        ("agents.models.openai_provider", "_http_client"),
+        ("agents.voice.models.openai_model_provider", "_http_client"),
+    ]:
+        try:
+            module = importlib.import_module(module_path)
+        except Exception as exc:
+            try:
+                debug_print("[proxy]", f"Skip proxy wiring for {module_path}: {exc}")
+            except Exception:
+                pass
+            continue
+
+        if getattr(module, attr, None) is not None:
+            continue
+
+        if client is None:
+            try:
+                client = DefaultAsyncHttpxClient(proxies=proxies)
+            except Exception as exc:
+                try:
+                    debug_print(
+                        "[proxy]",
+                        f"Failed to create proxy-aware httpx client: {exc}",
+                    )
+                except Exception:
+                    pass
+                return
+
+        setattr(module, attr, client)
+        configured_modules.append(module_path)
+
+    if configured_modules:
+        try:
+            debug_print(
+                "[proxy]",
+                "Configured OpenAI Agents HTTP client with proxies for:",
+                ", ".join(configured_modules),
+            )
+        except Exception:
+            pass
+
 
 load_dotenv(dotenv_path=str(_env_file), override=True)
+
+_ensure_proxy_env_defaults()
+try:
+    proxy_diagnostics()
+except Exception:
+    pass
+_configure_agents_proxy_http_client()
+
+
+@function_tool
+def check_proxy_tool(ctx: RunContextWrapper[Any]) -> dict[str, Any]:
+    """Return current proxy diagnostics for manual inspection."""
+
+    snapshot = _collect_proxy_snapshot()
+    try:
+        debug_print("[proxy.tool]", "diagnostics:\n" + _dump_yaml_literal(snapshot))
+    except Exception:
+        pass
+    return snapshot
 
 
 async def async_retry(
@@ -454,6 +649,7 @@ def get_tool_by_name(name: str) -> Any:
         "WebSearchTool": WebSearchTool,
         "ImageGenerationTool": ImageGenerationTool,
         "image_genetation_tool": lambda: image_genetation_tool,
+        "check_proxy_tool": lambda: check_proxy_tool,
     }
 
     factory = tools_catalog.get(tool_name)
