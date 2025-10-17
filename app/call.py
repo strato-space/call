@@ -266,6 +266,39 @@ def _build_proxy_proxies_map() -> dict[str, str]:
     return proxies
 
 
+def _prepare_async_http_client_kwargs(proxies: dict[str, str]) -> dict[str, Any]:
+    """Translate our proxy mapping into kwargs supported by httpx.AsyncClient."""
+
+    if not proxies:
+        return {}
+
+    try:
+        params = inspect.signature(httpx.AsyncClient.__init__).parameters
+    except Exception:
+        return {}
+
+    if "proxies" in params:
+        return {"proxies": proxies}
+
+    # httpx>=0.28 replaced the mapping with a single `proxy` argument.
+    if "proxy" in params:
+        for key in ("https://", "http://", "all://"):
+            value = proxies.get(key)
+            if value:
+                return {"proxy": value}
+
+    # Fall back to per-scheme mounts when available.
+    if "mounts" in params:
+        mounts: dict[str, httpx.AsyncBaseTransport] = {}
+        for scheme, url in proxies.items():
+            prefix = scheme.split(":", 1)[0]
+            mounts[f"{prefix}://"] = httpx.AsyncHTTPTransport(proxy=url)
+        if mounts:
+            return {"mounts": mounts}
+
+    return {}
+
+
 def _collect_proxy_snapshot() -> dict[str, Any]:
     """Gather proxy-related diagnostics for debugging and tools."""
 
@@ -341,6 +374,17 @@ def _configure_agents_proxy_http_client() -> None:
     if not proxies:
         return
 
+    client_kwargs = _prepare_async_http_client_kwargs(proxies)
+    if not client_kwargs:
+        try:
+            debug_print(
+                "[proxy]",
+                "httpx AsyncClient exposes no proxy kwargs; relying on env",
+            )
+        except Exception:
+            pass
+        return
+
     client: DefaultAsyncHttpxClient | None = None
     configured_modules: list[str] = []
 
@@ -362,12 +406,13 @@ def _configure_agents_proxy_http_client() -> None:
 
         if client is None:
             try:
-                client = DefaultAsyncHttpxClient(proxies=proxies)
+                client = DefaultAsyncHttpxClient(**client_kwargs)
             except Exception as exc:
                 try:
                     debug_print(
                         "[proxy]",
-                        f"Failed to create proxy-aware httpx client: {exc}",
+                        "Failed to create proxy-aware httpx client:",
+                        str(exc),
                     )
                 except Exception:
                     pass
