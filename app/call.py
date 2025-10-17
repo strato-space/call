@@ -79,7 +79,7 @@ def _literal_yaml_str_representer(dumper, data):
 _LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
 
 
-def _dump_yaml_literal(obj: Any, *, width: int = 1000) -> str:
+def _dump_yaml_literal(obj: Any, *, width: int = 10000) -> str:
     """Serialize Python data to YAML with readable multiline formatting."""
 
     try:
@@ -90,7 +90,8 @@ def _dump_yaml_literal(obj: Any, *, width: int = 1000) -> str:
             sort_keys=False,
             default_flow_style=False,
             width=width,
-        )
+            line_break='\n',
+            )
     except Exception:
         try:
             return yaml.safe_dump(
@@ -1093,29 +1094,29 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
     orig_invoke = tool.on_invoke_tool
 
     async def _wrapped_on_invoke(ctx, input: str):
-        # try:
-        #     # Access canonical_input from the context directly
-        #     canonical_input = getattr(ctx, "context", {}).get("canonical_input") if hasattr(ctx, "context") else None
-        #     debug_print("[tool-call]", "ctx 1:", ctx)
-        #     debug_print("[tool-call]", "input 1:", input)
-        #     debug_print("[tool-call]", "ctx.context:", getattr(ctx, "context", None))
-        #     debug_print("[tool-call]", "canonical_input found:", canonical_input)
-
-        #     merged_canonical = _merge_tool_input_into_canonical(canonical_input, input)
-        #     if merged_canonical and merged_canonical != canonical_input:
-        #         try:
-        #             getattr(ctx, "context", {})["canonical_input"] = merged_canonical
-        #         except Exception:
-        #             pass
-        #         canonical_input = merged_canonical
-
-        #     preview_input = canonical_input if canonical_input else input
-        #     sanitized_preview_input = _canonical_and_sanitized_user_input(preview_input)[1]
-        #     input = preview_input
-        #     debug_print("[tool-call]", "input 2:", input)
-
-        # except Exception as e:
-        #     debug_print("[tool-call]", "Error in _wrapped_on_invoke:", str(e))
+        # Log agent-as-tool invocation with arguments (similar to MCP Hook)
+        try:
+            debug_print(f"[Agent Tool][{sub_name}] Calling tool: {sub_name}")
+            # Parse and format input arguments as YAML
+            try:
+                parsed_input = json.loads(input) if input else {}
+                # Helper function to format as YAML (reuse logic from MCP hook)
+                def _format_args_yaml(obj):
+                    try:
+                        return _dump_yaml_literal(obj, width=10000)
+                    except Exception:
+                        try:
+                            return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+                        except Exception:
+                            return str(obj)
+                
+                yaml_input = _format_args_yaml(parsed_input)
+                debug_print("[Agent Tool] Input (YAML):\n" + yaml_input)
+            except Exception:
+                # Fallback to raw input display
+                debug_print("[Agent Tool] Input (raw):\n" + (input or ""))
+        except Exception:
+            pass
 
         tg_msg = None
         try:
@@ -1148,6 +1149,38 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
             tg_msg = None
 
         result = await orig_invoke(ctx, input)
+
+        # Log agent-as-tool result (similar to MCP Hook)
+        try:
+            def _format_result_yaml(obj):
+                try:
+                    # Convert pydantic models and format as YAML
+                    def _to_dict(o):
+                        for attr in ("model_dump", "dict"):
+                            method = getattr(o, attr, None)
+                            if callable(method):
+                                try:
+                                    return method()
+                                except Exception:
+                                    pass
+                        if isinstance(o, dict):
+                            return {k: _to_dict(v) for k, v in o.items()}
+                        elif isinstance(o, (list, tuple)):
+                            return [_to_dict(item) for item in o]
+                        return o
+                    
+                    converted = _to_dict(obj)
+                    return _dump_yaml_literal(converted, width=10000)
+                except Exception:
+                    try:
+                        return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+                    except Exception:
+                        return str(obj)
+            
+            result_yaml = _format_result_yaml(result)
+            debug_print(f"[Agent Tool][{sub_name}] Tool returned:\n" + result_yaml)
+        except Exception:
+            pass
 
         if tg_msg is not None:
             try:
@@ -2711,16 +2744,30 @@ class MCPServerStdioHook(MCPServerStdio):
         value = result
 
         def _dump_like_mapping(obj: Any) -> Any:
+            """Recursively convert pydantic models to dicts."""
+            # Try to convert the object itself
             for attr in ("model_dump", "dict"):
                 method = getattr(obj, attr, None)
                 if callable(method):
                     try:
-                        return method()
+                        converted = method()
+                        # Recursively process the result
+                        return _dump_like_mapping(converted)
                     except TypeError:
                         try:
-                            return method(by_alias=True)
+                            converted = method(by_alias=True)
+                            return _dump_like_mapping(converted)
                         except Exception:
                             continue
+            
+            # Recursively handle collections
+            if isinstance(obj, dict):
+                return {k: _dump_like_mapping(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [_dump_like_mapping(item) for item in obj]
+            elif isinstance(obj, set):
+                return {_dump_like_mapping(item) for item in obj}
+            
             return obj
 
         value = _dump_like_mapping(value)
@@ -2728,17 +2775,21 @@ class MCPServerStdioHook(MCPServerStdio):
         def _unescape_strings(obj: Any) -> Any:
             """Unescape common escape sequences in strings for cleaner YAML output."""
             if isinstance(obj, str):
-                # Unescape common JSON/string escape sequences for better readability
-                # Process escaped backslash first to avoid double-processing
-                result = obj
-                result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
-                result = result.replace("\\n", "\n")
-                result = result.replace("\\r", "\r")
-                result = result.replace("\\t", "\t")
-                result = result.replace('\\"', '"')
-                result = result.replace("\\'", "'")
-                result = result.replace("\x00", "\\")  # Restore literal backslash
-                return result
+                # Check if string looks like it contains JSON escape sequences
+                # by looking for backslash followed by n, t, r, etc.
+                if '\\' in obj and any(seq in obj for seq in ('\\n', '\\t', '\\r', '\\"', "\\'")):
+                    # Manually replace escape sequences
+                    result = obj
+                    # Handle double backslashes first
+                    result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                    result = result.replace("\\n", "\n")
+                    result = result.replace("\\r", "\r")
+                    result = result.replace("\\t", "\t")
+                    result = result.replace('\\"', '"')
+                    result = result.replace("\\'", "'")
+                    result = result.replace("\x00", "\\")  # Restore literal backslash
+                    return result
+                return obj
             if isinstance(obj, dict):
                 return {k: _unescape_strings(v) for k, v in obj.items()}
             if isinstance(obj, list):
@@ -2886,17 +2937,19 @@ class MCPServerStdioHook(MCPServerStdio):
 
         def _deep_unescape(o):
             if isinstance(o, str):
-                # Unescape common JSON/string escape sequences for better readability
-                # Process escaped backslash first to avoid double-processing
-                result = o
-                result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
-                result = result.replace("\\n", "\n")
-                result = result.replace("\\r", "\r")
-                result = result.replace("\\t", "\t")
-                result = result.replace('\\"', '"')
-                result = result.replace("\\'", "'")
-                result = result.replace("\x00", "\\")  # Restore literal backslash
-                return result
+                # Check if string looks like it contains JSON escape sequences
+                if '\\' in o and any(seq in o for seq in ('\\n', '\\t', '\\r', '\\"', "\\'")):
+                    # Manually replace escape sequences
+                    result = o
+                    result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                    result = result.replace("\\n", "\n")
+                    result = result.replace("\\r", "\r")
+                    result = result.replace("\\t", "\t")
+                    result = result.replace('\\"', '"')
+                    result = result.replace("\\'", "'")
+                    result = result.replace("\x00", "\\")  # Restore literal backslash
+                    return result
+                return o
             if isinstance(o, list):
                 return [_deep_unescape(i) for i in o]
             if isinstance(o, tuple):
@@ -2912,14 +2965,14 @@ class MCPServerStdioHook(MCPServerStdio):
             """Dump arguments to YAML with better readability."""
             prepared = _deep_unescape(obj or {})
             try:
-                return _dump_yaml_literal(prepared, width=1000)
+                return _dump_yaml_literal(prepared, width=10000)
             except Exception:
                 try:
                     json_text = json.dumps(
                         obj or {}, ensure_ascii=False, indent=2, default=str
                     )
                     prepared = _deep_unescape(json.loads(json_text))
-                    return _dump_yaml_literal(prepared, width=1000)
+                    return _dump_yaml_literal(prepared, width=10000)
                 except Exception:
                     try:
                         s = json.dumps(
