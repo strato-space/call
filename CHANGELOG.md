@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
 - **API:** Fixed `None` agent name error in pure GPT mode. `RunnableConfig` now uses `agent="void"` and `id="void"` for input-only calls to prevent downstream crashes. (`lib/api.py`)
 - **API:** Added `RunnableConfig.minimal(model, input)` static factory method to simplify creation of minimal configs for pure GPT calls. (`lib/api.py`)
 - **API:** Cleaned up `RunnableConfig` field defaults: `prompt_text`, `instructions`, `card_text`, and `base_dir` now default to empty string `""` instead of verbose inline defaults. Moved inline comments to line above for better readability. (`lib/api.py`)
-- **MCP Hook:** Simplified debug print formatting for MCP tool results. Escape sequences in nested strings (`\n`, `\"`, `\r`, `\t`) are unescaped before YAML formatting, so multiline JSON payloads render cleanly with literal block scalars (`|-`). (`app/call.py`)
+- **MCP Hook:** Simplified debug print formatting for MCP tool results. Multiline strings now render with YAML literal block scalars (`|`) without escape sequence processing, preserving the exact payload structure. (`app/call.py`)
 - **CLI:** Added pure GPT usage example: `python -m call.cli.main call --input "text"` runs without any prompt/agent instructions. (`README.md`)
 - **Tests:** Added 6 new tests covering pure GPT path, model override, env fallback, instructions-never-use-input guarantee, and `RunnableConfig.minimal()` factory. All 153 tests pass. (`app/tests/test_builder_config.py`)
 - **Docs:** Updated CLI usage section with pure GPT call example and clarified that `LLM_MODEL` env var controls the default model. (`README.md`)
