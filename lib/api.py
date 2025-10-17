@@ -605,15 +605,12 @@ class RunnableConfig:
 
     # Convenience selectors mirroring the original user request
     target: str | None = None
-    input: str = ""
+    # User-provided input text (never used as instructions)
+    input: str = ""  
 
     # Text payloads
-    prompt_text: str = (
-        ""  # Raw prompt body extracted from the primary card prior to merges
-    )
-    instructions: str = (
-        ""  # Final instructions dispatched to the runtime after merges/overlays
-    )
+    prompt_text: str = ""  # Raw prompt body extracted from the primary card prior to merges
+    instructions: str = ""  # Final instructions dispatched to the runtime after merges/overlays
     card_text: str = ""  # Raw Markdown/structured card text (if available)
 
     # Runtime configuration and attributes
@@ -626,6 +623,40 @@ class RunnableConfig:
 
     # Additional execution context
     base_dir: str = ""
+
+    @staticmethod
+    def minimal(model: str, input: str = "") -> "RunnableConfig":
+        """Create a minimal config for pure GPT calls without instructions.
+        
+        Args:
+            model: Model identifier (e.g., 'gpt-5', 'gpt-4o-mini')
+            input: User input text
+            
+        Returns:
+            RunnableConfig with empty instructions and minimal metadata
+        """
+        return RunnableConfig(
+            id="void",
+            type=None,
+            path=None,
+            url=None,
+            goal=None,
+            role=None,
+            project=None,
+            agent="void",
+            prompt=None,
+            target=None,
+            input=input,
+            prompt_text="",
+            instructions="",
+            card_text="",
+            model=model,
+            model_settings=ModelSettings(),
+            attributes={"model": model},
+            mcp=[],
+            tools=[],
+            base_dir="",
+        )
 
 
 # todo исключить обращение к файловой системе, использовать repo.db и радиально упростить код исключив взаимное влиние prompt / agent /project за исключением model и model-settings /  model-settings-${model}
@@ -693,28 +724,7 @@ def build_runnable_instructions_config(
         if isinstance(override_model, _bi.str) and override_model.strip():
             final_model = override_model.strip()
         
-        minimal_config = RunnableConfig(
-            id=None,
-            type=None,
-            path=None,
-            url=None,
-            goal=None,
-            role=None,
-            project=None,
-            agent=None,
-            prompt=None,
-            target=None,
-            input=str(input or ""),
-            prompt_text="",
-            instructions="",
-            card_text="",
-            model=final_model,
-            model_settings=ModelSettings(),
-            attributes={"model": final_model},
-            mcp=[],
-            tools=[],
-            base_dir="",
-        )
+        minimal_config = RunnableConfig.minimal(model=final_model, input=str(input or ""))
         return minimal_config, None
 
     try:
