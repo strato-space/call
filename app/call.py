@@ -2475,32 +2475,22 @@ class MCPServerStdioHook(MCPServerStdio):
 
         value = _dump_like_mapping(value)
 
-        def _parse_json_in_content(obj: Any) -> Any:
-            """Parse JSON strings in content[].text fields for cleaner output."""
+        def _unescape_json_strings(obj: Any) -> Any:
+            """Unescape JSON strings in nested structures before YAML formatting."""
+            if isinstance(obj, str):
+                # Unescape common JSON escape sequences
+                return obj.replace("\\n", "\n").replace('\\"', '"').replace("\\r", "\r").replace("\\t", "\t")
             if isinstance(obj, dict):
-                # Handle content array with text fields containing JSON
-                if "content" in obj and isinstance(obj["content"], list):
-                    parsed_content = []
-                    for item in obj["content"]:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            text_val = item.get("text", "")
-                            if isinstance(text_val, str) and text_val.strip().startswith("{"):
-                                try:
-                                    parsed = json.loads(text_val)
-                                    parsed_content.append({**item, "text": parsed})
-                                except Exception:
-                                    parsed_content.append(item)
-                            else:
-                                parsed_content.append(item)
-                        else:
-                            parsed_content.append(item)
-                    return {**obj, "content": parsed_content}
-                return {k: _parse_json_in_content(v) for k, v in obj.items()}
+                return {k: _unescape_json_strings(v) for k, v in obj.items()}
             if isinstance(obj, list):
-                return [_parse_json_in_content(v) for v in obj]
+                return [_unescape_json_strings(v) for v in obj]
+            if isinstance(obj, tuple):
+                return tuple(_unescape_json_strings(v) for v in obj)
+            if isinstance(obj, set):
+                return {_unescape_json_strings(v) for v in obj}
             return obj
 
-        value = _parse_json_in_content(value)
+        value = _unescape_json_strings(value)
 
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
@@ -2550,7 +2540,7 @@ class MCPServerStdioHook(MCPServerStdio):
             except Exception:
                 text = f"{type(value)!r}"
 
-        text = text.replace("\r\n", "\n").replace("\\n", "\n")
+        text = text.replace("\r\n", "\n")
         try:
             import re as _re_collapse
 

@@ -25,6 +25,7 @@ Review the relevant directory documentation before making changes; many subsyste
 ## Coding Conventions
 
 - Preserve existing logging patterns (`call.lib.logging.debug_print`, structured envelopes, etc.).
+- Keep logging helpers simple; avoid parsing or reformatting tool payloads beyond basic newline/quote normalization so debug output stays faithful to source data.
 - Lean on `call.lib.logging.debug_print` for diagnostics and return structured envelopes from `call.lib.api`.
 - Keep error handling consistent with the standard envelope outlined in `README.md`.
 - Maintain Markdown prompt metadata format when editing prompt files (YAML front matter with `METADATA` blocks).
