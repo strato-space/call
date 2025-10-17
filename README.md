@@ -181,7 +181,13 @@ model-settings-gpt-4.1:
 - `/prompts`, `/prompts_ready`, and `/prompts_draft` are powered by the repo index with flexible filters and `state` support.
   - Filters: `--project`, `--agent`, `--prompt`, `--target`, `--state ready|draft`, key=value forms, and `@Agent` shorthand. All filters are ANDed.
   - The bot passes `target` to the library which supports wildcards: precedence is `prompt > agent > project`.
-- Agents-as-tools instrumentation: when a project card exposes helper agents or prompts, the runtime wraps each `FunctionTool` invocation. Every call emits `[tool-call]` debug logs and, when Telegram routing is active, a start/completion banner is posted best-effort to the configured chat. Disable by pointing the session at `selected_chat_id=None` or running with `CALL_DEBUG` unset.
+- Agents-as-tools instrumentation: when a project card exposes helper agents or prompts (via `attributes.agents` or `attributes.prompts` in YAML metadata), the runtime wraps each `FunctionTool` invocation with comprehensive logging:
+  - **Input logging**: `[Agent Tool][{name}] Calling tool` followed by `[Agent Tool] Input (YAML)` with formatted arguments
+  - **Output logging**: `[Agent Tool][{name}] Tool returned` with YAML-formatted result (pydantic models auto-converted to dicts)
+  - **Telegram integration**: when routing is active, start/completion banners are posted best-effort to the configured chat
+  - Format follows MCP Hook pattern: escape sequences unescaped, multiline content uses literal block scalars (`|`)
+  - Tests verify wrapper logging in `test_agents_tool_wrapper.py`
+  - Disable Telegram banners via `selected_chat_id=None` or suppress debug logs with `CALL_DEBUG` unset
   - Welcome banner logic moved to `_send_welcome_banner()` for reuse.
 
 ### Telegram parsing and behavior (Updated)
