@@ -28,3 +28,4 @@ uvicorn
 pytest
 pytest-asyncio
 trio
+mcp-server-time

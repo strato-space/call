@@ -151,6 +151,15 @@ mcpServers:
       - models: список доступных OpenAI моделей
       Поддержка session_id для Telegram-роутинга, model precedence (prompt>agent>project)
       Unified error envelope с structured diagnostics
+  
+  # python -m mcp_server_time
+  time:
+    enabled: true
+    command: python
+    args: ["-m", "mcp_server_time"]
+    env: {}
+    capabilities: |
+      Возвращает текущее время в формате "YYYY-MM-DDTHH:MM:SSZ"
 
   # # OS env var:
   # GOOGLE_APPLICATION_CREDENTIALS=/home/strato-space/call/wallet/service-account-key.json
@@ -212,12 +221,6 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-memory"]
     env:
       MEMORY_FILE_PATH: "C:/Users/Leader/PycharmProjects/memory"
-
-  # python -m mcp_server_time
-  time-local:
-    command: python
-    args: ["-m", "mcp_server_time"]
-    env: {}
 
   # npx -y @modelcontextprotocol/server-github
   github0:
