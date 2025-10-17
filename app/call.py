@@ -66,8 +66,8 @@ class _LiteralYamlDumper(yaml.SafeDumper):
 def _literal_yaml_str_representer(dumper, data):
     # Always use literal block scalar for multiline strings to preserve formatting
     if "\n" in data:
-        # Use |- (literal with strip chomping) to avoid trailing newline
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|-")
+        # Use | (literal) for clean multiline display
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=None)
 
 
@@ -2474,23 +2474,6 @@ class MCPServerStdioHook(MCPServerStdio):
             return obj
 
         value = _dump_like_mapping(value)
-
-        def _unescape_json_strings(obj: Any) -> Any:
-            """Unescape JSON strings in nested structures before YAML formatting."""
-            if isinstance(obj, str):
-                # Unescape common JSON escape sequences
-                return obj.replace("\\n", "\n").replace('\\"', '"').replace("\\r", "\r").replace("\\t", "\t")
-            if isinstance(obj, dict):
-                return {k: _unescape_json_strings(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_unescape_json_strings(v) for v in obj]
-            if isinstance(obj, tuple):
-                return tuple(_unescape_json_strings(v) for v in obj)
-            if isinstance(obj, set):
-                return {_unescape_json_strings(v) for v in obj}
-            return obj
-
-        value = _unescape_json_strings(value)
 
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
