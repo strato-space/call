@@ -648,7 +648,8 @@ def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
     assert cfg.model == "gpt-4o-mini"
     assert cfg.instructions == ""
     assert cfg.project is None
-    assert cfg.agent is None
+    assert cfg.agent == "void"  # Agent name set to 'void' to prevent None errors
+    assert cfg.id == "void"
     assert cfg.prompt is None
     assert cfg.attributes == {"model": "gpt-4o-mini"}
     assert cfg.input == "сообщи дату-время и прекрати работу"
@@ -729,3 +730,36 @@ def test_builder_instructions_never_use_input(monkeypatch, tmp_path):
     # Instructions should be empty, not the input
     assert cfg.instructions == ""
     assert "This should NOT become instructions" not in cfg.instructions
+
+
+def test_runnable_config_minimal_factory():
+    """Test RunnableConfig.minimal() factory method."""
+    from call.lib.api import RunnableConfig
+    
+    cfg = RunnableConfig.minimal(model="gpt-4o-mini", input="test input")
+    
+    assert cfg.model == "gpt-4o-mini"
+    assert cfg.input == "test input"
+    assert cfg.agent == "void"
+    assert cfg.id == "void"
+    assert cfg.instructions == ""
+    assert cfg.prompt_text == ""
+    assert cfg.card_text == ""
+    assert cfg.base_dir == ""
+    assert cfg.project is None
+    assert cfg.prompt is None
+    assert cfg.attributes == {"model": "gpt-4o-mini"}
+    assert cfg.mcp == []
+    assert cfg.tools == []
+
+
+def test_runnable_config_minimal_factory_defaults():
+    """Test RunnableConfig.minimal() with default input."""
+    from call.lib.api import RunnableConfig
+    
+    cfg = RunnableConfig.minimal(model="gpt-5")
+    
+    assert cfg.model == "gpt-5"
+    assert cfg.input == ""
+    assert cfg.agent == "void"
+    assert cfg.id == "void"
