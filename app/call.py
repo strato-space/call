@@ -90,8 +90,8 @@ def _dump_yaml_literal(obj: Any, *, width: int = 10000) -> str:
             sort_keys=False,
             default_flow_style=False,
             width=width,
-            line_break='\n',
-            )
+            line_break="\n",
+        )
     except Exception:
         try:
             return yaml.safe_dump(
@@ -106,6 +106,7 @@ def _dump_yaml_literal(obj: Any, *, width: int = 10000) -> str:
                 return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
             except Exception:
                 return str(obj)
+
 
 # Import agent utilities (internal copy)
 try:
@@ -307,15 +308,18 @@ def _collect_proxy_snapshot() -> dict[str, Any]:
     """Gather proxy-related diagnostics for debugging and tools."""
 
     snapshot: dict[str, Any] = {
-        "env": {key: os.environ.get(key) for key in (
-            "ALL_PROXY",
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "NO_PROXY",
-            "http_proxy",
-            "https_proxy",
-            "no_proxy",
-        )},
+        "env": {
+            key: os.environ.get(key)
+            for key in (
+                "ALL_PROXY",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "NO_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+            )
+        },
         "packages": {},
         "egress": {},
     }
@@ -895,7 +899,10 @@ async def _git_pull_prompt_repo() -> None:
             debug_print("[git]", f"git pull --rebase failed: {type(e).__name__}: {e}")
             return
         if rc != 0:
-            debug_print("[git]", f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}")
+            debug_print(
+                "[git]",
+                f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}",
+            )
             debug_print("[git]", "retrying plain pull")
             try:
                 rc_plain, out_plain, err_plain = await asyncio.wait_for(
@@ -1100,16 +1107,19 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
             # Parse and format input arguments as YAML
             try:
                 parsed_input = json.loads(input) if input else {}
+
                 # Helper function to format as YAML (reuse logic from MCP hook)
                 def _format_args_yaml(obj):
                     try:
                         return _dump_yaml_literal(obj, width=10000)
                     except Exception:
                         try:
-                            return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+                            return json.dumps(
+                                obj, ensure_ascii=False, indent=2, default=str
+                            )
                         except Exception:
                             return str(obj)
-                
+
                 yaml_input = _format_args_yaml(parsed_input)
                 debug_print("[Agent Tool] Input (YAML):\n" + yaml_input)
             except Exception:
@@ -1152,6 +1162,7 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
 
         # Log agent-as-tool result (similar to MCP Hook)
         try:
+
             def _format_result_yaml(obj):
                 try:
                     # Convert pydantic models and format as YAML
@@ -1168,15 +1179,17 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                         elif isinstance(o, (list, tuple)):
                             return [_to_dict(item) for item in o]
                         return o
-                    
+
                     converted = _to_dict(obj)
                     return _dump_yaml_literal(converted, width=10000)
                 except Exception:
                     try:
-                        return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+                        return json.dumps(
+                            obj, ensure_ascii=False, indent=2, default=str
+                        )
                     except Exception:
                         return str(obj)
-            
+
             result_yaml = _format_result_yaml(result)
             debug_print(f"[Agent Tool][{sub_name}] Tool returned:\n" + result_yaml)
         except Exception:
@@ -1236,7 +1249,7 @@ def _build_agent_tool(
     mcp_servers: list[Any],
 ):
     """Create a sub-agent tool and return it (or None on failure)."""
-    
+
     # Don't filter by project when resolving helper prompts - let target resolution work independently
     try:
         debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
@@ -1371,7 +1384,10 @@ async def _send_welcome_banner(
         debug_print("[app]", "[BANNER] skipped: selected_chat_id is None")
         return None
 
-    debug_print("[app]", f"[BANNER] target: chat_id={selected_chat_id}, thread_id={selected_thread_id}")
+    debug_print(
+        "[app]",
+        f"[BANNER] target: chat_id={selected_chat_id}, thread_id={selected_thread_id}",
+    )
     try:
         welcome_html = compose_welcome_html(
             agent_name=(cfg.id or ""),
@@ -2274,7 +2290,10 @@ async def safe_send_message(
     - Honors reply_to_message_id via ReplyParameters when available.
     - On BadRequest 'thread not found', retries without message_thread_id and without reply params.
     """
-    debug_print("[app]", f"[TG] Sending message to chat_id={chat_id}, thread_id={message_thread_id}, text_len={len(text)}")
+    debug_print(
+        "[app]",
+        f"[TG] Sending message to chat_id={chat_id}, thread_id={message_thread_id}, text_len={len(text)}",
+    )
     await init_bot()
     try:
         from telegram import ReplyParameters as _ReplyParameters
@@ -2283,8 +2302,11 @@ async def safe_send_message(
 
     async def _op():
         kwargs = dict(
-            chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup,
-            disable_notification=disable_notification
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            disable_notification=disable_notification,
         )
         if message_thread_id is not None:
             kwargs["message_thread_id"] = message_thread_id
@@ -2305,7 +2327,10 @@ async def safe_send_message(
             jitter=0.2,
             retry_on=(TimedOut, NetworkError, httpx.TimeoutException),
         )
-        debug_print("[app]", f"[TG] Message sent successfully: msg_id={result.message_id}, chat_id={result.chat_id}")
+        debug_print(
+            "[app]",
+            f"[TG] Message sent successfully: msg_id={result.message_id}, chat_id={result.chat_id}",
+        )
         return result
     except BadRequest as e:
         msg = str(e).lower()
@@ -2558,7 +2583,9 @@ def compose_welcome_html(
             # Clamp to safe length
             if len(pretty) > 3600:
                 pretty = pretty[:3597] + "..."
-            pretty_preview = f'<pre><code class="language-yaml">{_html.escape(pretty)}</code></pre>'
+            pretty_preview = (
+                f'<pre><code class="language-yaml">{_html.escape(pretty)}</code></pre>'
+            )
     except Exception:
         pretty_preview = None
     if not pretty_preview:
@@ -2716,7 +2743,9 @@ class MCPServerStdioHook(MCPServerStdio):
         # Cache last cleaned+truncated text to avoid redundant edits
         self.__last_tg_text: Optional[str] = None
         # Service message queue: track intermediate MCP messages for cleanup
-        self.__service_message_ids: list[tuple[int, int]] = []  # [(chat_id, msg_id), ...]
+        self.__service_message_ids: list[tuple[int, int]] = (
+            []
+        )  # [(chat_id, msg_id), ...]
         # Try to derive a readable MCP title
         self._mcp_title: str = (
             str(getattr(self, "name", "") or "").strip()
@@ -2759,7 +2788,7 @@ class MCPServerStdioHook(MCPServerStdio):
                             return _dump_like_mapping(converted)
                         except Exception:
                             continue
-            
+
             # Recursively handle collections
             if isinstance(obj, dict):
                 return {k: _dump_like_mapping(v) for k, v in obj.items()}
@@ -2767,7 +2796,7 @@ class MCPServerStdioHook(MCPServerStdio):
                 return [_dump_like_mapping(item) for item in obj]
             elif isinstance(obj, set):
                 return {_dump_like_mapping(item) for item in obj}
-            
+
             return obj
 
         value = _dump_like_mapping(value)
@@ -2777,11 +2806,15 @@ class MCPServerStdioHook(MCPServerStdio):
             if isinstance(obj, str):
                 # Check if string looks like it contains JSON escape sequences
                 # by looking for backslash followed by n, t, r, etc.
-                if '\\' in obj and any(seq in obj for seq in ('\\n', '\\t', '\\r', '\\"', "\\'")):
+                if "\\" in obj and any(
+                    seq in obj for seq in ("\\n", "\\t", "\\r", '\\"', "\\'")
+                ):
                     # Manually replace escape sequences
                     result = obj
                     # Handle double backslashes first
-                    result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                    result = result.replace(
+                        "\\\\", "\x00"
+                    )  # Temp marker for literal backslash
                     result = result.replace("\\n", "\n")
                     result = result.replace("\\r", "\r")
                     result = result.replace("\\t", "\t")
@@ -2871,7 +2904,8 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         payload = (
-            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            header
+            + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
         )
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
         try:
@@ -2900,7 +2934,8 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         safe_text = (
-            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            header
+            + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
         )
         if not self.__telegram_last_message:
             # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
@@ -2938,10 +2973,14 @@ class MCPServerStdioHook(MCPServerStdio):
         def _deep_unescape(o):
             if isinstance(o, str):
                 # Check if string looks like it contains JSON escape sequences
-                if '\\' in o and any(seq in o for seq in ('\\n', '\\t', '\\r', '\\"', "\\'")):
+                if "\\" in o and any(
+                    seq in o for seq in ("\\n", "\\t", "\\r", '\\"', "\\'")
+                ):
                     # Manually replace escape sequences
                     result = o
-                    result = result.replace("\\\\", "\x00")  # Temp marker for literal backslash
+                    result = result.replace(
+                        "\\\\", "\x00"
+                    )  # Temp marker for literal backslash
                     result = result.replace("\\n", "\n")
                     result = result.replace("\\r", "\r")
                     result = result.replace("\\t", "\t")

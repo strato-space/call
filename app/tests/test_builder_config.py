@@ -634,7 +634,7 @@ def test_builder_prompt_attributes_only_inherit_model(monkeypatch, tmp_path):
 def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
     """Test pure GPT call without any selectors - should return minimal config with env model."""
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
-    
+
     cfg, err = build_runnable_instructions_config(
         project=None,
         agent=None,
@@ -642,7 +642,7 @@ def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
         target=None,
         input="сообщи дату-время и прекрати работу",
     )
-    
+
     assert err is None
     assert cfg is not None
     assert cfg.model == "gpt-4o-mini"
@@ -658,7 +658,7 @@ def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
 def test_builder_pure_gpt_with_model_override(monkeypatch):
     """Test pure GPT call with model override."""
     monkeypatch.setenv("LLM_MODEL", "gpt-5")
-    
+
     cfg, err = build_runnable_instructions_config(
         project=None,
         agent=None,
@@ -667,7 +667,7 @@ def test_builder_pure_gpt_with_model_override(monkeypatch):
         input="test input",
         attributes_override={"model": "gpt-4.1-large"},
     )
-    
+
     assert err is None
     assert cfg is not None
     assert cfg.model == "gpt-4.1-large"
@@ -678,11 +678,11 @@ def test_builder_pure_gpt_with_model_override(monkeypatch):
 def test_builder_pure_gpt_defaults_to_gpt5_when_no_env(monkeypatch):
     """Test pure GPT call defaults to gpt-5 when LLM_MODEL is not set."""
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    
+
     cfg, err = build_runnable_instructions_config(
         input="test input",
     )
-    
+
     assert err is None
     assert cfg is not None
     assert cfg.model == "gpt-5"
@@ -705,7 +705,7 @@ def test_builder_instructions_never_use_input(monkeypatch, tmp_path):
         """,
         encoding="utf-8",
     )
-    
+
     monkeypatch.setattr(
         api_module,
         "interpret_target",
@@ -717,14 +717,14 @@ def test_builder_instructions_never_use_input(monkeypatch, tmp_path):
             type_name="prompt",
         ),
     )
-    
+
     cfg, err = build_runnable_instructions_config(
         project="TestProj",
         agent="TestAgent",
         prompt="EmptyPrompt",
         input="This should NOT become instructions",
     )
-    
+
     assert err is None
     assert cfg is not None
     # Instructions should be empty, not the input
@@ -735,9 +735,9 @@ def test_builder_instructions_never_use_input(monkeypatch, tmp_path):
 def test_runnable_config_minimal_factory():
     """Test RunnableConfig.minimal() factory method."""
     from call.lib.api import RunnableConfig
-    
+
     cfg = RunnableConfig.minimal(model="gpt-4o-mini", input="test input")
-    
+
     assert cfg.model == "gpt-4o-mini"
     assert cfg.input == "test input"
     assert cfg.agent == "void"
@@ -756,9 +756,9 @@ def test_runnable_config_minimal_factory():
 def test_runnable_config_minimal_factory_defaults():
     """Test RunnableConfig.minimal() with default input."""
     from call.lib.api import RunnableConfig
-    
+
     cfg = RunnableConfig.minimal(model="gpt-5")
-    
+
     assert cfg.model == "gpt-5"
     assert cfg.input == ""
     assert cfg.agent == "void"
