@@ -68,6 +68,17 @@ class _LiteralYamlDumper(yaml.SafeDumper):
 def _literal_yaml_str_representer(dumper, data):
     # Always use literal block scalar for multiline strings to preserve formatting
     if "\n" in data:
+        # Debug: log when we're using literal style
+        if len(data) > 200:
+            try:
+                from call.lib.logging import debug_print
+
+                debug_print(
+                    f"[YAML Representer] Using literal style for string: "
+                    f"len={len(data)}, newlines={data.count(chr(10))}, preview={data[:60]!r}"
+                )
+            except Exception:
+                pass
         # Use | (literal) for clean multiline display
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
     # For strings starting with special YAML chars, use quoted style to avoid ambiguity
@@ -2834,6 +2845,29 @@ class MCPServerStdioHook(MCPServerStdio):
             return obj
 
         value = _unescape_strings(value)
+
+        # Debug: check if we have actual newlines after unescape
+        def _count_newlines(obj: Any, path="") -> None:
+            if isinstance(obj, str) and len(obj) > 100:
+                actual_newlines = obj.count("\n")
+                escaped_newlines = obj.count("\\n")
+                if actual_newlines > 0 or escaped_newlines > 0:
+                    debug_print(
+                        f"[YAML Debug] {path}: len={len(obj)}, "
+                        f"actual_\\n={actual_newlines}, escaped_\\n={escaped_newlines}, "
+                        f"preview={obj[:80]!r}"
+                    )
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    _count_newlines(v, f"{path}.{k}" if path else k)
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    _count_newlines(v, f"{path}[{i}]")
+
+        try:
+            _count_newlines(value, "value")
+        except Exception:
+            pass
 
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
