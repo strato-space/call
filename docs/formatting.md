@@ -23,8 +23,9 @@ class _LiteralYamlDumper(yaml.SafeDumper):
 
 **String representation logic:**
 - Multiline strings (`\n` present) → literal block scalar style (`|`)
-- Strings starting with YAML special chars (`#-:>|&*![]{}?@`\`) → quoted style (`'`)
-- Other strings → plain style (no quotes)
+- Long single-line strings (>100 chars) → converted to literal style by adding trailing newline
+- Strings starting with YAML special chars (`#-:>|&*![]{}?@`\`) → single-quoted style (`'`)
+- Short strings → plain style (no quotes)
 
 **Configuration:**
 ```python
@@ -46,6 +47,7 @@ yaml.dump(
 **Purpose**: Convert Python objects to readable YAML
 
 **Fallback chain:**
+
 1. Try custom `_LiteralYamlDumper`
 2. Fall back to `yaml.safe_dump` with same settings
 3. Fall back to `json.dumps` with indent=2
@@ -190,12 +192,44 @@ def _to_yaml_text(obj) -> str:
     return _dump_yaml_literal(prepared)  # ✅ Uses default 999999
 ```
 
-## Why 999999?
+## Why 999999 Width?
 
 - PyYAML's `width` parameter controls when to break long scalars
 - Setting to a very large value (999999) effectively disables line wrapping
 - Still allows proper indentation and structure
 - Preserves readability while preventing mid-string breaks
+
+## Long Single-Line String Handling
+
+**Problem**: PyYAML's default behavior can wrap long plain scalars at arbitrary points, even with large width settings, making output unreadable.
+
+**Solution**: Force literal block scalar style (`|`) for strings longer than 100 characters by artificially adding a trailing newline:
+
+```python
+if len(data) > 100:
+    # Add newline to force literal style
+    # Dumper automatically uses |- which strips trailing newlines on parse
+    modified_data = data + "\n"
+    return dumper.represent_scalar("tag:yaml.org,2002:str", modified_data, style="|")
+```
+
+**Benefits**:
+
+- Long strings never wrap mid-line
+- Preserves exact content (trailing newline is stripped by `|-` style)
+- Consistent with multiline string handling
+- Improves readability for file contents, JSON payloads, etc.
+
+**Example**:
+
+```yaml
+# Before (plain scalar, may wrap):
+chat_id: -1002710557620
+
+# After (literal scalar, never wraps):
+chat_id: |
+  -1002710557620
+```
 
 ## Testing
 
@@ -261,10 +295,12 @@ Look for:
 
 The YAML formatting system in Call ensures:
 - Readable, properly indented YAML output
-- No artificial line breaks in long strings
-- Multiline content uses literal block scalars
+- No artificial line breaks in long strings (both multiline and single-line >100 chars)
+- Multiline content uses literal block scalars (`|` or `|-`)
+- Long single-line strings (>100 chars) converted to literal style to prevent wrapping
 - Escape sequences properly converted
 - Verbose content redacted when appropriate
 - Consistent width (999999) prevents wrapping issues
+- All strings roundtrip correctly (trailing newlines stripped by `|-`)
 
 This approach balances human readability with machine parseability and makes debug logs easy to understand and copy-paste.

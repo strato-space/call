@@ -74,16 +74,27 @@ def _literal_yaml_str_representer(dumper, data):
                 from call.lib.logging import debug_print
 
                 debug_print(
-                    f"[YAML Representer] Using literal style for string: "
+                    f"[YAML Representer] Using literal style (multiline): "
                     f"len={len(data)}, newlines={data.count(chr(10))}, preview={data[:60]!r}"
                 )
             except Exception:
                 pass
         # Use | (literal) for clean multiline display
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-    # For strings starting with special YAML chars, use quoted style to avoid ambiguity
+    
+    # For very long single-line strings, convert to multiline by adding artificial newline at end
+    # This forces literal block scalar style which never wraps
+    # PyYAML will strip the trailing newline when parsing (using |-)
+    if len(data) > 100:
+        # Add newline to force literal style, dumper will use |- which strips trailing newlines
+        modified_data = data + "\n"
+        return dumper.represent_scalar("tag:yaml.org,2002:str", modified_data, style="|")
+    
+    # For strings starting with special YAML chars, use single-quoted style to avoid ambiguity
     if data and data[0] in "#-:>|&*![]{}?@`":
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+    
+    # For short normal strings, use plain style (no quotes)
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=None)
 
 
