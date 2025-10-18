@@ -1107,7 +1107,9 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             echo_flag = True
         # Remove leading own @Bot token if present again after flags (preserving spacing)
         try:
-            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                PROJECT_NAME
+            )
             own_at = ("@" + own) if own else ""
             if own_at:
                 leading_pat = re.compile(rf"^\s*{re.escape(own_at)}(?=\s|$)")

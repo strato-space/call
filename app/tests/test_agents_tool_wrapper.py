@@ -21,9 +21,10 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
 
     # Capture debug_print calls to verify logging
     debug_calls = []
+
     def capture_debug_print(*args, **kwargs):
         debug_calls.append({"args": args, "kwargs": kwargs})
-    
+
     monkeypatch.setattr(app_call, "debug_print", capture_debug_print, raising=False)
     monkeypatch.setattr(app_call, "init_bot", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(app_call, "safe_send_message", lambda **k: None, raising=False)
@@ -148,16 +149,30 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     result = await wrapped_handler(None, '{"foo": "bar"}')
     assert result == "wrapped-ok"
     assert orig_invocations == ['{"foo": "bar"}']
-    
+
     # Verify logging hooks were called
     # Should log: [Agent Tool][HelperAgent] Calling tool
-    calling_logs = [c for c in debug_calls if len(c["args"]) > 0 and "[Agent Tool][HelperAgent]" in str(c["args"][0])]
-    assert len(calling_logs) >= 1, f"Expected agent tool calling log, got: {debug_calls}"
-    
+    calling_logs = [
+        c
+        for c in debug_calls
+        if len(c["args"]) > 0 and "[Agent Tool][HelperAgent]" in str(c["args"][0])
+    ]
+    assert (
+        len(calling_logs) >= 1
+    ), f"Expected agent tool calling log, got: {debug_calls}"
+
     # Should log: [Agent Tool] Input (YAML) or Input (raw)
-    input_logs = [c for c in debug_calls if len(c["args"]) > 0 and "[Agent Tool] Input" in str(c["args"][0])]
+    input_logs = [
+        c
+        for c in debug_calls
+        if len(c["args"]) > 0 and "[Agent Tool] Input" in str(c["args"][0])
+    ]
     assert len(input_logs) >= 1, "Expected agent tool input log"
-    
+
     # Should log: [Agent Tool][HelperAgent] Tool returned
-    result_logs = [c for c in debug_calls if len(c["args"]) > 0 and "Tool returned" in str(c["args"][0])]
+    result_logs = [
+        c
+        for c in debug_calls
+        if len(c["args"]) > 0 and "Tool returned" in str(c["args"][0])
+    ]
     assert len(result_logs) >= 1, "Expected agent tool result log"

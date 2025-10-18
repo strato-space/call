@@ -630,11 +630,11 @@ class RunnableConfig:
     @staticmethod
     def minimal(model: str, input: str = "") -> "RunnableConfig":
         """Create a minimal config for pure GPT calls without instructions.
-        
+
         Args:
             model: Model identifier (e.g., 'gpt-5', 'gpt-4o-mini')
             input: User input text
-            
+
         Returns:
             RunnableConfig with empty instructions and minimal metadata
         """
@@ -675,16 +675,18 @@ def build_runnable_instructions_config(
     attributes_override: Optional[Dict[str, Any]] = None,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
-    
+
     When all selectors (project, agent, prompt, target) are None, returns a minimal
     config with only the default model and input, allowing pure GPT calls without instructions.
     """
 
     import os as _os
     from pathlib import Path as _Path
-    
+
     # Get default model from environment
-    default_env_model = str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+    default_env_model = (
+        str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+    )
 
     missing_card_exc = getattr(call_repo, "CardNotFoundError", FileNotFoundError)
     malformed_card_exc = getattr(call_repo, "CardFormatError", ValueError)
@@ -719,15 +721,17 @@ def build_runnable_instructions_config(
     requested_project = normalize_selector(project)
     requested_agent = normalize_selector(agent)
     requested_prompt = normalize_selector(prompt)
-    
+
     # Pure GPT path: if all selectors are None, return minimal config with input only
     if not any([requested_project, requested_agent, requested_prompt, target]):
         final_model = default_env_model
         override_model = attribute_overrides.get("model")
         if isinstance(override_model, _bi.str) and override_model.strip():
             final_model = override_model.strip()
-        
-        minimal_config = RunnableConfig.minimal(model=final_model, input=str(input or ""))
+
+        minimal_config = RunnableConfig.minimal(
+            model=final_model, input=str(input or "")
+        )
         return minimal_config, None
 
     try:
@@ -1382,7 +1386,9 @@ async def call_async(
         elif "actual_sid" in locals() and actual_sid:
             # Session was created
             session_id_out = actual_sid
-        elif (chat_id is not None or thread_id is not None) and selected_chat_id is not None:
+        elif (
+            chat_id is not None or thread_id is not None
+        ) and selected_chat_id is not None:
             # Routing was explicitly configured via args
             session_id_out = (
                 f"{selected_chat_id}:{selected_thread_id}"
