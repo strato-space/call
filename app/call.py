@@ -79,7 +79,7 @@ def _literal_yaml_str_representer(dumper, data):
 _LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
 
 
-def _dump_yaml_literal(obj: Any, *, width: int = 10000) -> str:
+def _dump_yaml_literal(obj: Any, *, width: int = 999999) -> str:
     """Serialize Python data to YAML with readable multiline formatting."""
 
     try:
