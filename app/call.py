@@ -3004,14 +3004,14 @@ class MCPServerStdioHook(MCPServerStdio):
             """Dump arguments to YAML with better readability."""
             prepared = _deep_unescape(obj or {})
             try:
-                return _dump_yaml_literal(prepared, width=10000)
+                return _dump_yaml_literal(prepared)
             except Exception:
                 try:
                     json_text = json.dumps(
                         obj or {}, ensure_ascii=False, indent=2, default=str
                     )
                     prepared = _deep_unescape(json.loads(json_text))
-                    return _dump_yaml_literal(prepared, width=10000)
+                    return _dump_yaml_literal(prepared)
                 except Exception:
                     try:
                         s = json.dumps(
