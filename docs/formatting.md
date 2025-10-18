@@ -22,12 +22,14 @@ class _LiteralYamlDumper(yaml.SafeDumper):
 ```
 
 **String representation logic:**
+
 - Multiline strings (`\n` present) → literal block scalar style (`|`)
 - Long single-line strings (>100 chars) → converted to literal style by adding trailing newline
 - Strings starting with YAML special chars (`#-:>|&*![]{}?@`\`) → single-quoted style (`'`)
 - Short strings → plain style (no quotes)
 
 **Configuration:**
+
 ```python
 yaml.dump(
     obj,
@@ -111,6 +113,7 @@ yaml.dump(
    - Final fallback: `str(obj)`
 
 **Used in two places:**
+
 - Debug print: `[MCP Hook] Arguments (YAML):\n...`
 - Telegram service message: `🛠️ {tool_name}\n\n{yaml_text}`
 
@@ -244,6 +247,7 @@ CALL_DEBUG=1 python -m call.telegram_bot.bot --bot-name TestBot
 ```
 
 Look for:
+
 - ✅ Long strings remain intact
 - ✅ Multiline content uses `|` block scalar
 - ✅ No unexpected line breaks
@@ -294,6 +298,7 @@ Look for:
 ## Summary
 
 The YAML formatting system in Call ensures:
+
 - Readable, properly indented YAML output
 - No artificial line breaks in long strings (both multiline and single-line >100 chars)
 - Multiline content uses literal block scalars (`|` or `|-`)
