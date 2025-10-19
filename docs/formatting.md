@@ -386,14 +386,17 @@ text: |
 - `[YAML Dump Result] has_literal=False, has_quoted=True` — Final output is quoted, not literal
 - `[YAML Dump] _LiteralYamlDumper failed: ...` — Entire `yaml.dump()` failed, falling back to `safe_dump`
 
-**Solution**:
-1. Enable debug mode: `CALL_DEBUG=1`
-2. Check for `[YAML Representer] Literal style failed` — indicates representer exception
-3. Check for `[YAML Dump] _LiteralYamlDumper failed` — indicates yaml.dump crashed
-4. Check `[YAML Dump Result]` — shows if output is quoted despite literal style request
-5. If all indicators show success but output is quoted, issue is in PyYAML Emitter behavior
-6. Verify PyYAML version: `pip show pyyaml` (known working: 6.0+)
-7. Check for trailing whitespace or special characters in string content
+**Solution** (fixed 2025-10-19):
+1. Override `choose_scalar_style()` method in `_LiteralYamlDumper` to force literal style
+2. PyYAML Emitter has hardcoded heuristics that ignore style hints for strings >1024 chars
+3. By overriding `choose_scalar_style()`, we bypass these heuristics
+4. Strip trailing whitespace from each line before serialization (helps PyYAML accept literal style)
+5. Result: literal block scalar (`|`) is now always used for multiline strings, regardless of length
+
+**Previous workarounds** (no longer needed):
+- ~~Verify PyYAML version~~ — issue was in Emitter logic, not version
+- ~~Check for trailing whitespace~~ — now stripped automatically
+- ~~Enable debug mode~~ — still useful for diagnostics
 
 **Fixed bugs** (2025-10-19):
 - **Critical**: Regex in `_format_tool_result()` used `r"\n"` as replacement string (literal `\` + `n`) instead of actual newline `"\n"` — corrected in `app/call.py:2984`

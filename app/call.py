@@ -62,7 +62,32 @@ from call.lib import api as call_api
 
 
 class _LiteralYamlDumper(yaml.SafeDumper):
-    """YAML dumper that renders multiline strings as block scalars."""
+    """YAML dumper that renders multiline strings as block scalars.
+    
+    Overrides Emitter to disable the heuristics that force quoted style
+    for long strings, ensuring literal block scalars are always respected.
+    """
+    
+    def choose_scalar_style(self):
+        """Override PyYAML's scalar style selection to honor representer hints.
+        
+        PyYAML Emitter has heuristics that override style hints from representers:
+        - Strings >1024 chars forced to quoted style
+        - Strings with trailing whitespace forced to quoted
+        - Strings with certain special chars forced to quoted
+        
+        This override forces the style specified by the representer.
+        """
+        # Call parent implementation
+        style = super().choose_scalar_style()
+        
+        # If representer explicitly requested literal (|) or folded (>), honor it
+        # even for very long strings
+        if self.event.style in ('|', '>'):
+            # Force literal/folded style regardless of length or content
+            return self.event.style
+        
+        return style
 
 
 def _literal_yaml_str_representer(dumper, data):
@@ -80,8 +105,12 @@ def _literal_yaml_str_representer(dumper, data):
             except Exception:
                 pass
         # Use | (literal) for clean multiline display
+        # CRITICAL: PyYAML Emitter can ignore style hint for very long strings (>1024 chars)
+        # or strings with trailing whitespace. Force literal style by ensuring content is clean.
         try:
-            result = dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+            # Strip trailing spaces from each line to help PyYAML accept literal style
+            cleaned = "\n".join(line.rstrip() for line in data.split("\n"))
+            result = dumper.represent_scalar("tag:yaml.org,2002:str", cleaned, style="|")
             return result
         except Exception as e:
             # If literal style fails, log and fall back to quoted
