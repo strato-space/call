@@ -117,6 +117,64 @@ yaml.dump(
 - Debug print: `[MCP Hook] Arguments (YAML):\n...`
 - Telegram service message: `🛠️ {tool_name}\n\n{yaml_text}`
 
+### 5. Agent-as-Tool Invocation Messages
+
+#### `_wrapped_on_invoke` (nested in `_wrap_agent_tool_debug`)
+
+**Purpose**: Format agent-as-tool invocation payloads for Telegram debug messages
+
+**Context**: When a parent agent calls a child agent through the agents-as-tools mechanism, a debug message is sent to Telegram showing the invocation details.
+
+**Processing:**
+
+1. **Parse input**: Convert JSON string input to Python dict
+2. **Format as YAML**:
+   - First attempt: `_dump_yaml_literal(js, width=10000)` for YAML output
+   - Fallback: `json.dumps(js, ensure_ascii=False, indent=2)` if YAML fails
+   - Language tag in output adjusted accordingly (`yaml` or `json`)
+3. **Truncate if needed**: Limit to 1500 characters with `...` suffix
+4. **Wrap in HTML**: Use Telegram HTML format with syntax highlighting
+
+**Code location**: `app/call.py:1154-1179`
+
+**Telegram message format:**
+```
+🛠️ {child_agent_name}
+from {parent_agent_name}
+
+<pre><code class="language-yaml">
+{yaml_payload}
+</code></pre>
+```
+
+**Why YAML instead of JSON:**
+
+1. **Better readability**: Multiline strings displayed with proper line breaks
+2. **Consistency**: Matches MCP tool debug output format
+3. **Reduced visual noise**: No JSON escape sequences (`\n`, `\t`, etc.)
+4. **Easier debugging**: Can copy-paste YAML directly for testing
+5. **User preference**: Request from user to standardize on YAML for all debug output
+
+**Example output:**
+
+```yaml
+input: день
+context: null
+replay: null
+```
+
+vs the old JSON format:
+
+```json
+{
+  "input": "день",
+  "context": null,
+  "replay": null
+}
+```
+
+**Fallback behavior**: If YAML formatting fails (e.g., PyYAML not installed or serialization error), automatically falls back to JSON with proper error handling, ensuring debug messages always reach Telegram.
+
 ## Debug Output Examples
 
 ### Good: Properly Formatted Long String
@@ -244,6 +302,9 @@ pytest app/tests/test_agents_tool_wrapper.py -v
 
 # Enable debug mode and watch MCP hook output
 CALL_DEBUG=1 python -m call.telegram_bot.bot --bot-name TestBot
+
+# Test agent-as-tool YAML formatting specifically
+python test_read_file_yaml.py
 ```
 
 Look for:
@@ -252,6 +313,8 @@ Look for:
 - ✅ Multiline content uses `|` block scalar
 - ✅ No unexpected line breaks
 - ✅ Proper indentation preserved
+- ✅ Agent-as-tool messages in Telegram show YAML format (not JSON)
+- ✅ Fallback to JSON works when YAML fails
 
 ## Common Issues
 
@@ -279,9 +342,71 @@ Look for:
 
 **Solution**: Use `_redact_structured_content()` to filter verbose fields
 
+### Issue 4: Agent-as-Tool Messages Still Show JSON
+
+**Symptom**: Telegram debug messages for agent-as-tool invocations display JSON instead of YAML
+
+**Cause**: Code not updated or fallback to JSON triggered
+
+**Solution**: 
+1. Verify `_dump_yaml_literal()` is called in `_wrapped_on_invoke()` at `app/call.py:1166`
+2. Check that PyYAML is installed: `pip list | grep -i yaml`
+3. Review error logs for YAML serialization failures
+4. Verify `lang` variable is set to `"yaml"` when YAML succeeds
+
+### Issue 5: MCP Hook Output Shows Quoted Strings with Line Breaks
+
+**Symptom**: MCP Hook debug output shows quoted strings (`"string\n..."`) with mid-line breaks instead of literal block scalars (`|`)
+
+**Example from real output (2025-10-19, fs:read_text_file):**
+```yaml
+# ❌ WRONG - current behavior
+text: "# PM Status Report Mapping Configuration\n# Матрица соответствия для 
+автоматических отчётов\n# Последнее обновление...
+```
+
+**Expected behavior:**
+```yaml
+# ✅ CORRECT - should use literal block scalar
+text: |
+  # PM Status Report Mapping Configuration
+  # Матрица соответствия для автоматических отчётов
+  # Последнее обновление: 2025-10-16
+  ...
+```
+
+**Cause**: PyYAML Emitter may fall back to quoted style for very long strings even when representer specifies `style="|"`, especially if:
+1. String contains trailing whitespace on some lines
+2. String has very long lines that exceed internal buffer limits
+3. Representer `represent_scalar()` call raises an exception
+
+**Debug indicators** (added in latest version):
+- `[YAML Representer] Using literal style` — Representer chose literal block scalar
+- `[YAML Representer] Literal style failed: ...` — `represent_scalar()` call raised exception
+- `[YAML Dump Result] has_literal=False, has_quoted=True` — Final output is quoted, not literal
+- `[YAML Dump] _LiteralYamlDumper failed: ...` — Entire `yaml.dump()` failed, falling back to `safe_dump`
+
+**Solution**:
+1. Enable debug mode: `CALL_DEBUG=1`
+2. Check for `[YAML Representer] Literal style failed` — indicates representer exception
+3. Check for `[YAML Dump] _LiteralYamlDumper failed` — indicates yaml.dump crashed
+4. Check `[YAML Dump Result]` — shows if output is quoted despite literal style request
+5. If all indicators show success but output is quoted, issue is in PyYAML Emitter behavior
+6. Verify PyYAML version: `pip show pyyaml` (known working: 6.0+)
+7. Check for trailing whitespace or special characters in string content
+
+**Fixed bugs** (2025-10-19):
+- **Critical**: Regex in `_format_tool_result()` used `r"\n"` as replacement string (literal `\` + `n`) instead of actual newline `"\n"` — corrected in `app/call.py:2984`
+  - This caused collapse of multiple newlines to literal backslash-n sequences
+  - May have contributed to PyYAML choosing quoted style over literal
+- Added exception handling in `_literal_yaml_str_representer()` to catch and log `represent_scalar()` failures
+- Added result validation in `_dump_yaml_literal()` to detect quoted strings vs literal scalars
+- Added fallback logging when `_LiteralYamlDumper` raises exceptions
+
 ## Related Code Locations
 
 - `app/call.py:64-109` — `_LiteralYamlDumper` and `_dump_yaml_literal()`
+- `app/call.py:1154-1179` — `_wrapped_on_invoke()` for agent-as-tool debug messages
 - `app/call.py:2770-2898` — `_format_tool_result()` with escape/redact pipeline
 - `app/call.py:3003-3022` — `_to_yaml_text()` for tool arguments
 - `app/call.py:3024-3025` — Debug print of arguments
@@ -308,4 +433,72 @@ The YAML formatting system in Call ensures:
 - Consistent width (999999) prevents wrapping issues
 - All strings roundtrip correctly (trailing newlines stripped by `|-`)
 
-This approach balances human readability with machine parseability and makes debug logs easy to understand and copy-paste.
+**Application points:**
+
+1. **MCP Hook Debug Output** — Tool arguments and results logging
+2. **Agent-as-Tool Messages** — Telegram debug messages when parent agent calls child agent
+3. **Tool Result Formatting** — Processing and displaying MCP tool responses
+
+This approach balances human readability with machine parseability and makes debug logs easy to understand and copy-paste. The consistent use of YAML across all debug output (MCP tools and agents-as-tools) provides a unified debugging experience.
+
+## Agent Input/Output Formatting Rules
+
+### Agent-as-Tool Invocations
+
+**Input format expectation:**
+- Agents receive JSON objects with structured fields at the **top level**
+- Example correct input structure:
+  ```json
+  {
+    "input": "user query",
+    "context": "additional context",
+    "topic": "Project Name",
+    "interval": {"from": "2025-10-17", "to": "2025-10-17"},
+    "sources": {...},
+    "output": {...}
+  }
+  ```
+
+**Telegram debug message format:**
+- Displays the input JSON object (parsed from string parameter)
+- Uses YAML formatting for readability (with JSON fallback)
+- Shows structured fields at top level, NOT wrapped in `{"input": "JSON string"}`
+
+**Common mistake:**
+```json
+❌ WRONG:
+{
+  "input": "{\"input\":\"query\",\"context\":\"\",\"topic\":\"...\",...}"
+}
+```
+This indicates double serialization - the entire payload was stringified and wrapped in an `input` field.
+
+**Correct display:**
+```yaml
+✅ CORRECT:
+input: user query
+context: additional context
+topic: Project Name
+interval:
+  from: 2025-10-17
+  to: 2025-10-17
+sources:
+  chats:
+    - chat_id: "123456789"
+      name: Chat Name
+```
+
+**Code implementation:**
+- `_wrapped_on_invoke()` at `app/call.py:1164` parses `input` string parameter: `json.loads(input)`
+- Result is formatted as YAML (line 1199) or JSON fallback (line 1203)
+- Telegram message shows the **parsed object**, not the raw string
+
+### MCP Tool Results
+
+**Verified correct formatting (as of 2025-10-19):**
+
+- ✅ **`time:get_current_time`** — Returns YAML-formatted object with `timezone`, `datetime`, `day_of_week`, `is_dst`
+- ✅ **`tg-ro:list_messages`** — Returns YAML with `meta`, `content`, `annotations`, `structuredContent`  
+- ✅ **`fs:read_text_file`** — Returns YAML with `meta`, `content[].text` using literal block scalar `|` for file contents
+
+These tools demonstrate proper YAML literal formatting for multiline content and structured data.

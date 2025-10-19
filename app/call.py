@@ -80,7 +80,17 @@ def _literal_yaml_str_representer(dumper, data):
             except Exception:
                 pass
         # Use | (literal) for clean multiline display
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+        try:
+            result = dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+            return result
+        except Exception as e:
+            # If literal style fails, log and fall back to quoted
+            try:
+                from call.lib.logging import debug_print
+                debug_print(f"[YAML Representer] Literal style failed: {e!r}, falling back to quoted")
+            except Exception:
+                pass
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"')
     
     # For very long single-line strings, convert to multiline by adding artificial newline at end
     # This forces literal block scalar style which never wraps
@@ -105,7 +115,10 @@ def _dump_yaml_literal(obj: Any, *, width: int = 999999) -> str:
     """Serialize Python data to YAML with readable multiline formatting."""
 
     try:
-        return yaml.dump(
+        # Configure dumper to handle very long literal scalars
+        # PyYAML may fall back to quoted style if it thinks literal is "too long"
+        # We force it to always respect our style choice by using extreme limits
+        result = yaml.dump(
             obj,
             Dumper=_LiteralYamlDumper,
             allow_unicode=True,
@@ -113,8 +126,28 @@ def _dump_yaml_literal(obj: Any, *, width: int = 999999) -> str:
             default_flow_style=False,
             width=width,
             line_break="\n",
+            default_style=None,  # Don't force a single style globally
         )
-    except Exception:
+        # Debug: check if result contains quoted strings with escape sequences
+        if len(result) > 500 and ('"' in result[:200] or '\\n' in result[:200]):
+            try:
+                from call.lib.logging import debug_print
+                has_literal = '|' in result[:200] or '|-' in result[:200]
+                has_quoted = '"' in result[:200] and '\\n' in result[:200]
+                debug_print(
+                    f"[YAML Dump Result] len={len(result)}, has_literal={has_literal}, "
+                    f"has_quoted={has_quoted}, preview={result[:150]!r}"
+                )
+            except Exception:
+                pass
+        return result
+    except Exception as e:
+        # First YAML dump failed - log and try fallback
+        try:
+            from call.lib.logging import debug_print
+            debug_print(f"[YAML Dump] _LiteralYamlDumper failed: {e!r}, trying safe_dump fallback")
+        except Exception:
+            pass
         try:
             return yaml.safe_dump(
                 obj,
@@ -1161,10 +1194,17 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                     import json as _json, html as _html
 
                     js = _json.loads(input) if input else {}
-                    pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                    # Format as YAML instead of JSON
+                    try:
+                        pretty = _dump_yaml_literal(js, width=10000)
+                        lang = "yaml"
+                    except Exception:
+                        # Fallback to JSON if YAML fails
+                        pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                        lang = "json"
                     if len(pretty) > 1500:
                         pretty = pretty[:1497] + "..."
-                    body = f'\n<pre><code class="language-json">{_html.escape(pretty)}</code></pre>'
+                    body = f'\n<pre><code class="language-{lang}">{_html.escape(pretty)}</code></pre>'
                 except Exception:
                     esc = sanitize_telegram_html(input or "")
                     if len(esc) > 1500:
@@ -2823,6 +2863,31 @@ class MCPServerStdioHook(MCPServerStdio):
 
         value = _dump_like_mapping(value)
 
+        # Debug: inspect string content BEFORE unescape
+        def _debug_string_content(obj: Any, path="") -> None:
+            if isinstance(obj, str) and len(obj) > 500:
+                # Check for both real newlines and escaped sequences
+                real_newlines = obj.count("\n")  # chr(10)
+                escaped_backslash_n = obj.count("\\n")  # two chars: \ and n
+                if real_newlines > 5 or escaped_backslash_n > 5:
+                    debug_print(
+                        f"[YAML Pre-Unescape] {path}: len={len(obj)}, "
+                        f"real_newlines={real_newlines}, "
+                        f"escaped_\\n={escaped_backslash_n}, "
+                        f"repr_preview={obj[:100]!r}"
+                    )
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    _debug_string_content(v, f"{path}.{k}" if path else k)
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    _debug_string_content(v, f"{path}[{i}]")
+        
+        try:
+            _debug_string_content(value, "PRE")
+        except Exception:
+            pass
+
         def _unescape_strings(obj: Any) -> Any:
             """Unescape common escape sequences in strings for cleaner YAML output."""
             if isinstance(obj, str):
@@ -2933,7 +2998,8 @@ class MCPServerStdioHook(MCPServerStdio):
             import re as _re_collapse
 
             # Collapse multiple consecutive newlines to exactly 1
-            text = _re_collapse.sub(r"\n{2,}", r"\n", text)
+            # IMPORTANT: replacement must be actual newline, not raw string r"\n"
+            text = _re_collapse.sub(r"\n{2,}", "\n", text)
         except Exception:
             pass
 
