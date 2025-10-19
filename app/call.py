@@ -359,75 +359,7 @@ def _prepare_async_http_client_kwargs(proxies: dict[str, str]) -> dict[str, Any]
     return {}
 
 
-def _collect_proxy_snapshot() -> dict[str, Any]:
-    """Gather proxy-related diagnostics for debugging and tools."""
-
-    snapshot: dict[str, Any] = {
-        "env": {
-            key: os.environ.get(key)
-            for key in (
-                "ALL_PROXY",
-                "HTTP_PROXY",
-                "HTTPS_PROXY",
-                "NO_PROXY",
-                "http_proxy",
-                "https_proxy",
-                "no_proxy",
-            )
-        },
-        "packages": {},
-        "egress": {},
-    }
-
-    packages = snapshot["packages"]
-
-    try:
-        import requests  # type: ignore
-
-        packages["requests"] = getattr(requests, "__version__", "installed")
-        try:
-            import socks  # type: ignore
-
-            packages["PySocks"] = getattr(socks, "__version__", "installed")
-        except Exception as exc:
-            packages["PySocks_error"] = str(exc)
-    except Exception as exc:
-        packages["requests_error"] = str(exc)
-
-    try:
-        packages["httpx"] = httpx.__version__
-    except Exception as exc:
-        packages["httpx_error"] = str(exc)
-
-    egress = snapshot["egress"]
-    try:
-        ip_httpx = httpx.get("https://api.ipify.org", timeout=10.0).text.strip()
-        if ip_httpx:
-            egress["httpx"] = ip_httpx
-    except Exception as exc:
-        egress["httpx_error"] = str(exc)
-
-    try:
-        import requests  # type: ignore
-
-        ip_requests = requests.get("https://api.ipify.org", timeout=10.0).text.strip()
-        if ip_requests:
-            egress["requests"] = ip_requests
-    except Exception as exc:
-        egress["requests_error"] = str(exc)
-
-    return snapshot
-
-
-def proxy_diagnostics() -> dict[str, Any]:
-    """Log proxy diagnostics at startup for visibility."""
-
-    snapshot = _collect_proxy_snapshot()
-    try:
-        debug_print("[proxy]", "startup diagnostics:\n" + _dump_yaml_literal(snapshot))
-    except Exception:
-        pass
-    return snapshot
+# Proxy diagnostics removed - no longer needed
 
 
 def _configure_agents_proxy_http_client() -> None:
@@ -498,23 +430,10 @@ def _configure_agents_proxy_http_client() -> None:
 load_dotenv(dotenv_path=str(_env_file), override=True)
 
 _ensure_proxy_env_defaults()
-try:
-    proxy_diagnostics()
-except Exception:
-    pass
 _configure_agents_proxy_http_client()
 
 
-@function_tool
-def check_proxy_tool(ctx: RunContextWrapper[Any]) -> dict[str, Any]:
-    """Return current proxy diagnostics for manual inspection."""
-
-    snapshot = _collect_proxy_snapshot()
-    try:
-        debug_print("[proxy.tool]", "diagnostics:\n" + _dump_yaml_literal(snapshot))
-    except Exception:
-        pass
-    return snapshot
+# check_proxy_tool removed - no longer needed
 
 
 async def async_retry(
@@ -757,7 +676,6 @@ def get_tool_by_name(name: str) -> Any:
         "WebSearchTool": WebSearchTool,
         "ImageGenerationTool": ImageGenerationTool,
         "image_genetation_tool": lambda: image_genetation_tool,
-        "check_proxy_tool": lambda: check_proxy_tool,
     }
 
     factory = tools_catalog.get(tool_name)

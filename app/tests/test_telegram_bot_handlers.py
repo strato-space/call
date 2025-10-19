@@ -245,7 +245,8 @@ def test_plain_group_atbot_target_valid(monkeypatch):
     assert services.last_call["target"] == "Vasil3"
 
 
-def test_plain_group_at_target_invalid_is_ignored(monkeypatch):
+def test_plain_group_at_target_delegates_to_library(monkeypatch):
+    """Test that unknown targets are passed to call_api (no pre-validation)."""
     services = FakeCallApi()
     tg_bot.set_services(call_api_module=services)
     monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
@@ -257,7 +258,9 @@ def test_plain_group_at_target_invalid_is_ignored(monkeypatch):
         await asyncio.sleep(0.02)
 
     asyncio.run(_runner())
-    assert services.last_call is None
+    # Target resolution now delegated to call_api - no pre-validation in bot layer
+    assert services.last_call is not None
+    assert services.last_call["target"] == "UnknownAgent"
 
 
 def test_normalize_token_strips_trailing_punctuation():
