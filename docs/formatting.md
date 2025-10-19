@@ -399,12 +399,14 @@ text: |
 - ~~Enable debug mode~~ — still useful for diagnostics
 
 **Fixed bugs** (2025-10-19):
-- **Critical**: Regex in `_format_tool_result()` used `r"\n"` as replacement string (literal `\` + `n`) instead of actual newline `"\n"` — corrected in `app/call.py:2984`
-  - This caused collapse of multiple newlines to literal backslash-n sequences
-  - May have contributed to PyYAML choosing quoted style over literal
-- Added exception handling in `_literal_yaml_str_representer()` to catch and log `represent_scalar()` failures
-- Added result validation in `_dump_yaml_literal()` to detect quoted strings vs literal scalars
-- Added fallback logging when `_LiteralYamlDumper` raises exceptions
+- **Critical**: PyYAML Emitter ignored style hints for strings >1024 chars
+  - Root cause: Emitter has hardcoded heuristics that override representer style hints
+  - Solution: Override `choose_scalar_style()` in `_LiteralYamlDumper` to force literal style
+  - Result: All multiline strings now use literal block scalar (`|`) regardless of length
+- Strip trailing whitespace from each line to help PyYAML accept literal style
+- Added exception handling in `_literal_yaml_str_representer()` to catch and log failures
+- Added result validation in `_dump_yaml_literal()` to detect quoted vs literal output
+- Added debug logging for YAML formatting diagnostics
 
 ## Related Code Locations
 
