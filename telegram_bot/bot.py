@@ -2,10 +2,22 @@
 Telegram bot for the call subsystem.
 
 Commands:
-- /agents [--aliases] [--q "filter"]
-- /call @Name <input>
+- /call [@Name] <input>        Execute agent/prompt/project via target resolution
+- /agents [--aliases] [--q]    List available agents
+- /prompts [filters]           List prompts with optional filters
+- /projects                    List projects (StratoSpaceAiBot only)
+- /reload                      Rescan repositories and rebuild index
+- /clear [@Name]               Clear conversation session
 
-The bot only interacts with the call library API and does not directly use OpenAI or Telegraph.
+Plain text handling:
+- Private chats: "@Name <input>" is equivalent to "/call @Name <input>"
+- Private chats: "plain text" is equivalent to "/call <text>" (input-only)
+- Group chats: Only "@Name <input>" triggers execution (to avoid reacting to every message)
+
+Architecture:
+- Target resolution delegated to call_api.call_async() (prompt > agent > project hierarchy)
+- No pre-validation of targets in bot layer - library handles resolution and errors
+- Bot only interacts with call.lib.api facade, not directly with OpenAI or Telegraph
 """
 
 from __future__ import annotations
@@ -212,6 +224,19 @@ def _summarize_update(update: Update) -> str:
         return "<unavailable>"
 
 
+def _sanitize_false_fields(obj):
+    """Recursively remove fields with False values from dicts to reduce log noise."""
+    if isinstance(obj, dict):
+        return {
+            k: _sanitize_false_fields(v)
+            for k, v in obj.items()
+            if v is not False  # Remove fields with literal False value
+        }
+    elif isinstance(obj, list):
+        return [_sanitize_false_fields(item) for item in obj]
+    return obj
+
+
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TypeHandler callback to log every incoming update."""
     summary = _summarize_update(update)
@@ -220,7 +245,10 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         from call.lib.logging import _env_true
 
         if _env_true("CALL_DEBUG"):
-            raw_json = json.dumps(update.to_dict(), ensure_ascii=False)
+            update_dict = update.to_dict()
+            # Remove False-valued fields to reduce log noise
+            sanitized = _sanitize_false_fields(update_dict)
+            raw_json = json.dumps(sanitized, ensure_ascii=False)
             log.info("Update raw: %s", raw_json)
     except Exception:
         pass
@@ -242,6 +270,8 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
         if isinstance(data, dict):
             result = data.get("result")
             if isinstance(result, list) and not result:
+                # Temporary debug: log when getUpdates returns empty list
+                log.info("Telegram getUpdates: received EMPTY result list (ok=%s)", data.get("ok"))
                 return
         raw = response.text
         if len(raw) > 5000:
@@ -509,59 +539,7 @@ def _normalize_token(tok: str) -> str:
         return (tok or "").strip()
 
 
-def _is_valid_target(token: str, base_project: str | None) -> bool:
-    """Return True if token resolves via the builder (agent, prompt, or project).
-
-    Prefer central validation through build_runnable_instructions_config using the
-    `target` argument so semantics match the library (prompt > agent > project).
-    """
-    t = _normalize_token(token)
-    if not t:
-        return False
-    # Prefer central builder when available (validates prompt > agent > project)
-    try:
-        builder = getattr(
-            _services.call_api, "build_runnable_instructions_config", None
-        )
-        if callable(builder):
-            cfg, err = builder(
-                project=(base_project or None),
-                agent=None,
-                prompt=None,
-                target=t,
-                input=None,
-            )
-            if err is None and cfg is not None:
-                return True
-    except Exception:
-        pass
-    # Fallback: DB-only checks (resolve_agent for agent/prompt; list for project)
-    try:
-        env = _services.call_api.resolve_agent(
-            project=(base_project or None), agent=t, prompt=None, target=None
-        )
-        if isinstance(env, dict) and env.get("ok"):
-            return True
-    except Exception:
-        pass
-    try:
-        envp = _services.call_api.resolve_agent(
-            project=(base_project or None), agent=None, prompt=t, target=None
-        )
-        if isinstance(envp, dict) and envp.get("ok"):
-            return True
-    except Exception:
-        pass
-    try:
-        lst = _services.call_api.list(project=t)
-        if any(
-            (isinstance(x, dict) and (str(x.get("name") or "").strip() == t))
-            for x in (lst or [])
-        ):
-            return True
-    except Exception:
-        pass
-    return False
+# _is_valid_target() removed - validation delegated to call_api.call_async()
 
 
 def _resolve_agent_and_input(
@@ -569,12 +547,16 @@ def _resolve_agent_and_input(
 ) -> tuple[str, str, bool]:
     """Parse text into (target_name, input_text, should_handle) with conservative rules.
 
+    ARCHITECTURE: This function does NOT validate if target exists in catalog.
+    Target validation is delegated to call_api.call_async() which resolves: prompt > agent > project.
+    This matches /call command behavior - parse and delegate, don't pre-validate.
+
     - Group chats: require an explicit @-mention; support:
-        @Target <input>            -> execute only when Target is valid; else ignore
-        @BotName Target <input>    -> execute when Target is valid; else treat as input-only
+        @Target <input>            -> extract Target and rest (no validation)
+        @BotName Target <input>    -> extract Target and rest (no validation)
         @ <input>                  -> input-only (no target)
     - Private chats: plain text behaves like '/call <input>' (no implicit target).
-        @Target <input>            -> same validation as in groups
+        @Target <input>            -> extract Target and rest (no validation)
         plain text                 -> input-only (no target)
     """
     s = (text or "").strip()
@@ -609,14 +591,14 @@ def _resolve_agent_and_input(
             sub = rest.strip().split(None, 1)
             cand = _normalize_token(sub[0]) if sub else ""
             tail = sub[1] if len(sub) > 1 else ""
-            if cand and _is_valid_target(cand, base_project or None):
+            # Return candidate as target without validation
+            if cand:
                 return cand, tail, True
-            # Not a valid target -> treat all as input-only
+            # No candidate -> treat all as input-only
             return "", rest.strip(), True
-        # '@Target ...' -> validate target; if invalid, ignore (group) / ignore (private mention form too)
-        if head and _is_valid_target(head, base_project or None):
-            return head, rest, True
-        return "", "", False
+        # '@Target ...' -> return target without validation
+        # Library will resolve it as prompt > agent > project
+        return head, rest, True
 
     # No leading '@'
     if is_private:
@@ -654,8 +636,11 @@ Startup options:
 - --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
 
 Plain text (no slash):
-- In private chat: "@Name <input>" and "Name <input>" are equivalent.
+- In private chat: 
+  - "@Name <input>" is equivalent to "/call @Name <input>" (only if Name found in catalog)
+  - "plain text" is equivalent to "/call <text>" (input-only, no target)
 - In groups: only explicit "@Name <input>" is handled to avoid reacting to every message.
+- If "@Name" is not found in catalog, message is silently ignored with log entry.
 
 Special cases:
 - If this bot is AgentFabBot, default agent is AgentFab when no name is specified (e.g., "@ <input>").
@@ -691,7 +676,9 @@ https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
 - /reload — пересканировать репозитории и обновить индекс
 
 Подсказки:
-- В личных чатах можно без @; в группах используйте @упоминание или /call
+- В личных чатах: "@Name input" эквивалентно "/call @Name input" (если Name найден в каталоге)
+- Если @Name не найден - сообщение молча игнорируется (с записью в лог)
+- В группах используйте @упоминание или /call
 - Приоритет target: prompt > точный project > agent > шаблонный project
         """.strip()
     await m.reply(txt, parse_mode=None)
@@ -1248,6 +1235,13 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @_require_allowed_users
 async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle plain text messages (non-command).
+    
+    Behavior:
+    - Private chats: "@Name <input>" treated as /call @Name <input>, "text" as /call text
+    - Group chats: Only "@Name <input>" handled (ignore other messages to avoid noise)
+    - Target resolution delegated to call_api.call_async() without pre-validation
+    """
     text = (update.message.text or "").strip() if update.message else ""
     log.debug("handle_plain_text: text=%r", text)
     if not text:
@@ -1279,8 +1273,12 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         name, main_text, should_handle = _resolve_agent_and_input(
             text, base, is_private=is_private
         )
-    except Exception:
+    except Exception as e:
         # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+        log.warning(
+            "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
+            type(e).__name__, e
+        )
         name, main_text, should_handle = "", "", False
     if not should_handle:
         debug_print("[bot]", "[PLAIN]", "ignored (should_handle=false)")
