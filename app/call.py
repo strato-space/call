@@ -3254,6 +3254,11 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def cleanup_service_messages(self) -> None:
         """Delete all tracked service messages from Telegram."""
+        # Check if cleanup is enabled via environment variable
+        cleanup_enabled = os.environ.get("TG_CLEANUP_MCP_MESSAGES", "1").strip().lower()
+        if cleanup_enabled not in ("1", "true", "yes", "on"):
+            return
+        
         if not self.__service_message_ids:
             return
         await _init_bot_safe()

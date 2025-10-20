@@ -28,6 +28,11 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [Telegram Bot](#telegram-bot)
   - [Python Library](#python-library)
 - [Configuration](#configuration)
+- [Features](#features)
+  - [YAML Formatting](docs/formatting.md) — Readable YAML output for MCP hooks and agent-as-tools
+  - [MCP Message Cleanup](docs/mcp-message-cleanup.md) — Auto-delete intermediate debug messages in Telegram
+  - [MCP Config](docs/mcp_config.md) — MCP server configuration and setup
+  - [Cards](docs/cards.md) — Agent and prompt card system
 - [Developer Guide](#developer-guide)
 - [Reference](#reference)
 - [Security & Best Practices](#security--best-practices)
@@ -613,22 +618,23 @@ Call provides a production Telegram bot with intelligent message parsing and con
 **Private DMs:**
 
 - Plain text (no `@`) → input-only execution (equivalent to `/call <input>`)
-- `@Target <input>` → execute Target if it exists
-- `@BotName Target <input>` → bot name is stripped, Target is executed
+- `@Target <input>` → passed to library for resolution (priority: prompt > agent > project)
+- `@BotName Target <input>` → bot name is stripped, Target passed to library
 - `@ <input>` → input-only (no target)
 
 **Group chats:**
 
 - Only messages with `@`-mention are handled
-- `@Target <input>` → execute Target if valid
-- `@BotName Target <input>` → Target executed if valid, else input-only
+- `@Target <input>` → passed to library for resolution
+- `@BotName Target <input>` → Target passed to library (same behavior)
 - Messages without `@` are ignored
 
-**Validation:**
+**Target Resolution:**
 
-- Targets are resolved via DB-only lookups (`resolve_agent()` for agents/prompts,
-  `list(project=...)` for projects). Project scoping derives from bot name
-  (`AgentFabBot` → `AgentFab`).
+- Bot layer does **NOT** pre-validate targets
+- All target resolution delegated to `call_api.call_async()` (prompt > agent > project hierarchy)
+- Unknown targets trigger errors from library (not silently ignored by bot)
+- Project scoping derives from bot name (`AgentFabBot` → `AgentFab`)
 - Enable `CALL_DEBUG=1` to trace parsing decisions in logs (`[bot]` prefix).
 
 **Context Extraction:**
