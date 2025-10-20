@@ -63,7 +63,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from telegram import Update
 from telegram.constants import ParseMode, ChatAction
-from telegram.error import BadRequest, TimedOut
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -306,17 +306,30 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         err = getattr(context, "error", None)
         if err is not None:
-            # Provide traceback tuple explicitly for structured logs
-            log.error(
-                "Unhandled error while processing update: %s (%s: %s)",
-                summary,
-                type(err).__name__,
-                str(err),
-                exc_info=(type(err), err, getattr(err, "__traceback__", None)),
+            is_net = isinstance(err, NetworkError) or isinstance(
+                getattr(err, "__cause__", None), NetworkError
             )
-            debug_print(
-                "[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary
-            )
+            if is_net:
+                log.warning(
+                    "Transient network issue while processing update: %s (%s: %s)",
+                    summary,
+                    type(err).__name__,
+                    str(err),
+                )
+                debug_print(
+                    "[bot]", "[WARN]", f"{type(err).__name__}: {err}", "|", summary
+                )
+            else:
+                log.error(
+                    "Unhandled error while processing update: %s (%s: %s)",
+                    summary,
+                    type(err).__name__,
+                    str(err),
+                    exc_info=(type(err), err, getattr(err, "__traceback__", None)),
+                )
+                debug_print(
+                    "[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary
+                )
         else:
             log.error("Unhandled error while processing update: %s (no error)", summary)
             debug_print("[bot]", "[ERROR]", "<no error>", "|", summary)
