@@ -35,6 +35,15 @@ import sys
 import httpx
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    """Return True if environment flag is enabled."""
+    value = os.environ.get(name, default)
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+LOG_EMPTY_GETUPDATES = _env_flag("TELEGRAM_LOG_EMPTY_UPDATES", "0")
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Telegram bot entrypoint for Call")
     p.add_argument("bot_name_pos", nargs="?", help="Bot handle, e.g. StratoSpaceAiBot")
@@ -270,8 +279,12 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
         if isinstance(data, dict):
             result = data.get("result")
             if isinstance(result, list) and not result:
-                # Temporary debug: log when getUpdates returns empty list
-                log.info("Telegram getUpdates: received EMPTY result list (ok=%s)", data.get("ok"))
+                # Optional debug: log when getUpdates returns empty list
+                if LOG_EMPTY_GETUPDATES:
+                    log.info(
+                        "Telegram getUpdates: received EMPTY result list (ok=%s)",
+                        data.get("ok"),
+                    )
                 return
         raw = response.text
         if len(raw) > 5000:
