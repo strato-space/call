@@ -62,7 +62,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 from dotenv import load_dotenv
 from pathlib import Path
 from telegram import Update
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode, ChatAction
 from telegram.error import BadRequest, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
@@ -930,6 +930,29 @@ async def _call_task(
             "[CALL_TASK]",
             f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}",
         )
+
+        # Show typing status to indicate command is being processed
+        try:
+            typing_chat_id = chat_id
+            typing_thread_id = thread_id
+            if typing_chat_id is None and m.update and m.update.effective_chat:
+                typing_chat_id = m.update.effective_chat.id
+            if typing_thread_id is None and getattr(m.update, "message", None):
+                typing_thread_id = m.update.message.message_thread_id
+            if typing_chat_id is not None:
+                await m.context.bot.send_chat_action(
+                    chat_id=typing_chat_id,
+                    action=ChatAction.TYPING,
+                    message_thread_id=typing_thread_id,
+                )
+                debug_print(
+                    "[bot]",
+                    "[CALL_TASK]",
+                    f"typing chat_id={typing_chat_id} thread_id={typing_thread_id}",
+                )
+        except Exception:
+            pass
+
         # Delegate to lib; it will publish to Telegram via its own utilities
         proj_baseline = (
             None
