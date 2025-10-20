@@ -44,7 +44,6 @@
 - [Промпт 50-Discoveryagent.md](https://github.com/strato-space/prompt/blob/main/draft/50-Discoveryagent.md)
 - [Off: Выключенный SelfReflection](https://github.com/strato-space/prompt/blob/main/AgentFab/SelfReflection/agent.md)
 
-
 ## Как добавить новый пропмп в цепочку в AgentFab
 
 - Отредактировать список prompt в разделе METADATA - см. [Карточка AgentFab в Prompt Repo](https://github.com/strato-space/prompt/blob/main/AgentFab/AgentFab.md)
@@ -96,7 +95,7 @@
 - `/prompts_ready --project * --prompt 10* --target r:*`
 - `/prompts_draft --project AgentFab --prompt 3*-*`
 
-# Документация разрабочка 
+# Документация разрабочка
 
 ## Как парсятся сообщения
 
