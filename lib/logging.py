@@ -39,6 +39,7 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
     global _configured_logging
     try:
         # If logging already has handlers, don't reconfigure
+        _logger.propagate = False
         if _logger.handlers:
             _configured_logging = True
             return
@@ -48,6 +49,7 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
             else (logging.DEBUG if _env_true("CALL_DEBUG") else logging.INFO)
         )
         _logger.setLevel(eff_level)
+        _logger.propagate = False
         # Force UTF-8 encoding for stderr to avoid encoding issues on Windows
         import sys
 
@@ -115,6 +117,23 @@ def configure_logging(level: int | None = None, *, json: bool = False) -> None:
                 fh = logging.FileHandler(logfile, encoding="utf-8")
                 fh.setFormatter(fmt)
                 _logger.addHandler(fh)
+        except Exception:
+            pass
+
+        # Suppress noisy third-party loggers by default
+        try:
+            noisy = (
+                "openai",
+                "openai._base_client",
+                "openai._base_client.http" ,
+                "httpx",
+                "httpcore",
+            )
+            for name in noisy:
+                l = logging.getLogger(name)
+                if not l.handlers:
+                    l.propagate = False
+                l.setLevel(max(logging.WARNING, eff_level))
         except Exception:
             pass
     except Exception:
