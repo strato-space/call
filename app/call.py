@@ -61,6 +61,35 @@ import html as _html
 from call.lib import api as call_api
 
 
+def _suppress_mcp_cleanup_errors(loop, context):
+    """Custom asyncio exception handler to suppress known MCP/anyio cleanup errors.
+    
+    During MCP client cleanup, anyio's CancelScope may exit in a different task than
+    it was entered, causing RuntimeError. This is a known issue in MCP/anyio that
+    doesn't affect functionality but creates noisy logs.
+    
+    See: https://github.com/python-trio/anyio/issues/issues/cancel-scope-task-mismatch
+    """
+    exc = context.get('exception')
+    msg = context.get('message', '')
+    
+    # Suppress "Attempted to exit cancel scope in a different task" from MCP cleanup
+    if isinstance(exc, RuntimeError):
+        if 'cancel scope' in str(exc).lower() and 'different task' in str(exc).lower():
+            # Log at debug level instead of error
+            try:
+                logging.debug(
+                    "[mcp-cleanup] Suppressed known anyio CancelScope cleanup warning: %s",
+                    exc
+                )
+            except Exception:
+                pass
+            return
+    
+    # For all other exceptions, use default handler
+    loop.default_exception_handler(context)
+
+
 class _LiteralYamlDumper(yaml.SafeDumper):
     """YAML dumper that renders multiline strings as block scalars.
     
@@ -649,6 +678,14 @@ async def _initialize_mcp_servers_once() -> tuple[dict[str, Any], dict | None]:
         if not cfg_yaml or not isinstance(cfg_yaml.get("mcpServers"), dict):
             logging.info("[mcp] No mcpServers section in config")
             return servers_by_name, cfg_yaml
+            
+        # Install custom asyncio exception handler to suppress known MCP cleanup errors
+        try:
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(_suppress_mcp_cleanup_errors)
+            logging.debug("[mcp] Installed custom exception handler for MCP cleanup")
+        except Exception:
+            pass
             
         # Build servers without AsyncExitStack (they will live for app lifetime)
         servers_by_name = await _build_mcp_servers_singleton(cfg_yaml)
