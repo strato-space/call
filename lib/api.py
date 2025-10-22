@@ -1602,13 +1602,11 @@ def resolve_agent(
                 except Exception:
                     alt_recs = []
                 if alt_recs:
+                    # Only project is required; agent is optional for project-level prompts
                     valid_alt = [
                         r
                         for r in alt_recs
-                        if (
-                            str(r.get("project") or "").strip()
-                            and str(r.get("agent") or "").strip()
-                        )
+                        if str(r.get("project") or "").strip()
                     ]
                     if not valid_alt:
                         return _error_payload(
@@ -1631,6 +1629,19 @@ def resolve_agent(
                         chosen = candidates[0]
                         pj = chosen.get("project") or project
                         ag = chosen.get("agent") or agent
+                        # For project-level prompts without agent, return path directly
+                        if not ag:
+                            return {
+                                "ok": True,
+                                "resolved": {
+                                    "project": pj,
+                                    "name": "",
+                                    "path": chosen.get("path") or "",
+                                    "aliases": [],
+                                    "prompts": [prompt] if prompt else [],
+                                },
+                            }
+                        # For prompts with agent, resolve agent
                         arows = call_repo.find_agents(project=pj, agent=ag)
                         if len(arows) == 1:
                             ar = arows[0]
@@ -1674,7 +1685,19 @@ def resolve_agent(
             pr = recs[0]
             pj = pr.get("project") or project
             ag = pr.get("agent") or agent
-            # Agent row must exist
+            # For project-level prompts without agent, return path directly
+            if not ag:
+                return {
+                    "ok": True,
+                    "resolved": {
+                        "project": pj,
+                        "name": "",
+                        "path": pr.get("path") or "",
+                        "aliases": [],
+                        "prompts": [prompt] if prompt else [],
+                    },
+                }
+            # Agent row must exist for agent-based prompts
             arows = call_repo.find_agents(project=pj, agent=ag)
             if len(arows) != 1:
                 return _error_payload(
