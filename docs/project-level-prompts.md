@@ -1,5 +1,8 @@
 # Project-Level Prompts
 
+> **Commit:** `e7f7697` - feat: support project-level prompts and dual-channel MCP routing  
+> **Related:** `c66135f` - feat: specialized bots with natural language interaction
+
 ## Overview
 
 Project-level prompts are prompts attached directly to a project without requiring an agent. This enables a more flexible prompt hierarchy: `project → prompt` instead of only `project → agent → prompt`.

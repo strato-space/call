@@ -1,8 +1,10 @@
-# Specialized Bots with Project Default Target
+# Specialized Bots with Natural Language Interaction
+
+> **Commit:** `c66135f` - feat: specialized bots with natural language interaction
 
 ## Overview
 
-Specialized bots are project-specific Telegram bots that enable natural language interaction with project orchestrators. Users communicate without slash commands, and the bot automatically routes requests to the project's `project.md` as the default target.
+Specialized bots are project-specific Telegram bots that enable natural language communication without slash commands. Users interact naturally, and the bot automatically invokes the project orchestrator (`project.md`) as the default target when no specific target is mentioned.
 
 ## Features
 
