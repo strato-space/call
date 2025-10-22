@@ -647,8 +647,49 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "[START]",
         f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}",
     )
-    await m.reply(
-        """
+    
+    # For specialized bots: show only project goal (natural language interaction)
+    # For universal bot: show full command reference
+    if PROJECT_NAME:
+        try:
+            tree = _services.call_api.list(project=PROJECT_NAME)
+            if tree and len(tree) > 0:
+                # Try to read project card to get goal
+                try:
+                    card_text = _services.call_api.read(PROJECT_NAME)
+                    # Extract goal from metadata if available
+                    import re
+                    goal_match = re.search(r'goal:\s*[|>-]\s*\n((?:\s+.+\n?)+)', card_text, re.MULTILINE)
+                    if goal_match:
+                        goal_lines = goal_match.group(1).strip().split('\n')
+                        goal_text = '\n'.join(line.strip() for line in goal_lines)
+                        # Specialized bot: show only goal and natural language usage
+                        specialized_help = f"""🎯 {PROJECT_NAME}
+
+{goal_text}
+
+---
+
+💬 Общайтесь со мной на естественном языке.
+
+В приватном чате просто напишите запрос.
+В группе упомяните меня: @{SELECTED_BOT_NAME or PROJECT_NAME + 'Bot'}
+
+Примеры:
+- "статус проекта"
+- "задачи на сегодня"
+- "отчёт за неделю"
+"""
+                        await m.reply(specialized_help.strip(), parse_mode=None)
+                        debug_print("[bot]", "[START]", "replied (specialized)")
+                        return
+                except Exception as e:
+                    debug_print("[bot]", "[START]", f"Failed to read project goal: {e}")
+        except Exception as e:
+            debug_print("[bot]", "[START]", f"Failed to load project info: {e}")
+    
+    # Universal bot: show full command reference
+    base_help = """
 call-bot
 
 Commands:
@@ -663,10 +704,9 @@ Startup options:
 
 Plain text (no slash):
 - In private chat: 
-  - "@Name <input>" is equivalent to "/call @Name <input>" (only if Name found in catalog)
-  - "plain text" is equivalent to "/call <text>" (input-only, no target)
-- In groups: only explicit "@Name <input>" is handled to avoid reacting to every message.
-- If "@Name" is not found in catalog, message is silently ignored with log entry.
+  - "@Name <input>" is equivalent to "/call @Name <input>"
+  - "plain text" is equivalent to "/call <text>" (input-only)
+- In groups: only explicit "@Name <input>" or "@BotName <input>" is handled.
 
 Special cases:
 - If this bot is AgentFabBot, default agent is AgentFab when no name is specified (e.g., "@ <input>").
@@ -674,9 +714,9 @@ Special cases:
 Notes:
 - /agents lists one name per line as @Name.
 - With --aliases, alias lines are indented with two spaces before @ (e.g., "  @Alias").
-        """.strip(),
-        parse_mode=None,
-    )
+    """.strip()
+    
+    await m.reply(base_help, parse_mode=None)
     debug_print("[bot]", "[START]", "replied")
 
 
@@ -972,13 +1012,25 @@ async def _call_task(
             if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot"
             else (PROJECT_NAME or None)
         )
-        # If no explicit target name, do not pass project — let library run a blank agent
-        proj = proj_baseline if (name or "").strip() else None
+        # For specialized bots: if no explicit target, use project name as target (runs project.md)
+        # For StratoSpaceAiBot: keep existing behavior (blank agent)
+        if (name or "").strip():
+            # Explicit target provided by user
+            proj = proj_baseline
+            target_name = name
+        else:
+            # No target: for specialized bot, use project as target; for universal bot, use None
+            if proj_baseline:
+                proj = proj_baseline
+                target_name = proj_baseline  # Use project name as target to invoke project.md
+            else:
+                proj = None
+                target_name = None
         res = await _services.call_api.call_async(
             project=proj,
             agent=None,
             prompt=None,
-            target=name,  # delegate target interpretation (prompt>agent>project) to the library
+            target=target_name,  # delegate target interpretation (prompt>agent>project) to the library
             input=input_text,
             echo=echo,
             chat_id=chat_id,

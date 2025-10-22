@@ -16,13 +16,15 @@ def test_api_normalize_selector():
 
 
 def test_interpret_target_projects_agentfab_uxfab():
+    """Test project targets resolve as prompts (project.md indexed as executable prompt)."""
     api = importlib.import_module("call.lib.api")
     row = api.interpret_target(project=None, agent=None, prompt=None, target="AgentFab")
     assert row.project == "AgentFab"
-    assert row.type == "project"
+    # After project-level prompts: project cards are indexed as prompts
+    assert row.type == "prompt"
     row = api.interpret_target(project=None, agent=None, prompt=None, target="UxFab")
     assert row.project == "UxFab"
-    assert row.type == "project"
+    assert row.type == "prompt"
 
 
 def test_build_cfg_project_via_target_preview_has_project_card():

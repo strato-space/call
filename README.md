@@ -32,6 +32,8 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [YAML Formatting](docs/formatting.md) — Readable YAML output for MCP hooks and agent-as-tools
   - [MCP Message Cleanup](docs/mcp-message-cleanup.md) — Auto-delete intermediate debug messages in Telegram
   - [MCP Hook Routing](docs/mcp-hook-routing.md) — Dual-channel message routing for debug and user messages
+  - [Specialized Bots](docs/specialized-bots.md) — Natural language interaction with project-specific bots
+  - [Project-Level Prompts](docs/project-level-prompts.md) — Prompts attached directly to projects without agents
   - [MCP Config](docs/mcp_config.md) — MCP server configuration and setup
   - [Cards](docs/cards.md) — Agent and prompt card system
 - [Developer Guide](#developer-guide)
