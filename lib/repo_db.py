@@ -290,15 +290,19 @@ def list(
             )
         )
 
-    # Build hierarchy: project -> agents[] (name/path/prompts[])
+    # Build hierarchy: project -> agents[] (name/path/prompts[]) + prompts[] (project-level)
     proj_map: Dict[str, Dict[str, object]] = {}
     for row_id, prj, ag, pr, path, st, tgt, typ, rel, url, goal, card in items:
         # Ensure project bucket
         if prj not in proj_map:
-            proj_map[prj] = {"name": prj, "type": "project", "agents": []}
+            proj_map[prj] = {"name": prj, "type": "project", "agents": [], "prompts": []}
         agents_list: List[Dict[str, object]] = proj_map[prj]["agents"]  # type: ignore
-        # Skip rows without agent (project-only rows or prompts missing agent)
+        project_prompts: List[str] = proj_map[prj]["prompts"]  # type: ignore
+        # Handle project-level prompts (no agent)
         if not ag:
+            # Add prompt to project-level prompts list
+            if pr and pr not in project_prompts:
+                project_prompts.append(pr)
             continue
         # Find or create agent entry
         agent_entry = None

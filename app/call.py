@@ -1717,6 +1717,9 @@ def ensure_env(var: str, default: str = None) -> str:
 telegram_last_message: Optional[Message] = None
 selected_chat_id: Optional[int] = None
 selected_thread_id: Optional[int] = None
+# Debug chat for MCP Hook messages (always uses TELEGRAM_CHAT_ID from .env)
+debug_chat_id: Optional[int] = None
+debug_thread_id: Optional[int] = None
 # When True, the pipeline must NOT create a SQLite session and must NOT send Telegram messages
 force_no_session: bool = False
 # Optional original Telegram message id to reply to
@@ -1755,6 +1758,9 @@ OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
 # Initialize selected chat/thread defaults from .env
 selected_chat_id = TELEGRAM_CHAT_ID
 selected_thread_id = TELEGRAM_THREAD_ID or None
+# Initialize debug chat/thread from .env (for MCP Hook messages)
+debug_chat_id = TELEGRAM_CHAT_ID
+debug_thread_id = TELEGRAM_THREAD_ID or None
 
 
 def format_exception_json(e: Exception) -> dict:
@@ -2843,6 +2849,9 @@ class MCPServerStdioHook(MCPServerStdio):
     Each instance maintains its own editable Telegram message. On first write,
     a new message is created; subsequent writes edit that message. The MCP name
     is printed at the top of the message.
+    
+    Debug messages are sent to debug_chat_id (from TELEGRAM_CHAT_ID in .env),
+    while typing status is sent to selected_chat_id (original request chat).
     """
 
     from typing import Any
@@ -3075,9 +3084,10 @@ class MCPServerStdioHook(MCPServerStdio):
         try:
             cleaned = sanitize_telegram_html(payload)
             cleaned = telegram_truncate_html_safe(cleaned, 3800)
+            # Use debug_chat_id for MCP debug messages (always from .env)
             msg = await safe_send_message(
-                chat_id=selected_chat_id,
-                message_thread_id=selected_thread_id,
+                chat_id=debug_chat_id,
+                message_thread_id=debug_thread_id,
                 text=cleaned,
                 parse_mode=ParseMode.HTML,
                 disable_notification=True,
@@ -3294,15 +3304,14 @@ class MCPServerStdioHook(MCPServerStdio):
             except Exception:
                 pass
 
-            # Send typing action on the same chat/thread when possible
+            # Send typing action to original request chat (selected_chat_id), not debug chat
             try:
-                msg = self.__telegram_last_message
-                if msg:
+                if selected_chat_id is not None:
 
                     async def _op():
                         return await bot.send_chat_action(
-                            chat_id=msg.chat_id,
-                            message_thread_id=msg.message_thread_id,
+                            chat_id=selected_chat_id,
+                            message_thread_id=selected_thread_id,
                             action=ChatAction.TYPING,
                         )
 
@@ -3320,7 +3329,7 @@ class MCPServerStdioHook(MCPServerStdio):
 
                             async def _op_no_thread():
                                 return await bot.send_chat_action(
-                                    chat_id=msg.chat_id, action=ChatAction.TYPING
+                                    chat_id=selected_chat_id, action=ChatAction.TYPING
                                 )
 
                             await async_retry(

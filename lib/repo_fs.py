@@ -369,6 +369,8 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 orch = str(meta.get("orchestration") or "")
                 goal = str(meta.get("goal") or meta.get("purpose") or "")
                 relp, url = _rel_url(proj_md)
+                card_text = _read_card_text(proj_md)
+                # Insert project card (type=project)
                 _upsert_row(
                     cur,
                     target=proj_name,
@@ -383,7 +385,25 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     rel_path=relp,
                     url=url,
                     goal=goal,
-                    card=_read_card_text(proj_md),
+                    card=card_text,
+                )
+                scanned += 1
+                # Also insert as executable prompt (project -> prompt without agent)
+                _upsert_row(
+                    cur,
+                    target=proj_name,
+                    project=proj_name,
+                    agent="",
+                    prompt=proj_name,
+                    abs_path=str(proj_md),
+                    state="ready",
+                    engine=eng,
+                    orchestration=orch,
+                    type="prompt",
+                    rel_path=relp,
+                    url=url,
+                    goal=goal,
+                    card=card_text,
                 )
                 scanned += 1
                 try:
@@ -495,9 +515,12 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 # Treat every file in ready/draft as a prompt card
                 try:
                     meta = _read_prompt_metadata(p) or {}
-                    if not meta:
+                    # Determine state first for warnings
+                    state_name = root.name.lower()
+                    # Warn about missing metadata only for ready files
+                    if not meta and state_name == "ready":
                         debug_print(
-                            "[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}"
+                            "[repo.scan]", "[WARN]", f"Prompt MD missing METADATA (ready state): {p}"
                         )
                     pr_id = str(meta.get("id") or p.stem)
                     proj = str(meta.get("project") or "")
@@ -505,11 +528,12 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     eng = str(meta.get("engine") or "")
                     orch = str(meta.get("orchestration") or "")
                     goal = str(meta.get("goal") or meta.get("purpose") or "")
-                    if (not proj) or (not agent):
+                    # Only project is required for ready; agent is optional; draft can be without project
+                    if not proj and state_name == "ready":
                         debug_print(
                             "[repo.scan]",
                             "[WARN]",
-                            f"Prompt MD missing project/agent: {p}",
+                            f"Prompt MD missing project (ready state): {p}",
                         )
                 except Exception:
                     pr_id = p.stem
