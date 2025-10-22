@@ -39,6 +39,7 @@ The MCP Hook system implements **dual-channel message routing** for Telegram not
 | **Welcome Banner** | Origin chat | `selected_chat_id` | Notify user about agent start |
 | **MCP Tool Arguments** | Debug chat | `debug_chat_id` | Log tool invocations with YAML args |
 | **MCP Tool Results** | Debug chat | `debug_chat_id` | Log tool execution results |
+| **Agents-as-Tools Input/Output** | Debug chat | `debug_chat_id` | Log helper agent requests and responses |
 | **Sequential Thinking Progress** | Debug chat | `debug_chat_id` | Show reasoning progress bars |
 | **Typing Status** | Origin chat | `selected_chat_id` | User feedback during execution |
 | **Final Result** | Origin chat | `selected_chat_id` | Agent output delivery |

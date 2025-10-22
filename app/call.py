@@ -252,7 +252,8 @@ from .utils.telegram_text import (
 from .utils.telegraph_utils import publish_results, create_telegrath_account
 
 
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
+from mcp.shared.exceptions import McpError
 
 # Increase default max turns for nested agent runs (tools/sub-agents) to avoid hitting library default 10
 try:
@@ -1223,7 +1224,12 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
 
         tg_msg = None
         try:
-            if selected_chat_id is not None:
+            # Prefer debug chat for agents-as-tools logs; fallback to selected chat
+            target_chat_id = debug_chat_id if debug_chat_id is not None else selected_chat_id
+            target_thread_id = (
+                debug_thread_id if target_chat_id == debug_chat_id else selected_thread_id
+            )
+            if target_chat_id is not None:
                 await init_bot()
                 title = f"🛠️ <b>{sanitize_telegram_html(getattr(sub_cfg, 'name', '') or sub_name)}</b>"
                 caller = f"<i>from</i> <b>{sanitize_telegram_html(getattr(cfg, 'name', '') or '')}</b>"
@@ -1250,8 +1256,8 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                     body = f"\n<code>{esc}</code>"
                 text = f"{title} {caller}{body}"
                 tg_msg = await safe_send_message(
-                    chat_id=selected_chat_id,
-                    message_thread_id=selected_thread_id,
+                    chat_id=target_chat_id,
+                    message_thread_id=target_thread_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
                 )
@@ -3245,7 +3251,22 @@ class MCPServerStdioHook(MCPServerStdio):
                     await self.__edit_message_text(result_body)
                 except Exception:
                     pass
-                return result
+                # Return JSON-wrapped success result
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "ok": True,
+                                    "tool": tool_name,
+                                    "result": result_text,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        )
+                    ]
+                )
             except Exception as e:
                 logging.error(
                     "[mcp][%s] ❌ tool %s failed: %s: %s",
@@ -3262,7 +3283,23 @@ class MCPServerStdioHook(MCPServerStdio):
                     )
                 except Exception:
                     pass
-                raise
+                # Return JSON-wrapped error instead of raising
+                error_payload = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "error": format_exception_json(e),
+                }
+                # Add MCP-specific error code if available
+                if isinstance(e, McpError):
+                    error_payload["error"]["mcp_code"] = getattr(e, "code", None)
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(error_payload, ensure_ascii=False),
+                        )
+                    ]
+                )
         try:
             thought = arguments["thought"]
             # Determine counters safely
@@ -3360,13 +3397,37 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
+                result_text = self._format_tool_result(result)
                 debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + self._format_tool_result(result)
+                    + result_text
                 )
-                return result
+                # Return JSON-wrapped success result
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "ok": True,
+                                    "tool": tool_name,
+                                    "result": result_text,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        )
+                    ]
+                )
             except Exception as e:
+                logging.error(
+                    "[mcp][%s] ❌ tool %s failed: %s: %s",
+                    self._mcp_title,
+                    tool_name,
+                    type(e).__name__,
+                    str(e),
+                    exc_info=True
+                )
                 err_text = format_exception_text(e)
                 try:
                     await self.__edit_message_text(
@@ -3374,7 +3435,22 @@ class MCPServerStdioHook(MCPServerStdio):
                     )
                 except Exception:
                     pass
-                raise
+                # Return JSON-wrapped error instead of raising
+                error_payload = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "error": format_exception_json(e),
+                }
+                if isinstance(e, McpError):
+                    error_payload["error"]["mcp_code"] = getattr(e, "code", None)
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(error_payload, ensure_ascii=False),
+                        )
+                    ]
+                )
         except Exception as e:
             print(f"[MCP Hook] Error in tool {tool_name}: {str(e)}")
             raise
