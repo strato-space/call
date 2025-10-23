@@ -36,8 +36,10 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [Project-Level Prompts](docs/project-level-prompts.md) — Prompts attached directly to projects without agents
   - [MCP Config](docs/mcp_config.md) — MCP server configuration and setup
   - [Cards](docs/cards.md) — Agent and prompt card system
+  - [DB Diagnostics](docs/DB_DIAGNOSTICS.md) — Database diagnostics tool for troubleshooting
 - [Developer Guide](#developer-guide)
 - [Reference](#reference)
+- [Changelog](#changelog)
 - [Security & Best Practices](#security--best-practices)
 - [Roadmap](#roadmap)
 
@@ -272,9 +274,15 @@ Use `tools/repos.sh` to synchronize all Strato repositories:
 
 When you specify a `target`, Call resolves it with this precedence:
 
-1. **Prompt** — checks `prompt/ready/` and `prompt/draft/` for matching id/name
-2. **Agent** — searches `agent/<Project>/<Agent>/` directories
-3. **Project** — matches top-level project names
+1. **Project** — matches top-level project names (most secure, cannot be overridden)
+2. **Agent** — searches `agent/<Project>/<Agent>/` directories  
+3. **Prompt** — checks `prompt/ready/` and `prompt/draft/` for matching id/name
+
+**Security rationale**: This priority ensures prompts cannot hijack project or agent names, maintaining hierarchy integrity.
+
+**Executable vs Non-Executable Projects**:
+- **Executable projects** (with `<!-- PROMPT:START -->` section) run directly
+- **Non-executable projects** (metadata only) require an agent to execute
 
 **Wildcards** (`*`) are supported in all selectors for flexible filtering.
 
@@ -288,6 +296,7 @@ When you specify a `target`, Call resolves it with this precedence:
 
 - Exact project matches win before agent fuzzy matches when the name equals a project.
 - Use unified `target` when unsure about type; explicit `project/agent/prompt` flags keep scope narrow and skip wildcard broadening.
+- For debugging resolution issues, use the [DB Diagnostics Tool](docs/DB_DIAGNOSTICS.md)
 
 ### Model Settings Precedence
 
@@ -1775,3 +1784,29 @@ python -m call.cli.main call --target MyAgent --input "Hello world"
 ```
 
 For questions, issues, or contributions, see [`AGENTS.md`](AGENTS.md) for guidelines.
+
+---
+
+## Changelog
+
+### 2025-10-23: Target Resolution Priority Change
+
+**Breaking Change**: Target resolution priority changed from `prompt → agent → project` to `project → agent → prompt`.
+
+**Key Changes**:
+- ✅ Projects now have highest priority (security improvement)
+- ✅ Executable projects (with PROMPT section) can run directly
+- ✅ Database path fixed in `.env` (`.cache/call/repo.db`)
+- ✅ New diagnostic tool: `debug_db.py`
+- ✅ 6 new tests for target resolution
+
+**Details**: See [CHANGELOG_TARGET_RESOLUTION.md](CHANGELOG_TARGET_RESOLUTION.md)
+
+**Migration**: Use explicit selectors if you have duplicate target names:
+```bash
+# Force prompt selection
+call exec --prompt MyTarget
+
+# Force project selection (now default)
+call exec --project MyTarget
+```

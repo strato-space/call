@@ -765,11 +765,34 @@ def select_card(
     Raises:
         SelectionNotFoundError: When no rows satisfy the filters.
         TooManyRowsError: When multiple rows satisfy the filters.
+    
+    Target resolution priority (when kind is not specified): project → agent → prompt
+    This ensures prompts cannot override projects or agents (more secure).
     """
 
     conn = _ensure_db()
     cur = conn.cursor()
     try:
+        # When target is specified without explicit kind, use cascading lookup: project → agent → prompt
+        if target and not kind:
+            # Try project first (with constraints if provided)
+            try:
+                result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="project")
+                return result
+            except SelectionNotFoundError:
+                pass
+            
+            # Try agent second (with constraints if provided)
+            try:
+                result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="agent")
+                return result
+            except SelectionNotFoundError:
+                pass
+            
+            # Try prompt last (with constraints if provided)
+            result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="prompt")
+            return result
+        
         where: List[str] = ["1=1"]
         params: List[str] = []
 

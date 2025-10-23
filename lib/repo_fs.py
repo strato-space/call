@@ -388,28 +388,57 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     card=card_text,
                 )
                 scanned += 1
-                # Also insert as executable prompt (project -> prompt without agent)
-                _upsert_row(
-                    cur,
-                    target=proj_name,
-                    project=proj_name,
-                    agent="",
-                    prompt=proj_name,
-                    abs_path=str(proj_md),
-                    state="ready",
-                    engine=eng,
-                    orchestration=orch,
-                    type="prompt",
-                    rel_path=relp,
-                    url=url,
-                    goal=goal,
-                    card=card_text,
-                )
-                scanned += 1
                 try:
                     per_project_has_project_card.add(proj_name)
                 except Exception:
                     pass
+            
+            # Phase 1A-flat: scan flat .md prompts in the same project directory
+            try:
+                for md_file in child.glob("*.md"):
+                    # Skip project.md (already handled above)
+                    if md_file.name == "project.md":
+                        continue
+                    try:
+                        meta = _read_prompt_metadata(md_file) or {}
+                        # Skip files with type: project (they should only be project.md)
+                        if meta.get("type") == "project":
+                            continue
+                        # Default type is prompt if not specified
+                        pr_id = str(meta.get("id") or md_file.stem)
+                        eng = str(meta.get("engine") or "")
+                        orch = str(meta.get("orchestration") or "")
+                        goal = str(meta.get("goal") or meta.get("purpose") or "")
+                        relp, url = _rel_url(md_file)
+                        card_text = _read_card_text(md_file)
+                        # Insert as prompt (flat structure)
+                        _upsert_row(
+                            cur,
+                            target=pr_id,
+                            project=proj_name,
+                            agent="",
+                            prompt=pr_id,
+                            abs_path=str(md_file),
+                            state="ready",
+                            engine=eng,
+                            orchestration=orch,
+                            type="prompt",
+                            rel_path=relp,
+                            url=url,
+                            goal=goal,
+                            card=card_text,
+                        )
+                        scanned += 1
+                        # Update per-project prompt count
+                        try:
+                            d = per_project.setdefault(proj_name, {"ready": 0, "draft": 0})
+                            d["ready"] = int(d.get("ready", 0)) + 1
+                        except Exception:
+                            pass
+                    except Exception:
+                        continue
+            except Exception:
+                pass
     except Exception:
         pass
 
