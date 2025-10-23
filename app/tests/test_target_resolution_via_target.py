@@ -16,18 +16,19 @@ def test_api_normalize_selector():
 
 
 def test_interpret_target_projects_agentfab_uxfab():
-    """Test project targets resolve as prompts (project.md indexed as executable prompt)."""
+    """Test project targets resolve to type=project."""
     api = importlib.import_module("call.lib.api")
     row = api.interpret_target(project=None, agent=None, prompt=None, target="AgentFab")
     assert row.project == "AgentFab"
-    # After project-level prompts: project cards are indexed as prompts
-    assert row.type == "prompt"
+    # Projects are indexed as type=project
+    assert row.type == "project"
     row = api.interpret_target(project=None, agent=None, prompt=None, target="UxFab")
     assert row.project == "UxFab"
-    assert row.type == "prompt"
+    assert row.type == "project"
 
 
 def test_build_cfg_project_via_target_preview_has_project_card():
+    """Test that executable projects (with PROMPT section) can be run directly."""
     api = importlib.import_module("call.lib.api")
     cfg, err = api.build_runnable_instructions_config(
         project=None, agent=None, prompt=None, target="AgentFab", input=None
@@ -38,6 +39,21 @@ def test_build_cfg_project_via_target_preview_has_project_card():
     assert isinstance(cfg.path, str) and cfg.path.startswith(
         "prompt/AgentFab/project.md"
     )
+
+
+def test_build_cfg_executable_project_stratoproj():
+    """Test that StratoProject (executable project) can be run via target."""
+    api = importlib.import_module("call.lib.api")
+    cfg, err = api.build_runnable_instructions_config(
+        project=None, agent=None, prompt=None, target="StratoProject", input="test"
+    )
+    assert err is None and cfg is not None
+    assert cfg.type == "project"
+    assert cfg.project == "StratoProject"
+    # Should have prompt/instructions text
+    assert bool(cfg.card_text or cfg.prompt_text or cfg.instructions)
+    # Path should point to project.md
+    assert isinstance(cfg.path, str) and "StratoProject/project.md" in cfg.path
 
 
 def test_build_cfg_agents_via_target_fanfab():

@@ -1154,25 +1154,34 @@ async def call_async(
 
     cfg_type = str(getattr(cfg, "type", "") or "").lower()
     if cfg_type == "project":
-        agent_probe = resolve_agent(
-            project=getattr(cfg, "project", None), agent=None, prompt=None, target=None
+        # If project has prompt text (card_text or prompt_text), it's executable directly
+        # Skip agent resolution for executable projects
+        has_prompt = bool(
+            getattr(cfg, "card_text", None) or 
+            getattr(cfg, "prompt_text", None) or 
+            getattr(cfg, "instructions", None)
         )
-        if not isinstance(agent_probe, dict) or not agent_probe.get("ok"):
-            if isinstance(agent_probe, dict):
-                if session_id and "session_id" not in agent_probe:
-                    agent_probe["session_id"] = session_id
-                _reset_override()
-                return agent_probe
-            _reset_override()
-            return _error_payload(
-                agent=str(getattr(cfg, "agent", "") or ""),
-                input=str(input or ""),
-                exc="No agent found matching criteria",
-                status=404,
-                code="NO_DATA_FOUND",
-                project=getattr(cfg, "project", None),
-                session_id=session_id,
+        if not has_prompt:
+            # Non-executable project: try to find an agent to run
+            agent_probe = resolve_agent(
+                project=getattr(cfg, "project", None), agent=None, prompt=None, target=None
             )
+            if not isinstance(agent_probe, dict) or not agent_probe.get("ok"):
+                if isinstance(agent_probe, dict):
+                    if session_id and "session_id" not in agent_probe:
+                        agent_probe["session_id"] = session_id
+                    _reset_override()
+                    return agent_probe
+                _reset_override()
+                return _error_payload(
+                    agent=str(getattr(cfg, "agent", "") or ""),
+                    input=str(input or ""),
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=getattr(cfg, "project", None),
+                    session_id=session_id,
+                )
 
     # Debug CFG payload removed - too verbose for normal operation
     # Uncomment if needed for deep debugging:
