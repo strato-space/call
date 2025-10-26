@@ -2,10 +2,22 @@
 Telegram bot for the call subsystem.
 
 Commands:
-- /agents [--aliases] [--q "filter"]
-- /call @Name <input>
+- /call [@Name] <input>        Execute agent/prompt/project via target resolution
+- /agents [--aliases] [--q]    List available agents
+- /prompts [filters]           List prompts with optional filters
+- /projects                    List projects (StratoSpaceAiBot only)
+- /reload                      Rescan repositories and rebuild index
+- /clear [@Name]               Clear conversation session
 
-The bot only interacts with the call library API and does not directly use OpenAI or Telegraph.
+Plain text handling:
+- Private chats: "@Name <input>" is equivalent to "/call @Name <input>"
+- Private chats: "plain text" is equivalent to "/call <text>" (input-only)
+- Group chats: Only "@Name <input>" triggers execution (to avoid reacting to every message)
+
+Architecture:
+- Target resolution delegated to call_api.call_async() (prompt > agent > project hierarchy)
+- No pre-validation of targets in bot layer - library handles resolution and errors
+- Bot only interacts with call.lib.api facade, not directly with OpenAI or Telegraph
 """
 
 from __future__ import annotations
@@ -21,6 +33,15 @@ import argparse
 import json
 import sys
 import httpx
+
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """Return True if environment flag is enabled."""
+    value = os.environ.get(name, default)
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+LOG_EMPTY_GETUPDATES = _env_flag("TELEGRAM_LOG_EMPTY_UPDATES", "0")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -41,8 +62,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 from dotenv import load_dotenv
 from pathlib import Path
 from telegram import Update
-from telegram.constants import ParseMode
-from telegram.error import BadRequest, TimedOut
+from telegram.constants import ParseMode, ChatAction
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -212,6 +233,19 @@ def _summarize_update(update: Update) -> str:
         return "<unavailable>"
 
 
+def _sanitize_false_fields(obj):
+    """Recursively remove fields with False values from dicts to reduce log noise."""
+    if isinstance(obj, dict):
+        return {
+            k: _sanitize_false_fields(v)
+            for k, v in obj.items()
+            if v is not False  # Remove fields with literal False value
+        }
+    elif isinstance(obj, list):
+        return [_sanitize_false_fields(item) for item in obj]
+    return obj
+
+
 async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TypeHandler callback to log every incoming update."""
     summary = _summarize_update(update)
@@ -220,7 +254,10 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         from call.lib.logging import _env_true
 
         if _env_true("CALL_DEBUG"):
-            raw_json = json.dumps(update.to_dict(), ensure_ascii=False)
+            update_dict = update.to_dict()
+            # Remove False-valued fields to reduce log noise
+            sanitized = _sanitize_false_fields(update_dict)
+            raw_json = json.dumps(sanitized, ensure_ascii=False)
             log.info("Update raw: %s", raw_json)
     except Exception:
         pass
@@ -242,6 +279,12 @@ async def _tap_getupdates_response(response: httpx.Response) -> None:
         if isinstance(data, dict):
             result = data.get("result")
             if isinstance(result, list) and not result:
+                # Optional debug: log when getUpdates returns empty list
+                if LOG_EMPTY_GETUPDATES:
+                    log.info(
+                        "Telegram getUpdates: received EMPTY result list (ok=%s)",
+                        data.get("ok"),
+                    )
                 return
         raw = response.text
         if len(raw) > 5000:
@@ -263,17 +306,30 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         err = getattr(context, "error", None)
         if err is not None:
-            # Provide traceback tuple explicitly for structured logs
-            log.error(
-                "Unhandled error while processing update: %s (%s: %s)",
-                summary,
-                type(err).__name__,
-                str(err),
-                exc_info=(type(err), err, getattr(err, "__traceback__", None)),
+            is_net = isinstance(err, NetworkError) or isinstance(
+                getattr(err, "__cause__", None), NetworkError
             )
-            debug_print(
-                "[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary
-            )
+            if is_net:
+                log.warning(
+                    "Transient network issue while processing update: %s (%s: %s)",
+                    summary,
+                    type(err).__name__,
+                    str(err),
+                )
+                debug_print(
+                    "[bot]", "[WARN]", f"{type(err).__name__}: {err}", "|", summary
+                )
+            else:
+                log.error(
+                    "Unhandled error while processing update: %s (%s: %s)",
+                    summary,
+                    type(err).__name__,
+                    str(err),
+                    exc_info=(type(err), err, getattr(err, "__traceback__", None)),
+                )
+                debug_print(
+                    "[bot]", "[ERROR]", f"{type(err).__name__}: {err}", "|", summary
+                )
         else:
             log.error("Unhandled error while processing update: %s (no error)", summary)
             debug_print("[bot]", "[ERROR]", "<no error>", "|", summary)
@@ -509,59 +565,7 @@ def _normalize_token(tok: str) -> str:
         return (tok or "").strip()
 
 
-def _is_valid_target(token: str, base_project: str | None) -> bool:
-    """Return True if token resolves via the builder (agent, prompt, or project).
-
-    Prefer central validation through build_runnable_instructions_config using the
-    `target` argument so semantics match the library (prompt > agent > project).
-    """
-    t = _normalize_token(token)
-    if not t:
-        return False
-    # Prefer central builder when available (validates prompt > agent > project)
-    try:
-        builder = getattr(
-            _services.call_api, "build_runnable_instructions_config", None
-        )
-        if callable(builder):
-            cfg, err = builder(
-                project=(base_project or None),
-                agent=None,
-                prompt=None,
-                target=t,
-                input=None,
-            )
-            if err is None and cfg is not None:
-                return True
-    except Exception:
-        pass
-    # Fallback: DB-only checks (resolve_agent for agent/prompt; list for project)
-    try:
-        env = _services.call_api.resolve_agent(
-            project=(base_project or None), agent=t, prompt=None, target=None
-        )
-        if isinstance(env, dict) and env.get("ok"):
-            return True
-    except Exception:
-        pass
-    try:
-        envp = _services.call_api.resolve_agent(
-            project=(base_project or None), agent=None, prompt=t, target=None
-        )
-        if isinstance(envp, dict) and envp.get("ok"):
-            return True
-    except Exception:
-        pass
-    try:
-        lst = _services.call_api.list(project=t)
-        if any(
-            (isinstance(x, dict) and (str(x.get("name") or "").strip() == t))
-            for x in (lst or [])
-        ):
-            return True
-    except Exception:
-        pass
-    return False
+# _is_valid_target() removed - validation delegated to call_api.call_async()
 
 
 def _resolve_agent_and_input(
@@ -569,12 +573,16 @@ def _resolve_agent_and_input(
 ) -> tuple[str, str, bool]:
     """Parse text into (target_name, input_text, should_handle) with conservative rules.
 
+    ARCHITECTURE: This function does NOT validate if target exists in catalog.
+    Target validation is delegated to call_api.call_async() which resolves: prompt > agent > project.
+    This matches /call command behavior - parse and delegate, don't pre-validate.
+
     - Group chats: require an explicit @-mention; support:
-        @Target <input>            -> execute only when Target is valid; else ignore
-        @BotName Target <input>    -> execute when Target is valid; else treat as input-only
+        @Target <input>            -> extract Target and rest (no validation)
+        @BotName Target <input>    -> extract Target and rest (no validation)
         @ <input>                  -> input-only (no target)
     - Private chats: plain text behaves like '/call <input>' (no implicit target).
-        @Target <input>            -> same validation as in groups
+        @Target <input>            -> extract Target and rest (no validation)
         plain text                 -> input-only (no target)
     """
     s = (text or "").strip()
@@ -609,14 +617,14 @@ def _resolve_agent_and_input(
             sub = rest.strip().split(None, 1)
             cand = _normalize_token(sub[0]) if sub else ""
             tail = sub[1] if len(sub) > 1 else ""
-            if cand and _is_valid_target(cand, base_project or None):
+            # Return candidate as target without validation
+            if cand:
                 return cand, tail, True
-            # Not a valid target -> treat all as input-only
+            # No candidate -> treat all as input-only
             return "", rest.strip(), True
-        # '@Target ...' -> validate target; if invalid, ignore (group) / ignore (private mention form too)
-        if head and _is_valid_target(head, base_project or None):
-            return head, rest, True
-        return "", "", False
+        # '@Target ...' -> return target without validation
+        # Library will resolve it as prompt > agent > project
+        return head, rest, True
 
     # No leading '@'
     if is_private:
@@ -639,8 +647,49 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "[START]",
         f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}",
     )
-    await m.reply(
-        """
+    
+    # For specialized bots: show only project goal (natural language interaction)
+    # For universal bot: show full command reference
+    if PROJECT_NAME:
+        try:
+            tree = _services.call_api.list(project=PROJECT_NAME)
+            if tree and len(tree) > 0:
+                # Try to read project card to get goal
+                try:
+                    card_text = _services.call_api.read(PROJECT_NAME)
+                    # Extract goal from metadata if available
+                    import re
+                    goal_match = re.search(r'goal:\s*[|>-]\s*\n((?:\s+.+\n?)+)', card_text, re.MULTILINE)
+                    if goal_match:
+                        goal_lines = goal_match.group(1).strip().split('\n')
+                        goal_text = '\n'.join(line.strip() for line in goal_lines)
+                        # Specialized bot: show only goal and natural language usage
+                        specialized_help = f"""🎯 {PROJECT_NAME}
+
+{goal_text}
+
+---
+
+💬 Общайтесь со мной на естественном языке.
+
+В приватном чате просто напишите запрос.
+В группе упомяните меня: @{SELECTED_BOT_NAME or PROJECT_NAME + 'Bot'}
+
+Примеры:
+- "статус проекта"
+- "задачи на сегодня"
+- "отчёт за неделю"
+"""
+                        await m.reply(specialized_help.strip(), parse_mode=None)
+                        debug_print("[bot]", "[START]", "replied (specialized)")
+                        return
+                except Exception as e:
+                    debug_print("[bot]", "[START]", f"Failed to read project goal: {e}")
+        except Exception as e:
+            debug_print("[bot]", "[START]", f"Failed to load project info: {e}")
+    
+    # Universal bot: show full command reference
+    base_help = """
 call-bot
 
 Commands:
@@ -654,8 +703,10 @@ Startup options:
 - --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
 
 Plain text (no slash):
-- In private chat: "@Name <input>" and "Name <input>" are equivalent.
-- In groups: only explicit "@Name <input>" is handled to avoid reacting to every message.
+- In private chat: 
+  - "@Name <input>" is equivalent to "/call @Name <input>"
+  - "plain text" is equivalent to "/call <text>" (input-only)
+- In groups: only explicit "@Name <input>" or "@BotName <input>" is handled.
 
 Special cases:
 - If this bot is AgentFabBot, default agent is AgentFab when no name is specified (e.g., "@ <input>").
@@ -663,9 +714,9 @@ Special cases:
 Notes:
 - /agents lists one name per line as @Name.
 - With --aliases, alias lines are indented with two spaces before @ (e.g., "  @Alias").
-        """.strip(),
-        parse_mode=None,
-    )
+    """.strip()
+    
+    await m.reply(base_help, parse_mode=None)
     debug_print("[bot]", "[START]", "replied")
 
 
@@ -691,7 +742,9 @@ https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
 - /reload — пересканировать репозитории и обновить индекс
 
 Подсказки:
-- В личных чатах можно без @; в группах используйте @упоминание или /call
+- В личных чатах: "@Name input" эквивалентно "/call @Name input" (если Name найден в каталоге)
+- Если @Name не найден - сообщение молча игнорируется (с записью в лог)
+- В группах используйте @упоминание или /call
 - Приоритет target: prompt > точный project > agent > шаблонный project
         """.strip()
     await m.reply(txt, parse_mode=None)
@@ -930,19 +983,54 @@ async def _call_task(
             "[CALL_TASK]",
             f"start name={name} len={len(input_text or '')} echo={echo} chat_id={chat_id} thread_id={thread_id}",
         )
+
+        # Show typing status to indicate command is being processed
+        try:
+            typing_chat_id = chat_id
+            typing_thread_id = thread_id
+            if typing_chat_id is None and m.update and m.update.effective_chat:
+                typing_chat_id = m.update.effective_chat.id
+            if typing_thread_id is None and getattr(m.update, "message", None):
+                typing_thread_id = m.update.message.message_thread_id
+            if typing_chat_id is not None:
+                await m.context.bot.send_chat_action(
+                    chat_id=typing_chat_id,
+                    action=ChatAction.TYPING,
+                    message_thread_id=typing_thread_id,
+                )
+                debug_print(
+                    "[bot]",
+                    "[CALL_TASK]",
+                    f"typing chat_id={typing_chat_id} thread_id={typing_thread_id}",
+                )
+        except Exception:
+            pass
+
         # Delegate to lib; it will publish to Telegram via its own utilities
         proj_baseline = (
             None
             if (SELECTED_BOT_NAME or "").strip() == "StratoSpaceAiBot"
             else (PROJECT_NAME or None)
         )
-        # If no explicit target name, do not pass project — let library run a blank agent
-        proj = proj_baseline if (name or "").strip() else None
+        # For specialized bots: if no explicit target, use project name as target (runs project.md)
+        # For StratoSpaceAiBot: keep existing behavior (blank agent)
+        if (name or "").strip():
+            # Explicit target provided by user
+            proj = proj_baseline
+            target_name = name
+        else:
+            # No target: for specialized bot, use project as target; for universal bot, use None
+            if proj_baseline:
+                proj = proj_baseline
+                target_name = proj_baseline  # Use project name as target to invoke project.md
+            else:
+                proj = None
+                target_name = None
         res = await _services.call_api.call_async(
             project=proj,
             agent=None,
             prompt=None,
-            target=name,  # delegate target interpretation (prompt>agent>project) to the library
+            target=target_name,  # delegate target interpretation (prompt>agent>project) to the library
             input=input_text,
             echo=echo,
             chat_id=chat_id,
@@ -1107,7 +1195,9 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             echo_flag = True
         # Remove leading own @Bot token if present again after flags (preserving spacing)
         try:
-            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                PROJECT_NAME
+            )
             own_at = ("@" + own) if own else ""
             if own_at:
                 leading_pat = re.compile(rf"^\s*{re.escape(own_at)}(?=\s|$)")
@@ -1246,6 +1336,13 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @_require_allowed_users
 async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle plain text messages (non-command).
+    
+    Behavior:
+    - Private chats: "@Name <input>" treated as /call @Name <input>, "text" as /call text
+    - Group chats: Only "@Name <input>" handled (ignore other messages to avoid noise)
+    - Target resolution delegated to call_api.call_async() without pre-validation
+    """
     text = (update.message.text or "").strip() if update.message else ""
     log.debug("handle_plain_text: text=%r", text)
     if not text:
@@ -1277,8 +1374,12 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         name, main_text, should_handle = _resolve_agent_and_input(
             text, base, is_private=is_private
         )
-    except Exception:
+    except Exception as e:
         # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+        log.warning(
+            "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
+            type(e).__name__, e
+        )
         name, main_text, should_handle = "", "", False
     if not should_handle:
         debug_print("[bot]", "[PLAIN]", "ignored (should_handle=false)")

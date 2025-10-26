@@ -29,3 +29,5 @@ pytest
 pytest-asyncio
 trio
 mcp-server-time
+openai-agents[voice]
+pyyaml

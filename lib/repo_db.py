@@ -290,15 +290,19 @@ def list(
             )
         )
 
-    # Build hierarchy: project -> agents[] (name/path/prompts[])
+    # Build hierarchy: project -> agents[] (name/path/prompts[]) + prompts[] (project-level)
     proj_map: Dict[str, Dict[str, object]] = {}
     for row_id, prj, ag, pr, path, st, tgt, typ, rel, url, goal, card in items:
         # Ensure project bucket
         if prj not in proj_map:
-            proj_map[prj] = {"name": prj, "type": "project", "agents": []}
+            proj_map[prj] = {"name": prj, "type": "project", "agents": [], "prompts": []}
         agents_list: List[Dict[str, object]] = proj_map[prj]["agents"]  # type: ignore
-        # Skip rows without agent (project-only rows or prompts missing agent)
+        project_prompts: List[str] = proj_map[prj]["prompts"]  # type: ignore
+        # Handle project-level prompts (no agent)
         if not ag:
+            # Add prompt to project-level prompts list
+            if pr and pr not in project_prompts:
+                project_prompts.append(pr)
             continue
         # Find or create agent entry
         agent_entry = None
@@ -705,7 +709,28 @@ def _add_filter_clause(
         where.append(f"{column} = ''")
         return
     pattern = _like_pattern(raw)
-    if "*" in raw:
+    has_wildcard = "*" in raw
+
+    if column == "prompt" and (raw == "" or raw is None):
+        # Allow fallback to prompt-less rows when empty string is requested explicitly.
+        where.append("(prompt = '' OR prompt IS NULL)")
+        return
+
+    if column == "prompt" and not has_wildcard and isinstance(raw, str) and raw:
+        # Allow matching prompt names within YAML mapping where they are stored as
+        # "project/prompt" target entries without an explicit agent.
+        where.append(
+            "(prompt = ? COLLATE NOCASE OR target = ? COLLATE NOCASE"
+            " OR target = ? COLLATE NOCASE)"
+        )
+        if pattern is not None:
+            params.append(pattern)
+        normalized = raw if pattern is None else raw
+        params.append(f"{raw}")
+        params.append(f"{raw}")
+        return
+
+    if has_wildcard:
         where.append(f"{column} LIKE ? ESCAPE '\\' COLLATE NOCASE")
     else:
         where.append(f"{column} = ? COLLATE NOCASE")
@@ -740,11 +765,34 @@ def select_card(
     Raises:
         SelectionNotFoundError: When no rows satisfy the filters.
         TooManyRowsError: When multiple rows satisfy the filters.
+    
+    Target resolution priority (when kind is not specified): project → agent → prompt
+    This ensures prompts cannot override projects or agents (more secure).
     """
 
     conn = _ensure_db()
     cur = conn.cursor()
     try:
+        # When target is specified without explicit kind, use cascading lookup: project → agent → prompt
+        if target and not kind:
+            # Try project first (with constraints if provided)
+            try:
+                result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="project")
+                return result
+            except SelectionNotFoundError:
+                pass
+            
+            # Try agent second (with constraints if provided)
+            try:
+                result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="agent")
+                return result
+            except SelectionNotFoundError:
+                pass
+            
+            # Try prompt last (with constraints if provided)
+            result = select_card(project=project, agent=agent, prompt=prompt, target=target, kind="prompt")
+            return result
+        
         where: List[str] = ["1=1"]
         params: List[str] = []
 

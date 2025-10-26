@@ -44,7 +44,6 @@
 - [Промпт 50-Discoveryagent.md](https://github.com/strato-space/prompt/blob/main/draft/50-Discoveryagent.md)
 - [Off: Выключенный SelfReflection](https://github.com/strato-space/prompt/blob/main/AgentFab/SelfReflection/agent.md)
 
-
 ## Как добавить новый пропмп в цепочку в AgentFab
 
 - Отредактировать список prompt в разделе METADATA - см. [Карточка AgentFab в Prompt Repo](https://github.com/strato-space/prompt/blob/main/AgentFab/AgentFab.md)
@@ -96,21 +95,23 @@
 - `/prompts_ready --project * --prompt 10* --target r:*`
 - `/prompts_draft --project AgentFab --prompt 3*-*`
 
-# Документация разрабочка 
+# Документация разрабочка
 
 ## Как парсятся сообщения
 
 - __Личные сообщения__
   - Простой текст (без @) → запускается как input‑only (аналог `/call <input>`)
-  - `@Target <input>` → выполняется, если Target существует (приоритет: prompt > agent > project)
+  - `@Target <input>` → передаётся в библиотеку для резолюции (приоритет: prompt > agent > project)
   - Одиночное `@ <input>` → трактуется как input‑only (без target)
   - Начальный `@BotName` допускается и отбрасывается
+  - Примечание: Бот НЕ проверяет валидность target. Резолюция делегирована `call_api.call_async()`.
 
 - __Групповые чаты__
   - Обрабатываются только сообщения с явным @‑упоминанием
-  - `@Target <input>` выполняется только при валидном Target
-  - `@BotName Target <input>` ведёт себя так же; если `Target` невалиден → input‑only
+  - `@Target <input>` → передаётся в библиотеку для резолюции
+  - `@BotName Target <input>` ведёт себя так же
   - `@ <input>` → input‑only
+  - Примечание: Неизвестные targets вызовут ошибку из библиотеки (не игнорируются ботом молча)
 
 ## Резолвинг цели и приоритеты
 
