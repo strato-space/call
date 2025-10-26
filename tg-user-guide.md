@@ -38,15 +38,17 @@ Examples:
 ## How messages are parsed
 - __Private DMs__
   - Plain text (no @) → run as input-only (equivalent to `/call <input>`)
-  - `@Target <input>` → execute if Target exists (priority: prompt > agent > project)
+  - `@Target <input>` → passed to library for resolution (priority: prompt > agent > project)
   - A single `@ <input>` → input-only (no target)
   - Leading `@BotName` is allowed and stripped
+  - Note: Bot layer does NOT pre-validate targets. Resolution delegated to `call_api.call_async()`.
 
 - __Group chats__
   - Only messages with explicit @-mention are handled
-  - `@Target <input>` executes only if Target is valid
-  - `@BotName Target <input>` behaves the same; if `Target` invalid → input-only
+  - `@Target <input>` → passed to library for resolution
+  - `@BotName Target <input>` behaves the same way
   - `@ <input>` → input-only
+  - Note: Unknown targets will trigger error from library (not silently ignored by bot)
 
 ## Target resolution and precedence
 - When `target` is provided, precedence is:

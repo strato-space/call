@@ -4,6 +4,7 @@ from agents.model_settings import ModelSettings
 from dataclasses import dataclass
 
 from call.lib.api import RunnableConfig
+from call.lib.logging import debug_print
 
 
 # Local YAML loader for MCP configuration (simple safe_load)
@@ -37,6 +38,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None):
 import os
 import argparse
 import asyncio
+import importlib
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
 import base64
@@ -52,41 +54,162 @@ import tempfile
 import yaml
 import inspect
 import httpx
-from openai import OpenAI
+from openai import OpenAI, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
 from call.lib import api as call_api
 
 
+def _suppress_mcp_cleanup_errors(loop, context):
+    """Custom asyncio exception handler to suppress known MCP/anyio cleanup errors.
+    
+    During MCP client cleanup, anyio's CancelScope may exit in a different task than
+    it was entered, causing RuntimeError. This is a known issue in MCP/anyio that
+    doesn't affect functionality but creates noisy logs.
+    
+    See: https://github.com/python-trio/anyio/issues/issues/cancel-scope-task-mismatch
+    """
+    exc = context.get('exception')
+    msg = context.get('message', '')
+    
+    # Suppress "Attempted to exit cancel scope in a different task" from MCP cleanup
+    if isinstance(exc, RuntimeError):
+        if 'cancel scope' in str(exc).lower() and 'different task' in str(exc).lower():
+            # Log at debug level instead of error
+            try:
+                logging.debug(
+                    "[mcp-cleanup] Suppressed known anyio CancelScope cleanup warning: %s",
+                    exc
+                )
+            except Exception:
+                pass
+            return
+    
+    # For all other exceptions, use default handler
+    loop.default_exception_handler(context)
+
+
 class _LiteralYamlDumper(yaml.SafeDumper):
-    """YAML dumper that renders multiline strings as block scalars."""
+    """YAML dumper that renders multiline strings as block scalars.
+    
+    Overrides Emitter to disable the heuristics that force quoted style
+    for long strings, ensuring literal block scalars are always respected.
+    """
+    
+    def choose_scalar_style(self):
+        """Override PyYAML's scalar style selection to honor representer hints.
+        
+        PyYAML Emitter has heuristics that override style hints from representers:
+        - Strings >1024 chars forced to quoted style
+        - Strings with trailing whitespace forced to quoted
+        - Strings with certain special chars forced to quoted
+        
+        This override forces the style specified by the representer.
+        """
+        # Call parent implementation
+        style = super().choose_scalar_style()
+        
+        # If representer explicitly requested literal (|) or folded (>), honor it
+        # even for very long strings
+        if self.event.style in ('|', '>'):
+            # Force literal/folded style regardless of length or content
+            return self.event.style
+        
+        return style
 
 
 def _literal_yaml_str_representer(dumper, data):
     # Always use literal block scalar for multiline strings to preserve formatting
     if "\n" in data:
+        # Debug: log when we're using literal style
+        if len(data) > 200:
+            try:
+                if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                    from call.lib.logging import debug_print
+
+                    debug_print(
+                        f"[YAML Representer] Using literal style (multiline): "
+                        f"len={len(data)}, newlines={data.count(chr(10))}, preview={data[:60]!r}"
+                    )
+            except Exception:
+                pass
         # Use | (literal) for clean multiline display
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+        # CRITICAL: PyYAML Emitter can ignore style hint for very long strings (>1024 chars)
+        # or strings with trailing whitespace. Force literal style by ensuring content is clean.
+        try:
+            # Strip trailing spaces from each line to help PyYAML accept literal style
+            cleaned = "\n".join(line.rstrip() for line in data.split("\n"))
+            result = dumper.represent_scalar("tag:yaml.org,2002:str", cleaned, style="|")
+            return result
+        except Exception as e:
+            # If literal style fails, log and fall back to quoted
+            try:
+                if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                    from call.lib.logging import debug_print
+                    debug_print(f"[YAML Representer] Literal style failed: {e!r}, falling back to quoted")
+            except Exception:
+                pass
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"')
+    
+    # For very long single-line strings, convert to multiline by adding artificial newline at end
+    # This forces literal block scalar style which never wraps
+    # PyYAML will strip the trailing newline when parsing (using |-)
+    if len(data) > 100:
+        # Add newline to force literal style, dumper will use |- which strips trailing newlines
+        modified_data = data + "\n"
+        return dumper.represent_scalar("tag:yaml.org,2002:str", modified_data, style="|")
+    
+    # For strings starting with special YAML chars, use single-quoted style to avoid ambiguity
+    if data and data[0] in "#-:>|&*![]{}?@`":
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+    
+    # For short normal strings, use plain style (no quotes)
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=None)
 
 
 _LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
 
 
-def _dump_yaml_literal(obj: Any, *, width: int = 1000) -> str:
+def _dump_yaml_literal(obj: Any, *, width: int = 999999) -> str:
     """Serialize Python data to YAML with readable multiline formatting."""
 
     try:
-        return yaml.dump(
+        # Configure dumper to handle very long literal scalars
+        # PyYAML may fall back to quoted style if it thinks literal is "too long"
+        # We force it to always respect our style choice by using extreme limits
+        result = yaml.dump(
             obj,
             Dumper=_LiteralYamlDumper,
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,
             width=width,
+            line_break="\n",
+            default_style=None,  # Don't force a single style globally
         )
-    except Exception:
+        # Debug: check if result contains quoted strings with escape sequences
+        if len(result) > 500 and ('"' in result[:200] or '\\n' in result[:200]):
+            try:
+                if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                    from call.lib.logging import debug_print
+                    has_literal = '|' in result[:200] or '|-' in result[:200]
+                    has_quoted = '"' in result[:200] and '\\n' in result[:200]
+                    debug_print(
+                        f"[YAML Dump Result] len={len(result)}, has_literal={has_literal}, "
+                        f"has_quoted={has_quoted}, preview={result[:150]!r}"
+                    )
+            except Exception:
+                pass
+        return result
+    except Exception as e:
+        # First YAML dump failed - log and try fallback
+        try:
+            if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                from call.lib.logging import debug_print
+                debug_print(f"[YAML Dump] _LiteralYamlDumper failed: {e!r}, trying safe_dump fallback")
+        except Exception:
+            pass
         try:
             return yaml.safe_dump(
                 obj,
@@ -100,6 +223,7 @@ def _dump_yaml_literal(obj: Any, *, width: int = 1000) -> str:
                 return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
             except Exception:
                 return str(obj)
+
 
 # Import agent utilities (internal copy)
 try:
@@ -128,7 +252,8 @@ from .utils.telegram_text import (
 from .utils.telegraph_utils import publish_results, create_telegrath_account
 
 
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
+from mcp.shared.exceptions import McpError
 
 # Increase default max turns for nested agent runs (tools/sub-agents) to avoid hitting library default 10
 try:
@@ -171,6 +296,12 @@ from agents.model_settings import ModelSettings
 # Simple Agent factory/cache to avoid re-instantiating identical Agents within a run
 AGENT_CACHE: dict[str, Agent] = {}
 
+# MCP servers singleton cache: (name → server instance)
+# Lazy-loaded on first use, shared across all agent runs
+_MCP_SERVERS_CACHE: dict[str, Any] = {}
+_MCP_SERVERS_LOCK = asyncio.Lock()
+_MCP_SERVERS_INITIALIZED = False
+
 
 def get_or_create_agent(
     *,
@@ -209,9 +340,169 @@ from telegram.error import TelegramError, TimedOut, NetworkError, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
-from call.lib.logging import debug_print
+
+
+def _ensure_proxy_env_defaults() -> None:
+    """Populate HTTP(S)_PROXY env vars from ALL_PROXY when missing."""
+
+    try:
+        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        if not all_proxy:
+            return
+
+        updated: list[str] = []
+        for key in ("HTTP_PROXY", "HTTPS_PROXY"):
+            if not os.environ.get(key):
+                os.environ[key] = all_proxy
+                updated.append(key)
+        for key in ("http_proxy", "https_proxy"):
+            if not os.environ.get(key):
+                os.environ[key] = all_proxy
+                updated.append(key)
+
+        if updated:
+            try:
+                debug_print(
+                    "[proxy]",
+                    "Filled missing proxy env vars from ALL_PROXY:",
+                    ", ".join(updated),
+                )
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            debug_print("[proxy]", f"Failed to mirror ALL_PROXY: {exc}")
+        except Exception:
+            pass
+
+
+def _build_proxy_proxies_map() -> dict[str, str]:
+    """Construct an httpx proxies mapping from the current environment."""
+
+    env = os.environ
+    all_proxy = env.get("ALL_PROXY") or env.get("all_proxy")
+    http_proxy = env.get("HTTP_PROXY") or env.get("http_proxy") or all_proxy
+    https_proxy = env.get("HTTPS_PROXY") or env.get("https_proxy") or all_proxy
+
+    proxies: dict[str, str] = {}
+    if http_proxy:
+        proxies["http://"] = http_proxy
+    if https_proxy:
+        proxies["https://"] = https_proxy
+    if not proxies and all_proxy:
+        proxies["all://"] = all_proxy
+
+    return proxies
+
+
+def _prepare_async_http_client_kwargs(proxies: dict[str, str]) -> dict[str, Any]:
+    """Translate our proxy mapping into kwargs supported by httpx.AsyncClient."""
+
+    if not proxies:
+        return {}
+
+    try:
+        params = inspect.signature(httpx.AsyncClient.__init__).parameters
+    except Exception:
+        return {}
+
+    if "proxies" in params:
+        return {"proxies": proxies}
+
+    # httpx>=0.28 replaced the mapping with a single `proxy` argument.
+    if "proxy" in params:
+        for key in ("https://", "http://", "all://"):
+            value = proxies.get(key)
+            if value:
+                return {"proxy": value}
+
+    # Fall back to per-scheme mounts when available.
+    if "mounts" in params:
+        mounts: dict[str, httpx.AsyncBaseTransport] = {}
+        for scheme, url in proxies.items():
+            prefix = scheme.split(":", 1)[0]
+            mounts[f"{prefix}://"] = httpx.AsyncHTTPTransport(proxy=url)
+        if mounts:
+            return {"mounts": mounts}
+
+    return {}
+
+
+# Proxy diagnostics removed - no longer needed
+
+
+def _configure_agents_proxy_http_client() -> None:
+    """Ensure OpenAI Agents SDK shares our proxy-aware HTTP client."""
+
+    proxies = _build_proxy_proxies_map()
+    if not proxies:
+        return
+
+    client_kwargs = _prepare_async_http_client_kwargs(proxies)
+    if not client_kwargs:
+        try:
+            debug_print(
+                "[proxy]",
+                "httpx AsyncClient exposes no proxy kwargs; relying on env",
+            )
+        except Exception:
+            pass
+        return
+
+    client: DefaultAsyncHttpxClient | None = None
+    configured_modules: list[str] = []
+
+    for module_path, attr in [
+        ("agents.models.openai_provider", "_http_client"),
+        ("agents.voice.models.openai_model_provider", "_http_client"),
+    ]:
+        try:
+            module = importlib.import_module(module_path)
+        except Exception as exc:
+            try:
+                debug_print("[proxy]", f"Skip proxy wiring for {module_path}: {exc}")
+            except Exception:
+                pass
+            continue
+
+        if getattr(module, attr, None) is not None:
+            continue
+
+        if client is None:
+            try:
+                client = DefaultAsyncHttpxClient(**client_kwargs)
+            except Exception as exc:
+                try:
+                    debug_print(
+                        "[proxy]",
+                        "Failed to create proxy-aware httpx client:",
+                        str(exc),
+                    )
+                except Exception:
+                    pass
+                return
+
+        setattr(module, attr, client)
+        configured_modules.append(module_path)
+
+    if configured_modules:
+        try:
+            debug_print(
+                "[proxy]",
+                "Configured OpenAI Agents HTTP client with proxies for:",
+                ", ".join(configured_modules),
+            )
+        except Exception:
+            pass
+
 
 load_dotenv(dotenv_path=str(_env_file), override=True)
+
+_ensure_proxy_env_defaults()
+_configure_agents_proxy_http_client()
+
+
+# check_proxy_tool removed - no longer needed
 
 
 async def async_retry(
@@ -354,49 +645,92 @@ def debug_dump_cfg_preview(cfg) -> None:
         pass
 
 
-async def _prepare_mcp_servers(astack: AsyncExitStack) -> tuple[list[Any], dict | None]:
-    """Load MCP configuration (if present) and start enabled servers."""
+async def _initialize_mcp_servers_once() -> tuple[dict[str, Any], dict | None]:
+    """Initialize MCP servers singleton cache (called once, thread-safe).
+    
+    Returns:
+        (servers_by_name, cfg_yaml)
+    """
+    global _MCP_SERVERS_INITIALIZED
+    
     cfg_yaml: dict | None = None
-    servers: list[Any] = []
+    servers_by_name: dict[str, Any] = {}
+    
     try:
-        # Only new env names are supported now
         cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
         path = Path(cfg_path)
-        if path.exists():
-            cfg_yaml = _load_mcp_yaml_config(path)
-            enabled_flag = os.environ.get("ENABLE_MCP", "")
-            enabled = str(enabled_flag).strip().lower() in {"1", "true", "yes", "on"}
-            try:
-                debug_print("[mcp]", f"ENABLE_MCP={enabled} config_path={cfg_path}")
-            except Exception:
-                pass
-            if enabled:
-                try:
-                    servers = await _build_mcp_servers_from_yaml(cfg_yaml, astack)
-                    try:
-                        names = [
-                            getattr(s, "name", None) or getattr(s, "id", None)
-                            for s in servers
-                        ]
-                        debug_print("[mcp]", f"MCP started: {names}")
-                    except Exception:
-                        pass
-                except Exception as exc:
-                    servers = []
-                    try:
-                        debug_print(
-                            "[mcp]",
-                            f"Error while starting MCP servers: {type(exc).__name__}: {exc}",
-                        )
-                    except Exception:
-                        pass
-    except Exception:
-        cfg_yaml = None
+        
+        if not path.exists():
+            logging.info("[mcp] No config file at %s", cfg_path)
+            debug_print("[mcp]", f"No MCP config at {cfg_path}")
+            return servers_by_name, None
+            
+        cfg_yaml = _load_mcp_yaml_config(path)
+        enabled_flag = os.environ.get("ENABLE_MCP", "")
+        enabled = str(enabled_flag).strip().lower() in {"1", "true", "yes", "on"}
+        
+        logging.info("[mcp] ENABLE_MCP=%s config_path=%s", enabled, cfg_path)
+        debug_print("[mcp]", f"ENABLE_MCP={enabled} config_path={cfg_path}")
+        
+        if not enabled:
+            logging.info("[mcp] MCP disabled by ENABLE_MCP flag")
+            return servers_by_name, cfg_yaml
+            
+        if not cfg_yaml or not isinstance(cfg_yaml.get("mcpServers"), dict):
+            logging.info("[mcp] No mcpServers section in config")
+            return servers_by_name, cfg_yaml
+            
+        # Install custom asyncio exception handler to suppress known MCP cleanup errors
         try:
-            debug_print("[mcp]", "No MCP config loaded (missing file or parse error)")
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(_suppress_mcp_cleanup_errors)
+            logging.debug("[mcp] Installed custom exception handler for MCP cleanup")
         except Exception:
             pass
-    return servers, cfg_yaml
+            
+        # Build servers without AsyncExitStack (they will live for app lifetime)
+        servers_by_name = await _build_mcp_servers_singleton(cfg_yaml)
+        
+        if servers_by_name:
+            names = list(servers_by_name.keys())
+            logging.info("[mcp] Initialized MCP servers: %s", names)
+            debug_print("[mcp]", f"✅ MCP servers initialized: {names}")
+        else:
+            logging.info("[mcp] No MCP servers started")
+            
+    except Exception as exc:
+        logging.exception("[mcp] Failed to initialize MCP servers")
+        debug_print("[mcp]", f"❌ Error initializing MCP: {type(exc).__name__}: {exc}")
+        
+    _MCP_SERVERS_INITIALIZED = True
+    return servers_by_name, cfg_yaml
+
+
+async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[list[Any], dict | None]:
+    """Get MCP servers from singleton cache (lazy-loaded on first use).
+    
+    Thread-safe lazy initialization: first call initializes, subsequent calls
+    return cached instances. Servers live for the application lifetime.
+    """
+    global _MCP_SERVERS_CACHE, _MCP_SERVERS_INITIALIZED
+    
+    async with _MCP_SERVERS_LOCK:
+        if not _MCP_SERVERS_INITIALIZED:
+            logging.info("[mcp] First call: initializing MCP servers singleton...")
+            debug_print("[mcp]", "🔧 First call: initializing MCP servers...")
+            servers_by_name, cfg_yaml = await _initialize_mcp_servers_once()
+            _MCP_SERVERS_CACHE.update(servers_by_name)
+        else:
+            logging.debug("[mcp] Reusing cached MCP servers")
+            debug_print("[mcp]", f"♻️  Reusing {len(_MCP_SERVERS_CACHE)} cached MCP servers")
+            # Reload cfg_yaml for consistency
+            cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
+            path = Path(cfg_path)
+            cfg_yaml = _load_mcp_yaml_config(path) if path.exists() else None
+    
+    # Return servers as list for backward compatibility
+    servers_list = list(_MCP_SERVERS_CACHE.values())
+    return servers_list, cfg_yaml
 
 
 def _extract_file_search_payload(name: str) -> Any | None:
@@ -650,7 +984,10 @@ async def _git_pull_prompt_repo() -> None:
             debug_print("[git]", f"git pull --rebase failed: {type(e).__name__}: {e}")
             return
         if rc != 0:
-            debug_print("[git]", f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}")
+            debug_print(
+                "[git]",
+                f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}",
+            )
             debug_print("[git]", "retrying plain pull")
             try:
                 rc_plain, out_plain, err_plain = await asyncio.wait_for(
@@ -715,9 +1052,14 @@ def _collect_tools(cfg) -> list[tuple[str, str]]:
             except Exception:
                 continue
     elif isinstance(pr_map, list):
-        for name in pr_map:
+        for item in pr_map:
             try:
-                entries.append((str(name), ""))
+                # Handle both plain strings and single-key dicts (YAML list of mappings)
+                if isinstance(item, dict):
+                    for name, desc in item.items():
+                        entries.append((str(name), "" if desc is None else str(desc)))
+                else:
+                    entries.append((str(item), ""))
             except Exception:
                 continue
 
@@ -844,33 +1186,50 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
     orig_invoke = tool.on_invoke_tool
 
     async def _wrapped_on_invoke(ctx, input: str):
-        # try:
-        #     # Access canonical_input from the context directly
-        #     canonical_input = getattr(ctx, "context", {}).get("canonical_input") if hasattr(ctx, "context") else None
-        #     debug_print("[tool-call]", "ctx 1:", ctx)
-        #     debug_print("[tool-call]", "input 1:", input)
-        #     debug_print("[tool-call]", "ctx.context:", getattr(ctx, "context", None))
-        #     debug_print("[tool-call]", "canonical_input found:", canonical_input)
+        # Log agent-as-tool invocation with arguments (similar to MCP Hook)
+        parent_name = getattr(cfg, 'name', '') or getattr(cfg, 'id', '')
+        logging.info("[agent-tool] 🤖 Invoking agent-as-tool: %s (from %s)", sub_name, parent_name)
+        
+        try:
+            debug_print(f"[Agent Tool][{sub_name}] Calling tool: {sub_name}")
+            # Parse and format input arguments as YAML
+            try:
+                parsed_input = json.loads(input) if input else {}
 
-        #     merged_canonical = _merge_tool_input_into_canonical(canonical_input, input)
-        #     if merged_canonical and merged_canonical != canonical_input:
-        #         try:
-        #             getattr(ctx, "context", {})["canonical_input"] = merged_canonical
-        #         except Exception:
-        #             pass
-        #         canonical_input = merged_canonical
+                # Helper function to format as YAML (reuse logic from MCP hook)
+                def _format_args_yaml(obj):
+                    try:
+                        return _dump_yaml_literal(obj, width=10000)
+                    except Exception:
+                        try:
+                            return json.dumps(
+                                obj, ensure_ascii=False, indent=2, default=str
+                            )
+                        except Exception:
+                            return str(obj)
 
-        #     preview_input = canonical_input if canonical_input else input
-        #     sanitized_preview_input = _canonical_and_sanitized_user_input(preview_input)[1]
-        #     input = preview_input
-        #     debug_print("[tool-call]", "input 2:", input)
-
-        # except Exception as e:
-        #     debug_print("[tool-call]", "Error in _wrapped_on_invoke:", str(e))
+                yaml_input = _format_args_yaml(parsed_input)
+                debug_print("[Agent Tool] Input (YAML):\n" + yaml_input)
+                
+                # Log input preview
+                input_preview = json.dumps(parsed_input, ensure_ascii=False, default=str)
+                if len(input_preview) > 200:
+                    input_preview = input_preview[:200] + "..."
+                logging.debug("[agent-tool][%s] input: %s", sub_name, input_preview)
+            except Exception:
+                # Fallback to raw input display
+                debug_print("[Agent Tool] Input (raw):\n" + (input or ""))
+        except Exception:
+            pass
 
         tg_msg = None
         try:
-            if selected_chat_id is not None:
+            # Prefer debug chat for agents-as-tools logs; fallback to selected chat
+            target_chat_id = debug_chat_id if debug_chat_id is not None else selected_chat_id
+            target_thread_id = (
+                debug_thread_id if target_chat_id == debug_chat_id else selected_thread_id
+            )
+            if target_chat_id is not None:
                 await init_bot()
                 title = f"🛠️ <b>{sanitize_telegram_html(getattr(sub_cfg, 'name', '') or sub_name)}</b>"
                 caller = f"<i>from</i> <b>{sanitize_telegram_html(getattr(cfg, 'name', '') or '')}</b>"
@@ -879,10 +1238,17 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                     import json as _json, html as _html
 
                     js = _json.loads(input) if input else {}
-                    pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                    # Format as YAML instead of JSON
+                    try:
+                        pretty = _dump_yaml_literal(js, width=10000)
+                        lang = "yaml"
+                    except Exception:
+                        # Fallback to JSON if YAML fails
+                        pretty = _json.dumps(js, ensure_ascii=False, indent=2)
+                        lang = "json"
                     if len(pretty) > 1500:
                         pretty = pretty[:1497] + "..."
-                    body = f'\n<pre><code class="language-json">{_html.escape(pretty)}</code></pre>'
+                    body = f'\n<pre><code class="language-{lang}">{_html.escape(pretty)}</code></pre>'
                 except Exception:
                     esc = sanitize_telegram_html(input or "")
                     if len(esc) > 1500:
@@ -890,15 +1256,61 @@ def _wrap_function_tool(tool: Any, *, sub_cfg, sub_name: str, cfg) -> None:
                     body = f"\n<code>{esc}</code>"
                 text = f"{title} {caller}{body}"
                 tg_msg = await safe_send_message(
-                    chat_id=selected_chat_id,
-                    message_thread_id=selected_thread_id,
+                    chat_id=target_chat_id,
+                    message_thread_id=target_thread_id,
                     text=text,
                     parse_mode=ParseMode.HTML,
                 )
         except Exception:
             tg_msg = None
 
-        result = await orig_invoke(ctx, input)
+        try:
+            result = await orig_invoke(ctx, input)
+            logging.info("[agent-tool] ✅ agent-as-tool %s completed", sub_name)
+        except Exception as e:
+            logging.error(
+                "[agent-tool] ❌ agent-as-tool %s failed: %s: %s",
+                sub_name,
+                type(e).__name__,
+                str(e),
+                exc_info=True
+            )
+            raise
+
+        # Log agent-as-tool result (similar to MCP Hook)
+        try:
+
+            def _format_result_yaml(obj):
+                try:
+                    # Convert pydantic models and format as YAML
+                    def _to_dict(o):
+                        for attr in ("model_dump", "dict"):
+                            method = getattr(o, attr, None)
+                            if callable(method):
+                                try:
+                                    return method()
+                                except Exception:
+                                    pass
+                        if isinstance(o, dict):
+                            return {k: _to_dict(v) for k, v in o.items()}
+                        elif isinstance(o, (list, tuple)):
+                            return [_to_dict(item) for item in o]
+                        return o
+
+                    converted = _to_dict(obj)
+                    return _dump_yaml_literal(converted, width=10000)
+                except Exception:
+                    try:
+                        return json.dumps(
+                            obj, ensure_ascii=False, indent=2, default=str
+                        )
+                    except Exception:
+                        return str(obj)
+
+            result_yaml = _format_result_yaml(result)
+            debug_print(f"[Agent Tool][{sub_name}] Tool returned:\n" + result_yaml)
+        except Exception:
+            pass
 
         if tg_msg is not None:
             try:
@@ -954,16 +1366,17 @@ def _build_agent_tool(
     mcp_servers: list[Any],
 ):
     """Create a sub-agent tool and return it (or None on failure)."""
+
+    # Don't filter by project when resolving helper prompts - let target resolution work independently
     try:
         debug_print("[tools]", f"Building sub-config for entry: {sub_name}")
     except Exception:
         pass
 
-    project_scope = None if cfg.id.strip() == "AgentFab" else (cfg.project or None)
     try:
         # Resolve at call-time so tests can monkeypatch call_api.build_runnable_instructions_config
         sub_cfg, sub_err = call_api.build_runnable_instructions_config(
-            project=project_scope,
+            project=None,
             agent=None,
             prompt=None,
             target=sub_name,
@@ -1088,7 +1501,10 @@ async def _send_welcome_banner(
         debug_print("[app]", "[BANNER] skipped: selected_chat_id is None")
         return None
 
-    debug_print("[app]", f"[BANNER] target: chat_id={selected_chat_id}, thread_id={selected_thread_id}")
+    debug_print(
+        "[app]",
+        f"[BANNER] target: chat_id={selected_chat_id}, thread_id={selected_thread_id}",
+    )
     try:
         welcome_html = compose_welcome_html(
             agent_name=(cfg.id or ""),
@@ -1307,6 +1723,9 @@ def ensure_env(var: str, default: str = None) -> str:
 telegram_last_message: Optional[Message] = None
 selected_chat_id: Optional[int] = None
 selected_thread_id: Optional[int] = None
+# Debug chat for MCP Hook messages (always uses TELEGRAM_CHAT_ID from .env)
+debug_chat_id: Optional[int] = None
+debug_thread_id: Optional[int] = None
 # When True, the pipeline must NOT create a SQLite session and must NOT send Telegram messages
 force_no_session: bool = False
 # Optional original Telegram message id to reply to
@@ -1345,6 +1764,9 @@ OPENAI_API_KEY = ensure_env("OPENAI_API_KEY")
 # Initialize selected chat/thread defaults from .env
 selected_chat_id = TELEGRAM_CHAT_ID
 selected_thread_id = TELEGRAM_THREAD_ID or None
+# Initialize debug chat/thread from .env (for MCP Hook messages)
+debug_chat_id = TELEGRAM_CHAT_ID
+debug_thread_id = TELEGRAM_THREAD_ID or None
 
 
 def format_exception_json(e: Exception) -> dict:
@@ -1991,7 +2413,10 @@ async def safe_send_message(
     - Honors reply_to_message_id via ReplyParameters when available.
     - On BadRequest 'thread not found', retries without message_thread_id and without reply params.
     """
-    debug_print("[app]", f"[TG] Sending message to chat_id={chat_id}, thread_id={message_thread_id}, text_len={len(text)}")
+    debug_print(
+        "[app]",
+        f"[TG] Sending message to chat_id={chat_id}, thread_id={message_thread_id}, text_len={len(text)}",
+    )
     await init_bot()
     try:
         from telegram import ReplyParameters as _ReplyParameters
@@ -2000,8 +2425,11 @@ async def safe_send_message(
 
     async def _op():
         kwargs = dict(
-            chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup,
-            disable_notification=disable_notification
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            disable_notification=disable_notification,
         )
         if message_thread_id is not None:
             kwargs["message_thread_id"] = message_thread_id
@@ -2022,7 +2450,10 @@ async def safe_send_message(
             jitter=0.2,
             retry_on=(TimedOut, NetworkError, httpx.TimeoutException),
         )
-        debug_print("[app]", f"[TG] Message sent successfully: msg_id={result.message_id}, chat_id={result.chat_id}")
+        debug_print(
+            "[app]",
+            f"[TG] Message sent successfully: msg_id={result.message_id}, chat_id={result.chat_id}",
+        )
         return result
     except BadRequest as e:
         msg = str(e).lower()
@@ -2275,7 +2706,9 @@ def compose_welcome_html(
             # Clamp to safe length
             if len(pretty) > 3600:
                 pretty = pretty[:3597] + "..."
-            pretty_preview = f'<pre><code class="language-yaml">{_html.escape(pretty)}</code></pre>'
+            pretty_preview = (
+                f'<pre><code class="language-yaml">{_html.escape(pretty)}</code></pre>'
+            )
     except Exception:
         pretty_preview = None
     if not pretty_preview:
@@ -2422,6 +2855,9 @@ class MCPServerStdioHook(MCPServerStdio):
     Each instance maintains its own editable Telegram message. On first write,
     a new message is created; subsequent writes edit that message. The MCP name
     is printed at the top of the message.
+    
+    Debug messages are sent to debug_chat_id (from TELEGRAM_CHAT_ID in .env),
+    while typing status is sent to selected_chat_id (original request chat).
     """
 
     from typing import Any
@@ -2433,7 +2869,9 @@ class MCPServerStdioHook(MCPServerStdio):
         # Cache last cleaned+truncated text to avoid redundant edits
         self.__last_tg_text: Optional[str] = None
         # Service message queue: track intermediate MCP messages for cleanup
-        self.__service_message_ids: list[tuple[int, int]] = []  # [(chat_id, msg_id), ...]
+        self.__service_message_ids: list[tuple[int, int]] = (
+            []
+        )  # [(chat_id, msg_id), ...]
         # Try to derive a readable MCP title
         self._mcp_title: str = (
             str(getattr(self, "name", "") or "").strip()
@@ -2461,25 +2899,83 @@ class MCPServerStdioHook(MCPServerStdio):
         value = result
 
         def _dump_like_mapping(obj: Any) -> Any:
+            """Recursively convert pydantic models to dicts."""
+            # Try to convert the object itself
             for attr in ("model_dump", "dict"):
                 method = getattr(obj, attr, None)
                 if callable(method):
                     try:
-                        return method()
+                        converted = method()
+                        # Recursively process the result
+                        return _dump_like_mapping(converted)
                     except TypeError:
                         try:
-                            return method(by_alias=True)
+                            converted = method(by_alias=True)
+                            return _dump_like_mapping(converted)
                         except Exception:
                             continue
+
+            # Recursively handle collections
+            if isinstance(obj, dict):
+                return {k: _dump_like_mapping(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [_dump_like_mapping(item) for item in obj]
+            elif isinstance(obj, set):
+                return {_dump_like_mapping(item) for item in obj}
+
             return obj
 
         value = _dump_like_mapping(value)
 
+        # Debug: inspect string content BEFORE unescape
+        def _debug_string_content(obj: Any, path="") -> None:
+            if isinstance(obj, str) and len(obj) > 500:
+                # Check for both real newlines and escaped sequences
+                real_newlines = obj.count("\n")  # chr(10)
+                escaped_backslash_n = obj.count("\\n")  # two chars: \ and n
+                if real_newlines > 5 or escaped_backslash_n > 5:
+                    # Only log if CALL_DEBUG_YAML is enabled
+                    if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                        debug_print(
+                            f"[YAML Pre-Unescape] {path}: len={len(obj)}, "
+                            f"real_newlines={real_newlines}, "
+                            f"escaped_\\n={escaped_backslash_n}, "
+                            f"repr_preview={obj[:100]!r}"
+                        )
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    _debug_string_content(v, f"{path}.{k}" if path else k)
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    _debug_string_content(v, f"{path}[{i}]")
+        
+        try:
+            _debug_string_content(value, "PRE")
+        except Exception:
+            pass
+
         def _unescape_strings(obj: Any) -> Any:
             """Unescape common escape sequences in strings for cleaner YAML output."""
             if isinstance(obj, str):
-                # Unescape only the most common sequences to preserve readability
-                return obj.replace("\\n", "\n").replace("\\t", "\t")
+                # Check if string looks like it contains JSON escape sequences
+                # by looking for backslash followed by n, t, r, etc.
+                if "\\" in obj and any(
+                    seq in obj for seq in ("\\n", "\\t", "\\r", '\\"', "\\'")
+                ):
+                    # Manually replace escape sequences
+                    result = obj
+                    # Handle double backslashes first
+                    result = result.replace(
+                        "\\\\", "\x00"
+                    )  # Temp marker for literal backslash
+                    result = result.replace("\\n", "\n")
+                    result = result.replace("\\r", "\r")
+                    result = result.replace("\\t", "\t")
+                    result = result.replace('\\"', '"')
+                    result = result.replace("\\'", "'")
+                    result = result.replace("\x00", "\\")  # Restore literal backslash
+                    return result
+                return obj
             if isinstance(obj, dict):
                 return {k: _unescape_strings(v) for k, v in obj.items()}
             if isinstance(obj, list):
@@ -2491,6 +2987,31 @@ class MCPServerStdioHook(MCPServerStdio):
             return obj
 
         value = _unescape_strings(value)
+
+        # Debug: check if we have actual newlines after unescape
+        def _count_newlines(obj: Any, path="") -> None:
+            if isinstance(obj, str) and len(obj) > 100:
+                actual_newlines = obj.count("\n")
+                escaped_newlines = obj.count("\\n")
+                if actual_newlines > 0 or escaped_newlines > 0:
+                    # Only log if CALL_DEBUG_YAML is enabled
+                    if os.environ.get("CALL_DEBUG_YAML", "0").strip().lower() in ("1", "true", "yes", "on"):
+                        debug_print(
+                            f"[YAML Debug] {path}: len={len(obj)}, "
+                            f"actual_\\n={actual_newlines}, escaped_\\n={escaped_newlines}, "
+                            f"preview={obj[:80]!r}"
+                        )
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    _count_newlines(v, f"{path}.{k}" if path else k)
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    _count_newlines(v, f"{path}[{i}]")
+
+        try:
+            _count_newlines(value, "value")
+        except Exception:
+            pass
 
         def _redact_structured_content(obj: Any) -> Any:
             if isinstance(obj, dict):
@@ -2545,12 +3066,13 @@ class MCPServerStdioHook(MCPServerStdio):
             import re as _re_collapse
 
             # Collapse multiple consecutive newlines to exactly 1
-            text = _re_collapse.sub(r"\n{2,}", r"\n", text)
+            # IMPORTANT: replacement must be actual newline, not raw string r"\n"
+            text = _re_collapse.sub(r"\n{2,}", "\n", text)
         except Exception:
             pass
 
-        debug_mode = bool(os.getenv("DEBUG_MODE"))
-        if not debug_mode and len(text) > max_len:
+        call_debug = bool(os.getenv("CALL_DEBUG"))
+        if not call_debug and len(text) > max_len:
             text = text[: max_len - 3] + "..."
         return text.rstrip("\n")
 
@@ -2561,15 +3083,17 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         payload = (
-            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            header
+            + f'<blockquote expandable><pre><code class="language-yaml">{escaped_body}</code></pre></blockquote>'
         )
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
         try:
             cleaned = sanitize_telegram_html(payload)
             cleaned = telegram_truncate_html_safe(cleaned, 3800)
+            # Use debug_chat_id for MCP debug messages (always from .env)
             msg = await safe_send_message(
-                chat_id=selected_chat_id,
-                message_thread_id=selected_thread_id,
+                chat_id=debug_chat_id,
+                message_thread_id=debug_thread_id,
                 text=cleaned,
                 parse_mode=ParseMode.HTML,
                 disable_notification=True,
@@ -2590,7 +3114,8 @@ class MCPServerStdioHook(MCPServerStdio):
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
         safe_text = (
-            header + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            header
+            + f'<blockquote expandable><pre><code class="language-yaml">{escaped_body}</code></pre></blockquote>'
         )
         if not self.__telegram_last_message:
             # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
@@ -2621,14 +3146,40 @@ class MCPServerStdioHook(MCPServerStdio):
     async def call_tool(
         self, tool_name: str, arguments: dict[str, Any] | None
     ) -> CallToolResult:
+        logging.info("[mcp][%s] 🔧 call_tool: %s", self._mcp_title, tool_name)
         debug_print(f"[MCP Hook][{self._mcp_title}] Calling tool: {tool_name}")
+        
+        # Log arguments preview
+        try:
+            args_preview = json.dumps(arguments or {}, ensure_ascii=False, default=str)
+            if len(args_preview) > 200:
+                args_preview = args_preview[:200] + "..."
+            logging.debug("[mcp][%s] arguments: %s", self._mcp_title, args_preview)
+        except Exception:
+            pass
+            
         # Bind parent method to avoid 'super(): no arguments' inside nested closures
         parent_call_tool = super(MCPServerStdioHook, self).call_tool
 
         def _deep_unescape(o):
             if isinstance(o, str):
-                # Only basic escapes to improve readability
-                return o.replace("\\n", "\n").replace("\\t", "\t")
+                # Check if string looks like it contains JSON escape sequences
+                if "\\" in o and any(
+                    seq in o for seq in ("\\n", "\\t", "\\r", '\\"', "\\'")
+                ):
+                    # Manually replace escape sequences
+                    result = o
+                    result = result.replace(
+                        "\\\\", "\x00"
+                    )  # Temp marker for literal backslash
+                    result = result.replace("\\n", "\n")
+                    result = result.replace("\\r", "\r")
+                    result = result.replace("\\t", "\t")
+                    result = result.replace('\\"', '"')
+                    result = result.replace("\\'", "'")
+                    result = result.replace("\x00", "\\")  # Restore literal backslash
+                    return result
+                return o
             if isinstance(o, list):
                 return [_deep_unescape(i) for i in o]
             if isinstance(o, tuple):
@@ -2644,14 +3195,14 @@ class MCPServerStdioHook(MCPServerStdio):
             """Dump arguments to YAML with better readability."""
             prepared = _deep_unescape(obj or {})
             try:
-                return _dump_yaml_literal(prepared, width=1000)
+                return _dump_yaml_literal(prepared)
             except Exception:
                 try:
                     json_text = json.dumps(
                         obj or {}, ensure_ascii=False, indent=2, default=str
                     )
                     prepared = _deep_unescape(json.loads(json_text))
-                    return _dump_yaml_literal(prepared, width=1000)
+                    return _dump_yaml_literal(prepared)
                 except Exception:
                     try:
                         s = json.dumps(
@@ -2688,19 +3239,31 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
-                result_text = self._format_tool_result(result)
+                # Format for display only (Telegram/logs) - this may truncate
+                result_text_for_display = self._format_tool_result(result)
+                logging.info("[mcp][%s] ✅ tool %s completed", self._mcp_title, tool_name)
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + result_text
+                    + result_text_for_display
                 )
-                # Send result to Telegram
+                # Send result to Telegram (display only)
                 try:
-                    result_body = f"✅ {tool_name}\n\n{result_text}".strip()
+                    result_body = f"✅ {tool_name}\n\n{result_text_for_display}".strip()
                     await self.__edit_message_text(result_body)
                 except Exception:
                     pass
+                # Return ORIGINAL result to agent pipeline (never truncate!)
+                # result is already a CallToolResult, return as-is
                 return result
             except Exception as e:
+                logging.error(
+                    "[mcp][%s] ❌ tool %s failed: %s: %s",
+                    self._mcp_title,
+                    tool_name,
+                    type(e).__name__,
+                    str(e),
+                    exc_info=True
+                )
                 try:
                     err_text = format_exception_text(e)
                     await self.__edit_message_text(
@@ -2708,7 +3271,23 @@ class MCPServerStdioHook(MCPServerStdio):
                     )
                 except Exception:
                     pass
-                raise
+                # Return JSON-wrapped error instead of raising
+                error_payload = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "error": format_exception_json(e),
+                }
+                # Add MCP-specific error code if available
+                if isinstance(e, McpError):
+                    error_payload["error"]["mcp_code"] = getattr(e, "code", None)
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(error_payload, ensure_ascii=False),
+                        )
+                    ]
+                )
         try:
             thought = arguments["thought"]
             # Determine counters safely
@@ -2750,15 +3329,14 @@ class MCPServerStdioHook(MCPServerStdio):
             except Exception:
                 pass
 
-            # Send typing action on the same chat/thread when possible
+            # Send typing action to original request chat (selected_chat_id), not debug chat
             try:
-                msg = self.__telegram_last_message
-                if msg:
+                if selected_chat_id is not None:
 
                     async def _op():
                         return await bot.send_chat_action(
-                            chat_id=msg.chat_id,
-                            message_thread_id=msg.message_thread_id,
+                            chat_id=selected_chat_id,
+                            message_thread_id=selected_thread_id,
                             action=ChatAction.TYPING,
                         )
 
@@ -2776,7 +3354,7 @@ class MCPServerStdioHook(MCPServerStdio):
 
                             async def _op_no_thread():
                                 return await bot.send_chat_action(
-                                    chat_id=msg.chat_id, action=ChatAction.TYPING
+                                    chat_id=selected_chat_id, action=ChatAction.TYPING
                                 )
 
                             await async_retry(
@@ -2807,13 +3385,25 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
+                # Format for display only (logs) - this may truncate
+                result_text_for_display = self._format_tool_result(result)
                 debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + self._format_tool_result(result)
+                    + result_text_for_display
                 )
+                # Return ORIGINAL result to agent pipeline (never truncate!)
+                # result is already a CallToolResult, return as-is
                 return result
             except Exception as e:
+                logging.error(
+                    "[mcp][%s] ❌ tool %s failed: %s: %s",
+                    self._mcp_title,
+                    tool_name,
+                    type(e).__name__,
+                    str(e),
+                    exc_info=True
+                )
                 err_text = format_exception_text(e)
                 try:
                     await self.__edit_message_text(
@@ -2821,13 +3411,33 @@ class MCPServerStdioHook(MCPServerStdio):
                     )
                 except Exception:
                     pass
-                raise
+                # Return JSON-wrapped error instead of raising
+                error_payload = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "error": format_exception_json(e),
+                }
+                if isinstance(e, McpError):
+                    error_payload["error"]["mcp_code"] = getattr(e, "code", None)
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(error_payload, ensure_ascii=False),
+                        )
+                    ]
+                )
         except Exception as e:
             print(f"[MCP Hook] Error in tool {tool_name}: {str(e)}")
             raise
 
     async def cleanup_service_messages(self) -> None:
         """Delete all tracked service messages from Telegram."""
+        # Check if cleanup is enabled via environment variable
+        cleanup_enabled = os.environ.get("TG_CLEANUP_MCP_MESSAGES", "1").strip().lower()
+        if cleanup_enabled not in ("1", "true", "yes", "on"):
+            return
+        
         if not self.__service_message_ids:
             return
         await _init_bot_safe()
@@ -3320,6 +3930,96 @@ async def resolve_vector_stores(vs_val: Any) -> List[str]:
 # call_api.build_runnable_instructions_config(...)
 
 
+async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
+    """Build MCP servers for singleton cache (persistent, not tied to AsyncExitStack).
+    
+    Returns dict[name → server] instead of list to enable name-based lookup.
+    Servers are __aenter__ed immediately and live for application lifetime.
+    """
+    servers_by_name: dict[str, Any] = {}
+    
+    if not cfg_yaml or not isinstance(cfg_yaml.get("mcpServers"), dict):
+        return servers_by_name
+        
+    logging.info("[mcp] Building singleton MCP servers from config...")
+    debug_print("[mcp]", f"Config contains {len(cfg_yaml.get('mcpServers') or {})} server entries")
+    
+    async def _create_persistent_server(name: str, spec: dict, timeout: int) -> Any | None:
+        """Create and initialize a persistent MCP server (no AsyncExitStack)."""
+        cmd = (spec or {}).get("command")
+        args = (spec or {}).get("args") or []
+        if not cmd:
+            return None
+            
+        try:
+            server = MCPServerStdioHook(
+                params={"command": cmd, "args": args},
+                name=name,
+                client_session_timeout_seconds=timeout,
+            )
+            # Enter async context manually (persistent, not tied to any stack)
+            await server.__aenter__()
+            
+            parts = [str(cmd)] + [str(a) for a in (args or [])]
+            pretty_cmd = shlex.join(parts)
+            logging.info("[mcp] Started persistent MCP server '%s': %s", name, pretty_cmd)
+            debug_print("[mcp]", f"✅ Started '{name}': {pretty_cmd}")
+            
+            return server
+        except Exception as exc:
+            logging.error("[mcp] Failed to start server '%s': %s", name, exc)
+            debug_print("[mcp]", f"❌ Failed to start '{name}': {exc}")
+            return None
+    
+    disabled_names: list[str] = []
+    
+    for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+            
+        if not spec.get("enabled", False):
+            disabled_names.append(name)
+            continue
+            
+        if "command" in spec:
+            timeout = int(spec.get("timeoutSeconds", 1200))
+            srv = await _create_persistent_server(name, spec, timeout)
+            if srv:
+                servers_by_name[name] = srv
+            continue
+            
+        if "serverUrl" in spec and isinstance(spec.get("bridge"), dict):
+            bridge = spec["bridge"]
+            bcmd = bridge.get("command")
+            bargs = list(bridge.get("args") or [])
+            if bcmd:
+                url = spec.get("serverUrl") or ""
+                token = os.getenv("API_ACCESS_TOKEN", "")
+                fmt_args = []
+                for a in bargs:
+                    if isinstance(a, str):
+                        a = a.replace("{serverUrl}", url).replace(
+                            "{API_ACCESS_TOKEN}", token
+                        )
+                    fmt_args.append(a)
+                bridge_spec = {"command": bcmd, "args": fmt_args}
+                timeout = int(spec.get("timeoutSeconds", 1200))
+                srv = await _create_persistent_server(name, bridge_spec, timeout)
+                if srv:
+                    servers_by_name[name] = srv
+            else:
+                logging.info("[mcp] Server '%s' has serverUrl but no bridge.command; skipping", name)
+        else:
+            if "serverUrl" in spec:
+                logging.info("[mcp] Server '%s' is remote but no bridge defined; skipping", name)
+    
+    if disabled_names:
+        logging.info("[mcp] Disabled servers: %s", ", ".join(sorted(disabled_names)))
+        debug_print("[mcp]", "Skipping disabled servers: " + ", ".join(sorted(disabled_names)))
+        
+    return servers_by_name
+
+
 async def _build_mcp_servers_from_yaml(
     cfg_yaml: dict | None, astack: AsyncExitStack
 ) -> list[Any]:
@@ -3372,7 +4072,7 @@ async def _build_mcp_servers_from_yaml(
                 disabled_names.append(name)
                 continue
             if "command" in spec:
-                timeout = int(spec.get("timeoutSeconds", 120))
+                timeout = int(spec.get("timeoutSeconds", 1200))
                 srv = await _open_stdio(name, spec, timeout)
                 if srv:
                     mcp_servers_started.append(srv)
@@ -3392,7 +4092,7 @@ async def _build_mcp_servers_from_yaml(
                             )
                         fmt_args.append(a)
                     bridge_spec = {"command": bcmd, "args": fmt_args}
-                    timeout = int(spec.get("timeoutSeconds", 120))
+                    timeout = int(spec.get("timeoutSeconds", 1200))
                     srv = await _open_stdio(name, bridge_spec, timeout)
                     if srv:
                         mcp_servers_started.append(srv)
@@ -3590,7 +4290,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 context=context,
             )
             step1_output += getattr(result1, "final_output", None)
-            debug_print("[call]", "step1_output: ", step1_output)
+            debug_print("[call]", "step1_output: |-\n", step1_output)
         except Exception as e:
             # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
             try:

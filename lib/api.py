@@ -630,11 +630,11 @@ class RunnableConfig:
     @staticmethod
     def minimal(model: str, input: str = "") -> "RunnableConfig":
         """Create a minimal config for pure GPT calls without instructions.
-        
+
         Args:
             model: Model identifier (e.g., 'gpt-5', 'gpt-4o-mini')
             input: User input text
-            
+
         Returns:
             RunnableConfig with empty instructions and minimal metadata
         """
@@ -675,16 +675,18 @@ def build_runnable_instructions_config(
     attributes_override: Optional[Dict[str, Any]] = None,
 ) -> tuple[Optional[RunnableConfig], Optional[Dict[str, Any]]]:
     """Build a minimal runnable configuration DTO from repository selection.
-    
+
     When all selectors (project, agent, prompt, target) are None, returns a minimal
     config with only the default model and input, allowing pure GPT calls without instructions.
     """
 
     import os as _os
     from pathlib import Path as _Path
-    
+
     # Get default model from environment
-    default_env_model = str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+    default_env_model = (
+        str(_os.environ.get("LLM_MODEL", "gpt-5") or "gpt-5").strip() or "gpt-5"
+    )
 
     missing_card_exc = getattr(call_repo, "CardNotFoundError", FileNotFoundError)
     malformed_card_exc = getattr(call_repo, "CardFormatError", ValueError)
@@ -719,15 +721,17 @@ def build_runnable_instructions_config(
     requested_project = normalize_selector(project)
     requested_agent = normalize_selector(agent)
     requested_prompt = normalize_selector(prompt)
-    
+
     # Pure GPT path: if all selectors are None, return minimal config with input only
     if not any([requested_project, requested_agent, requested_prompt, target]):
         final_model = default_env_model
         override_model = attribute_overrides.get("model")
         if isinstance(override_model, _bi.str) and override_model.strip():
             final_model = override_model.strip()
-        
-        minimal_config = RunnableConfig.minimal(model=final_model, input=str(input or ""))
+
+        minimal_config = RunnableConfig.minimal(
+            model=final_model, input=str(input or "")
+        )
         return minimal_config, None
 
     try:
@@ -1150,25 +1154,34 @@ async def call_async(
 
     cfg_type = str(getattr(cfg, "type", "") or "").lower()
     if cfg_type == "project":
-        agent_probe = resolve_agent(
-            project=getattr(cfg, "project", None), agent=None, prompt=None, target=None
+        # If project has prompt text (card_text or prompt_text), it's executable directly
+        # Skip agent resolution for executable projects
+        has_prompt = bool(
+            getattr(cfg, "card_text", None) or 
+            getattr(cfg, "prompt_text", None) or 
+            getattr(cfg, "instructions", None)
         )
-        if not isinstance(agent_probe, dict) or not agent_probe.get("ok"):
-            if isinstance(agent_probe, dict):
-                if session_id and "session_id" not in agent_probe:
-                    agent_probe["session_id"] = session_id
-                _reset_override()
-                return agent_probe
-            _reset_override()
-            return _error_payload(
-                agent=str(getattr(cfg, "agent", "") or ""),
-                input=str(input or ""),
-                exc="No agent found matching criteria",
-                status=404,
-                code="NO_DATA_FOUND",
-                project=getattr(cfg, "project", None),
-                session_id=session_id,
+        if not has_prompt:
+            # Non-executable project: try to find an agent to run
+            agent_probe = resolve_agent(
+                project=getattr(cfg, "project", None), agent=None, prompt=None, target=None
             )
+            if not isinstance(agent_probe, dict) or not agent_probe.get("ok"):
+                if isinstance(agent_probe, dict):
+                    if session_id and "session_id" not in agent_probe:
+                        agent_probe["session_id"] = session_id
+                    _reset_override()
+                    return agent_probe
+                _reset_override()
+                return _error_payload(
+                    agent=str(getattr(cfg, "agent", "") or ""),
+                    input=str(input or ""),
+                    exc="No agent found matching criteria",
+                    status=404,
+                    code="NO_DATA_FOUND",
+                    project=getattr(cfg, "project", None),
+                    session_id=session_id,
+                )
 
     # Debug CFG payload removed - too verbose for normal operation
     # Uncomment if needed for deep debugging:
@@ -1382,7 +1395,9 @@ async def call_async(
         elif "actual_sid" in locals() and actual_sid:
             # Session was created
             session_id_out = actual_sid
-        elif (chat_id is not None or thread_id is not None) and selected_chat_id is not None:
+        elif (
+            chat_id is not None or thread_id is not None
+        ) and selected_chat_id is not None:
             # Routing was explicitly configured via args
             session_id_out = (
                 f"{selected_chat_id}:{selected_thread_id}"
@@ -1596,13 +1611,11 @@ def resolve_agent(
                 except Exception:
                     alt_recs = []
                 if alt_recs:
+                    # Only project is required; agent is optional for project-level prompts
                     valid_alt = [
                         r
                         for r in alt_recs
-                        if (
-                            str(r.get("project") or "").strip()
-                            and str(r.get("agent") or "").strip()
-                        )
+                        if str(r.get("project") or "").strip()
                     ]
                     if not valid_alt:
                         return _error_payload(
@@ -1625,6 +1638,19 @@ def resolve_agent(
                         chosen = candidates[0]
                         pj = chosen.get("project") or project
                         ag = chosen.get("agent") or agent
+                        # For project-level prompts without agent, return path directly
+                        if not ag:
+                            return {
+                                "ok": True,
+                                "resolved": {
+                                    "project": pj,
+                                    "name": "",
+                                    "path": chosen.get("path") or "",
+                                    "aliases": [],
+                                    "prompts": [prompt] if prompt else [],
+                                },
+                            }
+                        # For prompts with agent, resolve agent
                         arows = call_repo.find_agents(project=pj, agent=ag)
                         if len(arows) == 1:
                             ar = arows[0]
@@ -1668,7 +1694,19 @@ def resolve_agent(
             pr = recs[0]
             pj = pr.get("project") or project
             ag = pr.get("agent") or agent
-            # Agent row must exist
+            # For project-level prompts without agent, return path directly
+            if not ag:
+                return {
+                    "ok": True,
+                    "resolved": {
+                        "project": pj,
+                        "name": "",
+                        "path": pr.get("path") or "",
+                        "aliases": [],
+                        "prompts": [prompt] if prompt else [],
+                    },
+                }
+            # Agent row must exist for agent-based prompts
             arows = call_repo.find_agents(project=pj, agent=ag)
             if len(arows) != 1:
                 return _error_payload(

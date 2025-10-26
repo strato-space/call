@@ -298,6 +298,7 @@ def test_cli_notify_event_only_ack():
 
 
 def test_cli_call_echo_resolved_project_agent_null():
+    """Test that AgentFab resolves as project-level prompt (project.md is indexed as prompt)."""
     code, out, err = _run_cli(
         [
             "call",
@@ -311,10 +312,12 @@ def test_cli_call_echo_resolved_project_agent_null():
     data = json.loads(out)
     assert isinstance(data, dict)
     resolved = data.get("resolved") or {}
-    assert resolved.get("type") == "project"
+    # After project-level prompts feature: AgentFab is resolved as prompt (project.md)
+    assert resolved.get("type") == "prompt"
     assert resolved.get("project") == "AgentFab"
-    assert resolved.get("agent") is None
+    assert resolved.get("agent") in (None, "")  # No agent for project-level prompts
     assert isinstance(resolved.get("path"), str)
+    assert "AgentFab" in resolved.get("path", "")
 
 
 def test_cli_call_print_instructions_malformed_prompt_bad_card_format(tmp_path):

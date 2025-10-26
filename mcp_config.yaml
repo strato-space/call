@@ -133,7 +133,7 @@ mcpServers:
   # python -m call.mcp.server
   # note: должен запускаться из корневой директории strato-space, где установлен .venv
   call:
-    enabled: true
+    enabled: false
     command: python
     args:
       - -m

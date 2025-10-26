@@ -54,15 +54,15 @@
         "mcp_voicebot.server"
       ]
     },
-    "gsh": {
-      "command": "uvx",
+    "call": {
+      "command": "C:/home/strato-space/.venv/Scripts/python.exe",
       "args": [
-        "--env-file",
-        "c:/home/strato-space/call/.env",
-        "--from",
-        "git+https://github.com/strato-space/mcp-google-sheets@main",
-        "mcp-google-sheets"
-      ]
+        "-m",
+        "call.mcp.server"
+      ],
+      "env": {
+        "PYTHONPATH": "C:/home/strato-space"
+      }
     }
   }
 }

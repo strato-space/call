@@ -864,7 +864,9 @@ def main() -> int:
         debug_print("[cli]", "[EXEC]", f"cmd_exec started, CALL_DEBUG={call_debug!r}")
         if call_debug:
             debug_print(
-                "[cli]", "[EXEC]", f"CALL_DEBUG={call_debug} -> triggering reload() before exec"
+                "[cli]",
+                "[EXEC]",
+                f"CALL_DEBUG={call_debug} -> triggering reload() before exec",
             )
             try:
                 result = call_api.reload()

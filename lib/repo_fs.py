@@ -369,6 +369,8 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 orch = str(meta.get("orchestration") or "")
                 goal = str(meta.get("goal") or meta.get("purpose") or "")
                 relp, url = _rel_url(proj_md)
+                card_text = _read_card_text(proj_md)
+                # Insert project card (type=project)
                 _upsert_row(
                     cur,
                     target=proj_name,
@@ -383,13 +385,60 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     rel_path=relp,
                     url=url,
                     goal=goal,
-                    card=_read_card_text(proj_md),
+                    card=card_text,
                 )
                 scanned += 1
                 try:
                     per_project_has_project_card.add(proj_name)
                 except Exception:
                     pass
+            
+            # Phase 1A-flat: scan flat .md prompts in the same project directory
+            try:
+                for md_file in child.glob("*.md"):
+                    # Skip project.md (already handled above)
+                    if md_file.name == "project.md":
+                        continue
+                    try:
+                        meta = _read_prompt_metadata(md_file) or {}
+                        # Skip files with type: project (they should only be project.md)
+                        if meta.get("type") == "project":
+                            continue
+                        # Default type is prompt if not specified
+                        pr_id = str(meta.get("id") or md_file.stem)
+                        eng = str(meta.get("engine") or "")
+                        orch = str(meta.get("orchestration") or "")
+                        goal = str(meta.get("goal") or meta.get("purpose") or "")
+                        relp, url = _rel_url(md_file)
+                        card_text = _read_card_text(md_file)
+                        # Insert as prompt (flat structure)
+                        _upsert_row(
+                            cur,
+                            target=pr_id,
+                            project=proj_name,
+                            agent="",
+                            prompt=pr_id,
+                            abs_path=str(md_file),
+                            state="ready",
+                            engine=eng,
+                            orchestration=orch,
+                            type="prompt",
+                            rel_path=relp,
+                            url=url,
+                            goal=goal,
+                            card=card_text,
+                        )
+                        scanned += 1
+                        # Update per-project prompt count
+                        try:
+                            d = per_project.setdefault(proj_name, {"ready": 0, "draft": 0})
+                            d["ready"] = int(d.get("ready", 0)) + 1
+                        except Exception:
+                            pass
+                    except Exception:
+                        continue
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -495,9 +544,12 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 # Treat every file in ready/draft as a prompt card
                 try:
                     meta = _read_prompt_metadata(p) or {}
-                    if not meta:
+                    # Determine state first for warnings
+                    state_name = root.name.lower()
+                    # Warn about missing metadata only for ready files
+                    if not meta and state_name == "ready":
                         debug_print(
-                            "[repo.scan]", "[WARN]", f"Prompt MD missing METADATA: {p}"
+                            "[repo.scan]", "[WARN]", f"Prompt MD missing METADATA (ready state): {p}"
                         )
                     pr_id = str(meta.get("id") or p.stem)
                     proj = str(meta.get("project") or "")
@@ -505,11 +557,12 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     eng = str(meta.get("engine") or "")
                     orch = str(meta.get("orchestration") or "")
                     goal = str(meta.get("goal") or meta.get("purpose") or "")
-                    if (not proj) or (not agent):
+                    # Only project is required for ready; agent is optional; draft can be without project
+                    if not proj and state_name == "ready":
                         debug_print(
                             "[repo.scan]",
                             "[WARN]",
-                            f"Prompt MD missing project/agent: {p}",
+                            f"Prompt MD missing project (ready state): {p}",
                         )
                 except Exception:
                     pr_id = p.stem
