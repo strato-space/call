@@ -28,7 +28,7 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [Telegram Bot](#telegram-bot)
   - [Python Library](#python-library)
 - [Configuration](#configuration)
-- [Features](#features)
+- Features
   - [YAML Formatting](docs/formatting.md) — Readable YAML output for MCP hooks and agent-as-tools
   - [MCP Message Cleanup](docs/mcp-message-cleanup.md) — Auto-delete intermediate debug messages in Telegram
   - [MCP Hook Routing](docs/mcp-hook-routing.md) — Dual-channel message routing for debug and user messages
@@ -1710,34 +1710,34 @@ Call is part of the Strato Space AI infrastructure and integrates with:
 
 ### Planned Features
 
-**v1.1 — Enhanced Observability**
+#### v1.1 — Enhanced Observability
 
 - Metrics endpoint (Prometheus-compatible)
 - Trace logging with unique chain IDs
 - Event streaming to Kafka/NATS
 - Real-time execution dashboard
 
-**v1.2 — Extended Integrations**
+#### v1.2 — Extended Integrations
 
 - GitHub prompt resolver with version pinning
 - Additional output adapters (Slack, Discord, Email)
 - Google Workspace enhanced integration (Docs, Slides)
 - S3/Azure Blob storage for artifacts
 
-**v1.3 — Advanced Orchestration**
+#### v1.3 — Advanced Orchestration
 
 - Human-in-the-loop workflows
 - Conditional branching and error handling
 - Agent chaining syntax: `Agent1 --> Agent2 --> Output`
 - Cost tracking and token usage analytics
 
-**v1.4 — Multi-Language Support**
+#### v1.4 — Multi-Language Support
 
 - Node.js runtime parity (Express + TypeScript)
 - Go client library
 - Language-agnostic MCP protocol extensions
 
-**Future Considerations**
+#### Future Considerations
 
 - Fine-grained authorization model (RBAC)
 - Prompt marketplace and sharing
