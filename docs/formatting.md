@@ -90,9 +90,10 @@ yaml.dump(
    - Collapse multiple consecutive newlines to single newline: `\n{2,}` → `\n`
 
 6. **Truncate if needed**:
-   - Only in non-DEBUG_MODE
+   - Only when `CALL_DEBUG=0` (for display in Telegram/logs)
    - Truncate at `max_len - 3` and append `...`
    - Strip trailing newlines
+   - **Important**: Truncation affects ONLY display, NOT agent pipeline data
 
 ### 4. Tool Arguments Formatting
 
