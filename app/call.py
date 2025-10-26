@@ -3071,8 +3071,8 @@ class MCPServerStdioHook(MCPServerStdio):
         except Exception:
             pass
 
-        debug_mode = bool(os.getenv("DEBUG_MODE"))
-        if not debug_mode and len(text) > max_len:
+        call_debug = bool(os.getenv("CALL_DEBUG"))
+        if not call_debug and len(text) > max_len:
             text = text[: max_len - 3] + "..."
         return text.rstrip("\n")
 
@@ -3084,7 +3084,7 @@ class MCPServerStdioHook(MCPServerStdio):
         escaped_body = _html.escape(text or "")
         payload = (
             header
-            + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            + f'<blockquote expandable><pre><code class="language-yaml">{escaped_body}</code></pre></blockquote>'
         )
         # Sanitize and truncate to avoid Telegram 4096 limit and user's 3800 limit
         try:
@@ -3115,7 +3115,7 @@ class MCPServerStdioHook(MCPServerStdio):
         escaped_body = _html.escape(text or "")
         safe_text = (
             header
-            + f'<blockquote expandable><pre><code class="language-text">{escaped_body}</code></pre></blockquote>'
+            + f'<blockquote expandable><pre><code class="language-yaml">{escaped_body}</code></pre></blockquote>'
         )
         if not self.__telegram_last_message:
             # For the initial send, pass the raw body to __send_message; it will wrap/escape itself
@@ -3239,34 +3239,22 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
-                result_text = self._format_tool_result(result)
+                # Format for display only (Telegram/logs) - this may truncate
+                result_text_for_display = self._format_tool_result(result)
                 logging.info("[mcp][%s] ✅ tool %s completed", self._mcp_title, tool_name)
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + result_text
+                    + result_text_for_display
                 )
-                # Send result to Telegram
+                # Send result to Telegram (display only)
                 try:
-                    result_body = f"✅ {tool_name}\n\n{result_text}".strip()
+                    result_body = f"✅ {tool_name}\n\n{result_text_for_display}".strip()
                     await self.__edit_message_text(result_body)
                 except Exception:
                     pass
-                # Return JSON-wrapped success result
-                return CallToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "ok": True,
-                                    "tool": tool_name,
-                                    "result": result_text,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-                )
+                # Return ORIGINAL result to agent pipeline (never truncate!)
+                # result is already a CallToolResult, return as-is
+                return result
             except Exception as e:
                 logging.error(
                     "[mcp][%s] ❌ tool %s failed: %s: %s",
@@ -3397,28 +3385,16 @@ class MCPServerStdioHook(MCPServerStdio):
                     jitter=0.2,
                     retry_on=(httpx.TimeoutException, OSError),
                 )
-                result_text = self._format_tool_result(result)
+                # Format for display only (logs) - this may truncate
+                result_text_for_display = self._format_tool_result(result)
                 debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
                 debug_print(
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + result_text
+                    + result_text_for_display
                 )
-                # Return JSON-wrapped success result
-                return CallToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "ok": True,
-                                    "tool": tool_name,
-                                    "result": result_text,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-                )
+                # Return ORIGINAL result to agent pipeline (never truncate!)
+                # result is already a CallToolResult, return as-is
+                return result
             except Exception as e:
                 logging.error(
                     "[mcp][%s] ❌ tool %s failed: %s: %s",
@@ -4314,7 +4290,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 context=context,
             )
             step1_output += getattr(result1, "final_output", None)
-            debug_print("[call]", "step1_output: ", step1_output)
+            debug_print("[call]", "step1_output: |-\n", step1_output)
         except Exception as e:
             # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
             try:

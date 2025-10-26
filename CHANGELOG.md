@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 
 
+## 2025-10-24
+
+- **MCP Hook:** Restored full MCP tool payloads by separating display formatting from the agent pipeline. See [2025-10-24-bugfix-mcp-hook-integrity](docs/changelog/2025-10-24-bugfix-mcp-hook-integrity.md).
+- **Target Resolution:** Archived implementation summary and rollout notes for project-first resolution. See [2025-10-23-changelog-target-resolution](docs/changelog/2025-10-23-changelog-target-resolution.md) and [2025-10-23-task-completion-summary](docs/changelog/2025-10-23-task-completion-summary.md).
+
+
+## 2025-10-23
+
+- **Project Execution:** Enabled executable projects by default when `project.md` contains prompt text and promoted project-first target resolution (`call/lib/api.py`, `call/lib/repo_db.py`). See [2025-10-23-task-completion-summary](docs/changelog/2025-10-23-task-completion-summary.md) for rollout details.
+- **Documentation & Diagnostics:** Added database diagnostics guide and comprehensive rollout notes for the priority change (`docs/DB_DIAGNOSTICS.md`, [2025-10-23-changelog-target-resolution](docs/changelog/2025-10-23-changelog-target-resolution.md)).
+
+
+## 2025-10-22
+
+- **MCP Hook:** Wrapped MCP tool errors in structured JSON and rerouted agents-as-tools traffic to the debug channel for observability (`app/call.py`, `docs/mcp-hook-routing.md`).
+- **Specialized Bots:** Enabled natural-language interaction for project bots, defaulting to their project orchestrator and surfacing goals in `/start` help (`telegram_bot/bot.py`, `docs/specialized-bots.md`).
+- **Project-Level Prompts:** Indexed `project.md` files as executable prompts and allowed prompts without agent binding, with dual-channel MCP routing support (`call/lib/api.py`, `call/lib/repo_db.py`, `call/lib/repo_fs.py`).
+
+
+## 2025-10-21
+
+- **Telegram Cleanup Controls:** Introduced `TG_CLEANUP_MCP_MESSAGES` and related environment toggles to manage MCP message retention and logging (`.env`, `app/call.py`, `docs/mcp-message-cleanup.md`).
+- **Claude Configuration:** Added production Claude preset ensuring accurate deployment settings (`call/claude_desktop_config.json`).
+
+
+## 2025-10-20
+
+- **Debug Controls:** Added `CALL_DEBUG_YAML` and `TELEGRAM_LOG_EMPTY_UPDATES` flags to reduce routine log noise while preserving diagnostics on demand (`.env`, `app/call.py`, `telegram_bot/bot.py`).
+- **Telegram UX:** Improved typing indicators and network error handling for `/call` flows, plus documented MCP cleanup options (`telegram_bot/bot.py`, `docs/mcp-message-cleanup.md`).
+
+
 ## 2025-10-19
 
 - **YAML Formatting:** Fixed PyYAML Emitter ignoring literal block scalar (`|`) style hints for strings >1024 characters. Override `choose_scalar_style()` in `_LiteralYamlDumper` to force literal style regardless of length. Strip trailing whitespace from each line before serialization to help PyYAML accept literal style. (`app/call.py:64-90`)
@@ -15,6 +46,12 @@ All notable changes to this project will be documented in this file.
 - **Tests:** Updated `test_plain_group_at_target_invalid_is_ignored` → `test_plain_group_at_target_delegates_to_library` to verify unknown targets are passed to library without pre-validation. All 174 tests pass. (`app/tests/test_telegram_bot_handlers.py`)
 - **Docs:** Updated formatting.md with PyYAML Emitter behavior analysis and fix documentation. (`docs/formatting.md:389-409`)
 - **Docs:** Added test script `test_yaml_literal_long.py` demonstrating fix for >4000 char multiline strings. (`test_yaml_literal_long.py`)
+
+
+## 2025-10-18
+
+- **YAML Formatting:** Forced literal block scalars for long single-line strings and documented literal-style handling to prevent mid-string wraps in MCP hook output (`app/call.py`, `docs/formatting.md`).
+- **Guides:** Published focused notes on MCP hook formatting changes and updated troubleshooting guidance (`docs/formatting.md`, `docs/changelog/2025-10-24-bugfix-mcp-hook-integrity.md`).
 
 ## 2025-10-17
 
