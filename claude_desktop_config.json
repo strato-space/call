@@ -7,7 +7,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:/home/strato-space"
+        "/home/strato-space"
       ],
       "env": {}
       },
@@ -48,20 +48,26 @@
       "command": "uv",
       "args": [
         "--directory",
-        "c:/home/strato-space/voice",
+        "/home/strato-space",
         "run",
         "-m",
-        "mcp_voicebot.server"
+        "voice.mcp_voicebot.server"
       ]
     },
     "call": {
-      "command": "C:/home/strato-space/.venv/Scripts/python.exe",
+      "command": "uv",
       "args": [
+        "--directory",
+        "/home/strato-space",
+        "run",
         "-m",
         "call.mcp.server"
       ],
       "env": {
-        "PYTHONPATH": "C:/home/strato-space"
+        "PYTHONPATH": "/home/strato-space",
+        "HTTP_PROXY": "http://localhost:10809",
+        "HTTPS_PROXY": "http://localhost:10809",
+        "ALL_PROXY": "socks5h://localhost:10808"
       }
     }
   }
