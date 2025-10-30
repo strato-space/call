@@ -77,6 +77,7 @@ from telegram.request import HTTPXRequest
 # Library facade
 from call.lib import api as call_api
 from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
+from call.app.call import preinitialize_mcp_servers_sync
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -1453,6 +1454,9 @@ def main() -> None:
         )
     except Exception:
         pass
+
+    # Pre-initialize MCP servers to avoid cold start during first call
+    preinitialize_mcp_servers_sync("bot")
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
