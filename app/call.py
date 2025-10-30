@@ -708,12 +708,12 @@ async def _initialize_mcp_servers_once() -> tuple[dict[str, Any], dict | None]:
 
 async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[list[Any], dict | None]:
     """Get MCP servers from singleton cache (lazy-loaded on first use).
-    
+
     Thread-safe lazy initialization: first call initializes, subsequent calls
     return cached instances. Servers live for the application lifetime.
     """
     global _MCP_SERVERS_CACHE, _MCP_SERVERS_INITIALIZED
-    
+
     async with _MCP_SERVERS_LOCK:
         if not _MCP_SERVERS_INITIALIZED:
             logging.info("[mcp] First call: initializing MCP servers singleton...")
@@ -727,10 +727,51 @@ async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[li
             cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
             path = Path(cfg_path)
             cfg_yaml = _load_mcp_yaml_config(path) if path.exists() else None
-    
+
     # Return servers as list for backward compatibility
     servers_list = list(_MCP_SERVERS_CACHE.values())
     return servers_list, cfg_yaml
+
+
+async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
+    """Async helper to warm up MCP servers with module-tag logging."""
+
+    raw_tag = str(module_tag or "mcp").strip() or "mcp"
+    tag = raw_tag if (raw_tag.startswith("[") and raw_tag.endswith("]")) else f"[{raw_tag}]"
+    logger = logging.getLogger("call.mcp")
+
+    debug_print(tag, "[STARTUP]", "Pre-initializing MCP servers...")
+    try:
+        servers_by_name, _cfg_yaml = await _initialize_mcp_servers_once()
+        names = list(servers_by_name.keys())
+        if names:
+            debug_print(tag, "[STARTUP]", f"✅ Pre-initialized MCP servers: {names}")
+            logger.info("%s Pre-initialized %d MCP servers: %s", tag, len(names), names)
+        else:
+            debug_print(tag, "[STARTUP]", "No MCP servers to pre-initialize")
+            logger.info("%s No MCP servers to pre-initialize", tag)
+        return servers_by_name
+    except Exception as exc:  # pragma: no cover - best-effort logging
+        debug_print(tag, "[STARTUP]", f"❌ Failed to pre-initialize MCP servers: {type(exc).__name__}: {exc}")
+        logger.warning("%s Failed to pre-initialize MCP servers: %s", tag, exc)
+        return {}
+
+
+def preinitialize_mcp_servers_sync(module_tag: str) -> dict[str, Any]:
+    """Sync helper to warm up MCP servers outside of an event loop."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(preinitialize_mcp_servers_async(module_tag))
+
+    if loop.is_running():
+        raise RuntimeError(
+            "preinitialize_mcp_servers_sync() cannot be used while the event loop is running; "
+            "call preinitialize_mcp_servers_async() and await it instead."
+        )
+
+    return loop.run_until_complete(preinitialize_mcp_servers_async(module_tag))
 
 
 def _extract_file_search_payload(name: str) -> Any | None:

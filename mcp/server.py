@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from pathlib import Path
 from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
+from call.app.call import preinitialize_mcp_servers_async
 
 try:
     # FastMCP SDK
@@ -24,6 +26,40 @@ from call.lib.api import models as api_models
 from call.lib.api import read as api_read
 from call.lib.api import write as api_write
 from call.lib import repo_db as repo_db_module
+
+
+_warmup_task: asyncio.Task | None = None
+
+
+def _schedule_warmup(tag: str = "mcp") -> None:
+    global _warmup_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    if _warmup_task is not None and not _warmup_task.done():
+        return
+
+    async def _run() -> None:
+        try:
+            debug_print("[mcp]", "[STARTUP]", f"Warmup task starting for tag '{tag}'")
+            await preinitialize_mcp_servers_async(tag)
+            debug_print("[mcp]", "[STARTUP]", f"Warmup task finished for tag '{tag}'")
+        except Exception as exc:  # pragma: no cover - best effort logging
+            try:
+                debug_print(
+                    "[mcp]",
+                    "[STARTUP]",
+                    f"Warmup task failed for tag '{tag}': {type(exc).__name__}: {exc}",
+                )
+            except Exception:
+                pass
+
+    try:
+        _warmup_task = loop.create_task(_run())
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -47,7 +83,10 @@ async def lifespan(app: FastMCP):
         (call_dir / ".env").exists() if "call_dir" in locals() else False,
     )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
-    # Nothing to preload for library-only usage
+    
+    # Pre-initialize MCP servers in background to avoid initialize timeout
+    _schedule_warmup("mcp")
+
     yield {}
 
 
@@ -130,11 +169,21 @@ async def mcp_exec(
     ctx: Context | None = None,
 ) -> Any:
     """Execute via payload (best for content buckets)."""
-    # Forward to the library's single-source-of-truth payload interpreter
-    kwargs, err = api_interpret_exec_payload(payload)
-    if err:
-        return err
-    return await api_call_async(**kwargs)
+    try:
+        # Forward to the library's single-source-of-truth payload interpreter
+        kwargs, err = api_interpret_exec_payload(payload)
+        if err:
+            return err
+        return await api_call_async(**kwargs)
+    except Exception as exc:
+        debug_print("[mcp]", "[ERROR]", f"Exec payload failed: {type(exc).__name__}: {exc}")
+        # Return structured error instead of raising to prevent FastMCP cancel scope issues
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": f"Payload execution failed: {str(exc)}",
+            "code": "EXEC_EXECUTION_ERROR",
+        }
 
 
 @mcp.tool(name="notify")
@@ -151,16 +200,26 @@ async def mcp_notify(
         context: optional list of context items
         session_id: optional session identifier
     """
-    return await api_call_async(
-        project=None,
-        agent=None,
-        prompt=None,
-        target=None,
-        input=None,
-        event=event,
-        session_id=session_id,
-        attributes={"context": context} if context else None,
-    )
+    try:
+        return await api_call_async(
+            project=None,
+            agent=None,
+            prompt=None,
+            target=None,
+            input=None,
+            event=event,
+            session_id=session_id,
+            attributes={"context": context} if context else None,
+        )
+    except Exception as exc:
+        debug_print("[mcp]", "[ERROR]", f"Notify failed: {type(exc).__name__}: {exc}")
+        # Return structured error instead of raising to prevent FastMCP cancel scope issues
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": f"Notify execution failed: {str(exc)}",
+            "code": "NOTIFY_EXECUTION_ERROR",
+        }
 
 
 @mcp.tool(name="call")
@@ -175,29 +234,65 @@ async def mcp_call(
 ) -> Any:
     """Invoke a single agent/prompt selection by name (uses same rules as /call)."""
 
-    attrs = None
-    if model is not None:
-        model_str = str(model).strip()
-        if model_str:
-            attrs = {"model": model_str}
-    res = await api_call_async(
-        project=None,
-        agent=None,
-        prompt=None,
-        target=name,
-        input=input,
-        event=event,
-        session_id=session_id,
-        echo=echo,
-        attributes=attrs,
-    )
-    return res
+    try:
+        attrs = None
+        if model is not None:
+            model_str = str(model).strip()
+            if model_str:
+                attrs = {"model": model_str}
+        res = await api_call_async(
+            project=None,
+            agent=None,
+            prompt=None,
+            target=name,
+            input=input,
+            event=event,
+            session_id=session_id,
+            echo=echo,
+            attributes=attrs,
+        )
+        return res
+    except Exception as exc:
+        debug_print("[mcp]", "[ERROR]", f"Tool call failed: {type(exc).__name__}: {exc}")
+        # Return structured error instead of raising to prevent FastMCP cancel scope issues
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": f"Tool execution failed: {str(exc)}",
+            "code": "TOOL_EXECUTION_ERROR",
+        }
 
 
 @mcp.tool()
 def reload(ctx: Context | None = None) -> Any:
     """Reload repository indices (agent/prompt) from .env configuration."""
-    return api_reload()
+    try:
+        debug_print("[mcp]", "[TOOL]", "reload invoked via MCP tool")
+    except Exception:
+        pass
+
+    try:
+        result = api_reload()
+        try:
+            debug_print("[mcp]", "[TOOL]", f"reload result: ok={result.get('ok', None)}")
+        except Exception:
+            pass
+        return result
+    except Exception as exc:
+        try:
+            debug_print(
+                "[mcp]",
+                "[TOOL]",
+                f"reload failed with {type(exc).__name__}: {exc}",
+            )
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "error_code": 500,
+            "description": f"reload failed: {type(exc).__name__}: {exc}",
+            "code": "RELOAD_ERROR",
+        }
 
 
 @mcp.tool()

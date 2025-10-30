@@ -19,6 +19,8 @@ from call.lib.api import write as api_write
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
 from call.lib import repo_db as repo_db_module
+from contextlib import asynccontextmanager
+from call.app.call import preinitialize_mcp_servers_async
 
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
@@ -38,7 +40,15 @@ def list_prompts(
 # Configure logging once so CALL_DEBUG and related envs take effect under Uvicorn
 configure_logging()
 
-app = FastAPI(title="Call Actions API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize MCP servers at startup to avoid cold start during first requests."""
+    # Pre-initialize MCP servers to avoid cold start during first call
+    await preinitialize_mcp_servers_async("actions")
+
+    yield
+
+app = FastAPI(title="Call Actions API", version="2.0.2", lifespan=lifespan)
 
 
 def custom_openapi():

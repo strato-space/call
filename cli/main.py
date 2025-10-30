@@ -30,6 +30,7 @@ import faulthandler
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
+from call.app.call import preinitialize_mcp_servers_sync
 from call.lib import repo_db as repo_db_module
 from dotenv import load_dotenv
 from pathlib import Path as _Path
@@ -1282,6 +1283,12 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    # Pre-initialize MCP servers so first CLI call doesn't incur cold start
+    try:
+        preinitialize_mcp_servers_sync("cli")
+    except Exception as exc:  # pragma: no cover - best effort
+        debug_print("[cli]", "[STARTUP]", f"❌ MCP pre-initialization failed: {type(exc).__name__}: {exc}")
 
     # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
     try:

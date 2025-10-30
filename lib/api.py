@@ -1133,6 +1133,36 @@ async def call_async(
     # Lazily import app-layer functions to avoid hard import at module load time
     from call.app import call as app_call
 
+    # Project-only guard: ensure selection errors bubble up before building cfg
+    auto_selected_agent = False
+    if project and not any([agent, prompt, target]):
+        probe = resolve_agent(project=project, agent=None, prompt=None, target=None)
+        if isinstance(probe, dict) and probe.get("ok"):
+            resolved_probe = probe.get("resolved") or {}
+            candidate_agent = (
+                resolved_probe.get("name")
+                or resolved_probe.get("agent")
+            )
+            if candidate_agent:
+                agent = candidate_agent
+                auto_selected_agent = True
+        else:
+            if isinstance(probe, dict):
+                if session_id and "session_id" not in probe:
+                    probe["session_id"] = session_id
+                _reset_override()
+                return probe
+            _reset_override()
+            return _error_payload(
+                agent="",
+                input=str(input or ""),
+                exc="No agent found matching criteria",
+                status=404,
+                code="NO_DATA_FOUND",
+                project=project,
+                session_id=session_id,
+            )
+
     # Build ready-to-run config (handles target, wildcard prompt, selection, and blank agent)
     cfg, cfg_err = build_runnable_instructions_config(
         project=project,

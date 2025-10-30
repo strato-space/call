@@ -1254,6 +1254,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 2. Delegate to `call.lib.api`
 3. Keep signature aligned with REST/CLI
 4. Update MCP Server section in README
+5. Reuse the shared warm-up helpers (`preinitialize_mcp_servers_async()` / `preinitialize_mcp_servers_sync()`) from `call/app/call.py` when adding new entrypoints to avoid cold starts.
 
 **Modifying card format:**
 
@@ -1341,6 +1342,7 @@ python -m call.telegram_bot.bot --bot-name TestBot | jq -r 'select(.logger=="cal
 - `--prompt <name>` — prompt filter (supports `*`)
 - `--target <name>` — unified target (resolved via precedence)
 - `--state ready|draft` — prompt state filter
+- Project-only selections now probe the repo index before execution: if no agents are found you will receive a `NO_DATA_FOUND` envelope, and ambiguous projects surface `TOO_MANY_ROWS` with `options`.
 
 **Input Flags:**
 
