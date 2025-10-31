@@ -48,10 +48,10 @@
       "command": "uv",
       "args": [
         "--directory",
-        "/home/strato-space",
+        "/home/strato-space/voice",
         "run",
         "-m",
-        "voice.mcp_voicebot.server"
+        "mcp_voicebot.server"
       ]
     },
     "call": {
