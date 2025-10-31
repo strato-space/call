@@ -22,7 +22,7 @@
         "--directory",
         "/home/strato-space/telegram-mcp-ro",
         "run",
-        "voice.py"
+        "main.py"
       ]
     },
     "tg-rw": {
