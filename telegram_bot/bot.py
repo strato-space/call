@@ -551,19 +551,28 @@ def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
 
 
 _TRAILING_PUNCT_RE = re.compile(r"[\s\.,;:!\?…'\"`“”‘’\)\]\}›»]+$")
+_TARGET_TOKEN_RE = re.compile(r"^@[A-Za-z0-9][A-Za-z0-9_\-./:*]*$")
 
 
 def _normalize_token(tok: str) -> str:
     try:
         s = (tok or "").strip()
-        if s.startswith("@"):
-            s = s[1:].lstrip()
         s = _TRAILING_PUNCT_RE.sub("", s)
         if s.endswith(".md"):
             s = s[:-3]
         return s
     except Exception:
         return (tok or "").strip()
+
+
+def _looks_like_target(tok: str) -> bool:
+    try:
+        s = (tok or "").strip()
+        if not s:
+            return False
+        return bool(_TARGET_TOKEN_RE.match(s))
+    except Exception:
+        return False
 
 
 # _is_valid_target() removed - validation delegated to call_api.call_async()
@@ -608,7 +617,7 @@ def _resolve_agent_and_input(
         except Exception:
             pass
         parts = body.lstrip().split(None, 1)
-        head = _normalize_token(parts[0])
+        head = parts[0].strip()
         rest = parts[1] if len(parts) > 1 else ""
 
         # '@BotName ...' -> address bot explicitly; next token may be target
@@ -616,16 +625,21 @@ def _resolve_agent_and_input(
             if not rest.strip():
                 return "", "", False
             sub = rest.strip().split(None, 1)
-            cand = _normalize_token(sub[0]) if sub else ""
+            cand_raw = sub[0] if sub else ""
+            cand = _normalize_token(cand_raw)
             tail = sub[1] if len(sub) > 1 else ""
-            # Return candidate as target without validation
-            if cand:
-                return cand, tail, True
+            # Return candidate as target only if it resembles a catalog identifier
+            candidate = cand if cand.startswith("@") else f"@{cand}" if cand else ""
+            if candidate and _looks_like_target(candidate):
+                return candidate.lstrip("@"), tail, True
             # No candidate -> treat all as input-only
             return "", rest.strip(), True
         # '@Target ...' -> return target without validation
         # Library will resolve it as prompt > agent > project
-        return head, rest, True
+        candidate = head if head.startswith("@") else f"@{head}" if head else ""
+        if candidate and _looks_like_target(candidate):
+            return candidate.lstrip("@"), rest, True
+        return "", body.strip(), True
 
     # No leading '@'
     if is_private:
