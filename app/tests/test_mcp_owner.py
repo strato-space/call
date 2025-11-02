@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -174,3 +175,63 @@ async def test_actions_lifespan_uses_owner(monkeypatch):
         pass
 
     assert calls == [("start", "actions"), ("stop", None)]
+
+
+def test_call_stops_waiter_owner(monkeypatch):
+    owner_state = SimpleNamespace(value=False)
+    owner_tag = SimpleNamespace(value=None)
+    stop_calls = SimpleNamespace(value=0)
+
+    async def fake_call_async(**_: Any) -> dict:
+        owner_state.value = True
+        owner_tag.value = "waiter"
+        return {"ok": True}
+
+    def fake_is_running() -> bool:
+        return owner_state.value
+
+    def fake_get_tag() -> str | None:
+        return owner_tag.value
+
+    async def fake_stop(timeout: float = 30.0) -> None:
+        stop_calls.value += 1
+        owner_state.value = False
+        owner_tag.value = None
+
+    monkeypatch.setattr(call_api, "call_async", fake_call_async, raising=False)
+    monkeypatch.setattr(app_call, "is_mcp_owner_running", fake_is_running, raising=False)
+    monkeypatch.setattr(app_call, "get_mcp_owner_tag", fake_get_tag, raising=False)
+    monkeypatch.setattr(app_call, "stop_mcp_owner_task", fake_stop, raising=False)
+
+    result = call_api.call()
+
+    assert result == {"ok": True}
+    assert stop_calls.value == 1
+
+
+def test_call_preserves_existing_owner(monkeypatch):
+    owner_state = SimpleNamespace(value=True)
+    owner_tag = SimpleNamespace(value="actions")
+    stop_calls = SimpleNamespace(value=0)
+
+    async def fake_call_async(**_: Any) -> dict:
+        return {"ok": True}
+
+    def fake_is_running() -> bool:
+        return owner_state.value
+
+    def fake_get_tag() -> str | None:
+        return owner_tag.value
+
+    async def fake_stop(timeout: float = 30.0) -> None:
+        stop_calls.value += 1
+
+    monkeypatch.setattr(call_api, "call_async", fake_call_async, raising=False)
+    monkeypatch.setattr(app_call, "is_mcp_owner_running", fake_is_running, raising=False)
+    monkeypatch.setattr(app_call, "get_mcp_owner_tag", fake_get_tag, raising=False)
+    monkeypatch.setattr(app_call, "stop_mcp_owner_task", fake_stop, raising=False)
+
+    result = call_api.call()
+
+    assert result == {"ok": True}
+    assert stop_calls.value == 0
