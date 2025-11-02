@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 import logging
 from typing import Callable, Awaitable, Optional
@@ -77,7 +78,7 @@ from telegram.request import HTTPXRequest
 # Library facade
 from call.lib import api as call_api
 from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
-from call.app.call import preinitialize_mcp_servers_sync, MCPInitializationError
+from call.app.call import preinitialize_mcp_servers_async, MCPInitializationError, _set_mcp_exit_stack, cleanup_mcp_servers
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -1479,13 +1480,6 @@ def main() -> None:
     except Exception:
         pass
 
-    # Pre-initialize MCP servers (fail-fast if unavailable)
-    try:
-        preinitialize_mcp_servers_sync("bot")
-    except MCPInitializationError as exc:
-        log.critical("MCP initialization failed: %s", exc)
-        raise SystemExit(1) from exc
-
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)
     # Ensure downstream app pipeline prefers this bot token
@@ -1493,11 +1487,68 @@ def main() -> None:
         os.environ["CALL_TELEGRAM_TOKEN"] = polling_token
     except Exception:
         pass
+    
+    # MCP initialization - unified strategy with mcp/actions
+    # Create exit stack and start background init in post_init
+    _mcp_init_task = None
+    _mcp_exit_stack = None
+    
+    async def _post_init(application):
+        """Initialize MCP servers in background after bot starts."""
+        nonlocal _mcp_init_task, _mcp_exit_stack
+        
+        # Create AsyncExitStack in bot's event loop
+        _mcp_exit_stack = AsyncExitStack()
+        await _mcp_exit_stack.__aenter__()
+        _set_mcp_exit_stack(_mcp_exit_stack)
+        log.info("MCP exit stack created in bot event loop")
+        
+        # Start MCP initialization in background
+        async def _init_background():
+            try:
+                await preinitialize_mcp_servers_async("bot")
+                log.info("MCP servers initialized successfully (background)")
+            except MCPInitializationError as exc:
+                log.error("MCP initialization failed (background): %s", exc, exc_info=True)
+        
+        _mcp_init_task = asyncio.create_task(_init_background())
+        log.info("MCP initialization started in background")
+    
+    async def _post_shutdown(application):
+        """Cleanup MCP servers on bot shutdown."""
+        nonlocal _mcp_init_task, _mcp_exit_stack
+        
+        # Wait for init if still running
+        if _mcp_init_task and not _mcp_init_task.done():
+            log.info("Waiting for background init to complete before shutdown...")
+            try:
+                await asyncio.wait_for(_mcp_init_task, timeout=30.0)
+            except asyncio.TimeoutError:
+                log.warning("Init task timeout during shutdown")
+                _mcp_init_task.cancel()
+            except Exception as e:
+                log.warning("Init task error during shutdown: %s", e)
+        
+        # Cleanup
+        try:
+            await cleanup_mcp_servers()
+        except Exception as e:
+            log.warning("MCP cache cleanup error: %s", e)
+        
+        if _mcp_exit_stack:
+            try:
+                await _mcp_exit_stack.__aexit__(None, None, None)
+                log.info("MCP exit stack closed in bot event loop")
+            except Exception as e:
+                log.error("Exit stack cleanup error: %s", e)
+    
     app = (
         ApplicationBuilder()
         .token(polling_token)
         .request(request)
         .get_updates_request(request)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
         .build()
     )
 

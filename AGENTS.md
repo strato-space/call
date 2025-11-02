@@ -67,28 +67,56 @@ Review the relevant directory documentation before making changes; many subsyste
 - This prevents "cancel scope in different task" errors
 - Let `MCPInitializationError` propagate
 
-### Background Initialization Pattern
+### Unified Background Initialization Pattern
+
+**All entry points use the same strategy:**
+
+1. **MCP Server** (`mcp/server.py`) - async lifespan
+2. **Actions API** (`actions/main.py`) - async lifespan  
+3. **Telegram Bot** (`telegram_bot/bot.py`) - PTB post_init/post_shutdown callbacks
+4. **CLI** (`cli/main.py`) - lazy init on first call (no pre-init needed)
+
 ```python
-# MCP Server / Actions API lifespan
-exit_stack = AsyncExitStack()
-await exit_stack.__aenter__()
-_set_mcp_exit_stack(exit_stack)
+# Async entry points (MCP Server, Actions API)
+async def lifespan(app):
+    exit_stack = AsyncExitStack()
+    await exit_stack.__aenter__()
+    _set_mcp_exit_stack(exit_stack)
+    
+    # Start init in background - returns immediately
+    init_task = asyncio.create_task(preinitialize_mcp_servers_async(...))
+    
+    yield {}  # Fast response (Claude Desktop / API clients)
+    
+    # Shutdown: wait for init, then cleanup
+    if not init_task.done():
+        await asyncio.wait_for(init_task, timeout=30.0)
+    await cleanup_mcp_servers()
+    await exit_stack.__aexit__(None, None, None)
+```
 
-# Start init in background - returns immediately
-init_task = asyncio.create_task(preinitialize_mcp_servers_async(...))
+```python
+# Telegram Bot (PTB callbacks in bot's event loop)
+async def _post_init(application):
+    _exit_stack = AsyncExitStack()
+    await _exit_stack.__aenter__()
+    _set_mcp_exit_stack(_exit_stack)
+    
+    # Start background init
+    _init_task = asyncio.create_task(preinitialize_mcp_servers_async("bot"))
 
-yield {}  # Claude Desktop gets response quickly
+async def _post_shutdown(application):
+    if not _init_task.done():
+        await asyncio.wait_for(_init_task, timeout=30.0)
+    await cleanup_mcp_servers()
+    await _exit_stack.__aexit__(None, None, None)
 
-# Shutdown: wait for init, then cleanup
-if not init_task.done():
-    await asyncio.wait_for(init_task, timeout=30.0)
-await cleanup_mcp_servers()
-await exit_stack.__aexit__(None, None, None)
+app = ApplicationBuilder().post_init(_post_init).post_shutdown(_post_shutdown).build()
 ```
 
 ### Tool Handler Pattern
 ```python
-# In mcp_call or any tool that needs MCP servers
+# In mcp_call or any tool/endpoint that needs MCP servers
 async def mcp_call(...):
     # Wait for servers to be ready (lazy wait, fast if already ready)
     await wait_for_mcp_init(timeout=120.0)
@@ -97,6 +125,13 @@ async def mcp_call(...):
     result = await api_call_async(...)
     return result
 ```
+
+### Benefits of Unified Approach
+- **Fast startup**: All entry points return control quickly (<1s)
+- **Predictable debugging**: Same control flow everywhere
+- **Clean shutdown**: AsyncExitStack ensures proper cleanup
+- **Zero race conditions**: All cancel scopes in same task
+- **Lazy waiting**: First call waits, subsequent calls instant
 
 ## Contribution Workflow
 
