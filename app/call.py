@@ -335,6 +335,45 @@ def _set_mcp_exit_stack(astack: AsyncExitStack) -> None:
     _MCP_EXIT_STACK = astack
 
 
+async def wait_for_mcp_init(timeout: float = 120.0) -> None:
+    """Wait for MCP servers to finish initializing. Safe to call multiple times.
+    
+    Args:
+        timeout: Maximum seconds to wait for initialization (default 120s)
+        
+    Raises:
+        MCPInitializationError: If initialization failed or timeout
+    """
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT
+    
+    # Already initialized successfully
+    if _MCP_INIT_STATE == _MCPInitState.INITIALIZED:
+        return
+    
+    # Initialization failed previously
+    if _MCP_INIT_STATE == _MCPInitState.FAILED:
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+    
+    # Wait for initialization to complete
+    if _MCP_INIT_STATE == _MCPInitState.INITIALIZING:
+        if _MCP_INIT_EVENT is None:
+            _MCP_INIT_EVENT = asyncio.Event()
+        
+        try:
+            await asyncio.wait_for(_MCP_INIT_EVENT.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise MCPInitializationError(f"MCP initialization timeout after {timeout}s")
+        
+        # Check final state after wait
+        if _MCP_INIT_STATE == _MCPInitState.FAILED:
+            raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+        
+        return
+    
+    # Not started yet - this shouldn't happen in normal flow
+    raise MCPInitializationError("MCP initialization not started")
+
+
 class MCPInitializationError(RuntimeError):
     """Raised when MCP servers fail to initialize."""
 
@@ -4480,10 +4519,6 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         if isinstance(srv, MCPServerStdioHook):
             asyncio.create_task(srv.cleanup_service_messages())
     logging.debug("[call] MCP cleanup started for %d servers", len(mcp_servers))
-    
-    # MCP servers are automatically cleaned up by AsyncExitStack when context exits
-    # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)
-    logging.debug("[call] MCP servers will be cleaned up by AsyncExitStack")
     
     # Return directly instead of yield (no context manager cleanup needed after)
     return agent, cfg, session

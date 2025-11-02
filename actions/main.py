@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time, uuid
 from typing import Any, Optional, Literal
@@ -52,15 +53,29 @@ async def lifespan(app: FastAPI):
     _set_mcp_exit_stack(exit_stack)
     logger.info("MCP exit stack created in main context")
     
-    # Pre-initialize MCP servers synchronously in main context
-    try:
-        await preinitialize_mcp_servers_async("actions")
-        logger.info("MCP servers initialized successfully")
-    except MCPInitializationError as exc:
-        logger.critical("MCP initialization failed during startup: %s", exc)
-        raise
+    # Start MCP initialization in background - don't block startup
+    async def _init_background():
+        try:
+            await preinitialize_mcp_servers_async("actions")
+            logger.info("MCP servers initialized successfully (background)")
+        except MCPInitializationError as exc:
+            logger.error("MCP initialization failed (background): %s", exc, exc_info=True)
+    
+    init_task = asyncio.create_task(_init_background())
+    logger.info("MCP initialization started in background")
 
     yield
+    
+    # Shutdown: wait for init if still running
+    if not init_task.done():
+        logger.info("Waiting for background init to complete before shutdown...")
+        try:
+            await asyncio.wait_for(init_task, timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning("Init task timeout during shutdown")
+            init_task.cancel()
+        except Exception as e:
+            logger.warning("Init task error during shutdown: %s", e)
     
     # Shutdown: cleanup cache and exit stack
     try:
