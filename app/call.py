@@ -358,6 +358,19 @@ def _on_mcp_owner_done(task: asyncio.Task) -> None:
     _MCP_OWNER_SHUTDOWN_EVENT = None
 
 
+def is_mcp_owner_running() -> bool:
+    """Return True when the MCP owner task exists and is still active."""
+
+    task = _MCP_OWNER_TASK
+    return bool(task and not task.done())
+
+
+def get_mcp_owner_tag() -> str | None:
+    """Expose the tag of the currently running MCP owner task, if any."""
+
+    return _MCP_OWNER_TAG
+
+
 async def _mcp_owner_main(tag: str) -> None:
     """Owner task that manages MCP initialization and cleanup."""
     global _MCP_OWNER_SHUTDOWN_EVENT
