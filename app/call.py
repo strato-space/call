@@ -329,6 +329,12 @@ def _reset_mcp_state() -> None:
     _MCP_EXIT_STACK = None
 
 
+def _set_mcp_exit_stack(astack: AsyncExitStack) -> None:
+    """Set the global MCP exit stack. Must be called from main lifespan context."""
+    global _MCP_EXIT_STACK
+    _MCP_EXIT_STACK = astack
+
+
 class MCPInitializationError(RuntimeError):
     """Raised when MCP servers fail to initialize."""
 
@@ -747,10 +753,13 @@ async def _validate_and_cache_mcp_config() -> dict | None:
         logging.info("[mcp] Config validated - %d enabled servers: %s", enabled_count, enabled_names)
         debug_print("[mcp]", f"✅ Config valid - {enabled_count} enabled servers: {enabled_names}")
 
-        # Create servers once with global exit stack (singleton pattern)
+        # Create servers once with provided exit stack (singleton pattern)
         debug_print("[mcp]", "Creating MCP server instances (singleton - will be reused)...")
-        _MCP_EXIT_STACK = AsyncExitStack()
-        await _MCP_EXIT_STACK.__aenter__()  # Enter the exit stack context
+        
+        # Use provided exit stack or fail
+        if _MCP_EXIT_STACK is None:
+            raise MCPInitializationError("MCP initialization requires exit stack to be set")
+        
         servers = await _build_mcp_servers_from_yaml(cfg_yaml, _MCP_EXIT_STACK)
         _MCP_SERVERS_CACHE = {srv.name: srv for srv in servers} if servers else {}
         _MCP_CONFIG_CACHE = cfg_yaml
@@ -789,22 +798,12 @@ async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[li
 
 
 async def cleanup_mcp_servers() -> None:
-    """Cleanup MCP servers at shutdown."""
-    global _MCP_SERVERS_CACHE, _MCP_EXIT_STACK
-    if not _MCP_EXIT_STACK:
-        return
+    """Clear MCP server cache. Actual cleanup done by exit stack in lifespan."""
+    global _MCP_SERVERS_CACHE
     
-    debug_print("[mcp]", f"Cleaning up {len(_MCP_SERVERS_CACHE)} MCP servers...")
-    try:
-        # Exit the global async context - this will cleanup all registered servers
-        await _MCP_EXIT_STACK.__aexit__(None, None, None)
-        debug_print("[mcp]", f"✅ All MCP servers cleaned up via AsyncExitStack")
-        logging.info("[mcp] All MCP servers cleaned up")
-    except Exception as e:
-        logging.warning("[mcp] Failed to cleanup MCP servers: %s", e)
-    finally:
-        _MCP_SERVERS_CACHE = {}
-        _MCP_EXIT_STACK = None
+    debug_print("[mcp]", f"Clearing {len(_MCP_SERVERS_CACHE)} MCP servers cache...")
+    _MCP_SERVERS_CACHE = {}
+    logging.info("[mcp] MCP server cache cleared")
 
 
 async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
