@@ -60,11 +60,43 @@ Review the relevant directory documentation before making changes; many subsyste
 
 ### Development Rules
 - Create `AsyncExitStack` in main lifespan context BEFORE initialization
-- Call `_set_mcp_exit_stack(exit_stack)` before `preinitialize_mcp_servers_async()`
-- Initialize MCP synchronously in same task (no background tasks)
+- Call `_set_mcp_exit_stack(exit_stack)` before starting background init
+- Initialize MCP in **background task** to avoid blocking initialize response (Claude timeout 60s)
+- Use `wait_for_mcp_init()` in tool handlers to ensure servers are ready
 - Exit stack in same context: `await exit_stack.__aexit__(None, None, None)`
 - This prevents "cancel scope in different task" errors
 - Let `MCPInitializationError` propagate
+
+### Background Initialization Pattern
+```python
+# MCP Server / Actions API lifespan
+exit_stack = AsyncExitStack()
+await exit_stack.__aenter__()
+_set_mcp_exit_stack(exit_stack)
+
+# Start init in background - returns immediately
+init_task = asyncio.create_task(preinitialize_mcp_servers_async(...))
+
+yield {}  # Claude Desktop gets response quickly
+
+# Shutdown: wait for init, then cleanup
+if not init_task.done():
+    await asyncio.wait_for(init_task, timeout=30.0)
+await cleanup_mcp_servers()
+await exit_stack.__aexit__(None, None, None)
+```
+
+### Tool Handler Pattern
+```python
+# In mcp_call or any tool that needs MCP servers
+async def mcp_call(...):
+    # Wait for servers to be ready (lazy wait, fast if already ready)
+    await wait_for_mcp_init(timeout=120.0)
+    
+    # Now safe to call API
+    result = await api_call_async(...)
+    return result
+```
 
 ## Contribution Workflow
 
