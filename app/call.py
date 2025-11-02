@@ -3550,20 +3550,43 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def cleanup_service_messages(self) -> None:
         """Delete all tracked service messages from Telegram."""
+        log = logging.getLogger("call.mcp.cleanup")
+        
         # Check if cleanup is enabled via environment variable
         cleanup_enabled = os.environ.get("TG_CLEANUP_MCP_MESSAGES", "1").strip().lower()
         if cleanup_enabled not in ("1", "true", "yes", "on"):
+            log.debug("[%s] Cleanup disabled via TG_CLEANUP_MCP_MESSAGES=%s", self.name, cleanup_enabled)
             return
         
-        if not self.__service_message_ids:
+        message_count = len(self.__service_message_ids)
+        if message_count == 0:
+            log.debug("[%s] No service messages to cleanup", self.name)
             return
-        await _init_bot_safe()
+        
+        log.info("[%s] Starting cleanup of %d service messages", self.name, message_count)
+        
+        try:
+            await _init_bot_safe()
+        except Exception as e:
+            log.error("[%s] Failed to initialize bot for cleanup: %s", self.name, e, exc_info=True)
+            return
+        
+        deleted_count = 0
+        failed_count = 0
+        
         for chat_id, msg_id in self.__service_message_ids:
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
+                deleted_count += 1
+                log.debug("[%s] Deleted message: chat_id=%s, msg_id=%s", self.name, chat_id, msg_id)
+            except Exception as e:
+                failed_count += 1
+                log.warning("[%s] Failed to delete message (chat_id=%s, msg_id=%s): %s", 
+                           self.name, chat_id, msg_id, e)
+        
         self.__service_message_ids.clear()
+        log.info("[%s] Cleanup completed: deleted=%d, failed=%d, total=%d", 
+                self.name, deleted_count, failed_count, message_count)
 
 
 # -------- Call subsystem helpers --------
@@ -4288,15 +4311,14 @@ def image_genetation_tool(
 # )
 
 
-@asynccontextmanager
 async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
-    """Async context manager that builds an Agent from a ready-to-run cfg and runs one turn.
+    """Build an Agent from a ready-to-run cfg and run one turn. Returns (agent, cfg, session).
     
     MCP Lifecycle (RAII Pattern):
-      - Creates fresh MCP server instances via AsyncExitStack.enter_async_context()
-      - Ensures __aenter__ and __aexit__ run in same async task (no cancel scope errors)
-      - Automatically cleans up servers when context exits (no subprocess orphans)
-      - Servers are NOT cached globally - created/destroyed per call
+      - Uses singleton MCP servers from global cache (created at startup)
+      - Servers managed by global AsyncExitStack (entered in lifespan)
+      - Background cleanup of service messages started before return
+      - AsyncExitStack cleanup happens at application shutdown
 
     Expected cfg attributes (duck-typed DTO):
       - name: str
@@ -4305,162 +4327,164 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
       - model: str | None
       - attributes: dict | None (may contain 'vs')
       - path: str | None (repo-relative path like 'agent/Proj/Agent/agent.md'; optional)
+      
+    Returns:
+      tuple: (agent, cfg, session) - Agent instance, config, and session object
     """
-    async with AsyncExitStack() as astack:
+    # Use singleton MCP servers from global cache (no per-call AsyncExitStack)
+    debug_print("[call]", "[MCP] Getting MCP servers from singleton cache...")
+    mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack=None)
+    debug_print("[call]", f"[MCP] ✅ MCP servers ready: {len(mcp_servers)} servers")
 
-        # CRITICAL: Initialize MCP servers first and block until ready
-        debug_print("[call]", "[MCP] Initializing MCP servers (blocking)...")
-        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
-        debug_print("[call]", f"[MCP] ✅ MCP servers ready: {len(mcp_servers)} servers")
+    debug_print("[call]", "user_input (raw): |-\n" + user_input)
+    debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
+    debug_dump_cfg_preview(cfg)
 
-        debug_print("[call]", "user_input (raw): |-\n" + user_input)
-        debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
-        debug_dump_cfg_preview(cfg)
+    debug_print("[call]", "[GIT] starting git pull...")
+    await _git_pull_prompt_repo()
+    debug_print("[call]", "[GIT] git pull completed")
+    tools = await build_tools_for_cfg(cfg)
 
-        debug_print("[call]", "[GIT] starting git pull...")
-        await _git_pull_prompt_repo()
-        debug_print("[call]", "[GIT] git pull completed")
-        tools = await build_tools_for_cfg(cfg)
+    # Agents-as-Tools: populate helper tools declared in project/agent card.
+    _append_agent_tools_from_cfg(cfg=cfg, tools=tools, mcp_servers=mcp_servers)
 
-        # Agents-as-Tools: populate helper tools declared in project/agent card.
-        _append_agent_tools_from_cfg(cfg=cfg, tools=tools, mcp_servers=mcp_servers)
+    processed_input = await process_user_input(user_input)
+    sanitized_input = processed_input.sanitized
+    normalized_input = processed_input.normalized
+    embedded_input = processed_input.embedded
 
-        processed_input = await process_user_input(user_input)
-        sanitized_input = processed_input.sanitized
-        normalized_input = processed_input.normalized
-        embedded_input = processed_input.embedded
+    debug_print(
+        "[call]",
+        "input (sanitized from target / repaced empty to go): |-\n"
+        + str(normalized_input),
+    )
 
-        debug_print(
-            "[call]",
-            "input (sanitized from target / repaced empty to go): |-\n"
-            + str(normalized_input),
-        )
+    context = {"embedded_input": embedded_input}
 
-        context = {"embedded_input": embedded_input}
-
-        cfg_model_settings = getattr(cfg, "model_settings", None)
-        if isinstance(cfg_model_settings, ModelSettings):
-            agent_model_settings = cfg_model_settings
-        elif isinstance(cfg_model_settings, dict):
-            try:
-                agent_model_settings = ModelSettings(**cfg_model_settings)
-            except Exception:
-                agent_model_settings = ModelSettings()
-        else:
-            agent_model_settings = ModelSettings()
-
-        agent = Agent(
-            name=cfg.id,
-            instructions=cfg.instructions,
-            model=cfg.model,
-            model_settings=agent_model_settings,
-            tools=tools,
-            mcp_servers=mcp_servers,
-        )
-
-        # MCP tools will be listed lazily by agents library when needed
-        # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
-        debug_print("[call]", "[BOT] initializing bot...")
-        await _init_bot_safe(project_name=(cfg.project or None))
-        debug_print("[call]", "[BOT] bot initialized")
-
-        # Save globally for subsequent messages (defaults come from .env; Telegram bot may override)
-        global selected_chat_id, selected_thread_id
-
-        # Now that selected_chat_id is finalized, create or skip SQLite session
-        session = _create_session_if_any(selected_chat_id, selected_thread_id)
-
-        # Send welcome message with agent link and run context (after config is ready)
-        debug_print("[call]", "[BANNER] sending welcome banner...")
-        await _send_welcome_banner(
-            cfg=cfg,
-            user_input=user_input,
-            mcp_servers=mcp_servers,
-            selected_chat_id=selected_chat_id,
-            selected_thread_id=selected_thread_id,
-        )
-        debug_print("[call]", "[BANNER] welcome banner sent")
-
-        # Run the main agent once with normalized input string (session-enabled)
-
-        step1_output = ""
+    cfg_model_settings = getattr(cfg, "model_settings", None)
+    if isinstance(cfg_model_settings, ModelSettings):
+        agent_model_settings = cfg_model_settings
+    elif isinstance(cfg_model_settings, dict):
         try:
-            result1 = await Runner.run(
-                agent,
-                embedded_input,
-                max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
-                session=session,
-                context=context,
-            )
-            step1_output += getattr(result1, "final_output", None)
-            debug_print("[call]", "step1_output: |-\n", step1_output)
-        except Exception as e:
-            # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
-            try:
-                err_text = format_exception_text(e)
-            except Exception:
-                err_text = str(e)
-            fatal_tokens = (
-                "unsupported_country_region_territory",
-                "request_forbidden",
-                "Tracing client error 403",
-            )
-            if any(tok in (err_text or "") for tok in fatal_tokens):
-                raise RuntimeError(
-                    'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
-                )
-            # Non-fatal errors: log full exception and surface a short error
-            logging.exception("[app] Agent run failed")
-            short_msg = str(e) or "Error"
-            debug_print("[app]", f"Error during main agent run: {short_msg}")
-            step1_output = f"Error: {short_msg}"
-            # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
-            parsed_error = getattr(e, "error", None)
-            message_for_tg = None
-            if isinstance(parsed_error, dict):
-                msg_val = parsed_error.get("message")
-                if isinstance(msg_val, str) and msg_val.strip():
-                    message_for_tg = msg_val.strip()
-            if not message_for_tg:
-                message_for_tg = short_msg
-            await _send_error_notification(
-                cfg=cfg,
-                selected_chat_id=selected_chat_id,
-                selected_thread_id=selected_thread_id,
-                message=message_for_tg,
-            )
-
-        # Notify digest (no image) and push
-        await _notify_digest_if_applicable(
-            cfg=cfg,
-            user_input=user_input,
-            step1_output=step1_output,
-            selected_chat_id=selected_chat_id,
-            selected_thread_id=selected_thread_id,
-        )
-
-        # Expose final_output to callers via cfg
-        try:
-            setattr(cfg, "_last_final_output", step1_output)
+            agent_model_settings = ModelSettings(**cfg_model_settings)
         except Exception:
-            pass
+            agent_model_settings = ModelSettings()
+    else:
+        agent_model_settings = ModelSettings()
 
-        yield agent, cfg, session
+    agent = Agent(
+        name=cfg.id,
+        instructions=cfg.instructions,
+        model=cfg.model,
+        model_settings=agent_model_settings,
+        tools=tools,
+        mcp_servers=mcp_servers,
+    )
 
-        # Cleanup: delete all MCP service messages in background (non-blocking)
-        # This ensures API returns quickly even if Telegram cleanup is slow
-        async def _cleanup_messages():
-            try:
-                for srv in mcp_servers:
-                    if isinstance(srv, MCPServerStdioHook):
-                        await srv.cleanup_service_messages()
-            except Exception as e:
-                logging.debug("[call] Failed to cleanup MCP service messages: %s", e)
-        
-        # Start cleanup in background, don't wait for it
-        asyncio.create_task(_cleanup_messages())
-        logging.debug("[call] MCP service message cleanup started in background")
-        
-        # MCP servers are automatically cleaned up by AsyncExitStack when context exits
-        # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)
-        logging.debug("[call] MCP servers will be cleaned up by AsyncExitStack")
+    # MCP tools will be listed lazily by agents library when needed
+    # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
+    debug_print("[call]", "[BOT] initializing bot...")
+    await _init_bot_safe(project_name=(cfg.project or None))
+    debug_print("[call]", "[BOT] bot initialized")
+
+    # Save globally for subsequent messages (defaults come from .env; Telegram bot may override)
+    global selected_chat_id, selected_thread_id
+
+    # Now that selected_chat_id is finalized, create or skip SQLite session
+    session = _create_session_if_any(selected_chat_id, selected_thread_id)
+
+    # Send welcome message with agent link and run context (after config is ready)
+    debug_print("[call]", "[BANNER] sending welcome banner...")
+    await _send_welcome_banner(
+        cfg=cfg,
+        user_input=user_input,
+        mcp_servers=mcp_servers,
+        selected_chat_id=selected_chat_id,
+        selected_thread_id=selected_thread_id,
+    )
+    debug_print("[call]", "[BANNER] welcome banner sent")
+
+    # Run the main agent once with normalized input string (session-enabled)
+
+    step1_output = ""
+    try:
+        result1 = await Runner.run(
+            agent,
+            embedded_input,
+            max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
+            session=session,
+            context=context,
+        )
+        step1_output += getattr(result1, "final_output", None)
+        debug_print("[call]", "step1_output: |-\n", step1_output)
+    except Exception as e:
+        # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
+        try:
+            err_text = format_exception_text(e)
+        except Exception:
+            err_text = str(e)
+        fatal_tokens = (
+            "unsupported_country_region_territory",
+            "request_forbidden",
+            "Tracing client error 403",
+        )
+        if any(tok in (err_text or "") for tok in fatal_tokens):
+            raise RuntimeError(
+                'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
+            )
+        # Non-fatal errors: log full exception and surface a short error
+        logging.exception("[app] Agent run failed")
+        short_msg = str(e) or "Error"
+        debug_print("[app]", f"Error during main agent run: {short_msg}")
+        step1_output = f"Error: {short_msg}"
+        # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
+        parsed_error = getattr(e, "error", None)
+        message_for_tg = None
+        if isinstance(parsed_error, dict):
+            msg_val = parsed_error.get("message")
+            if isinstance(msg_val, str) and msg_val.strip():
+                message_for_tg = msg_val.strip()
+        if not message_for_tg:
+            message_for_tg = short_msg
+        await _send_error_notification(
+            cfg=cfg,
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+            message=message_for_tg,
+        )
+
+    # Notify digest (no image) and push
+    await _notify_digest_if_applicable(
+        cfg=cfg,
+        user_input=user_input,
+        step1_output=step1_output,
+        selected_chat_id=selected_chat_id,
+        selected_thread_id=selected_thread_id,
+    )
+
+    # Expose final_output to callers via cfg
+    try:
+        setattr(cfg, "_last_final_output", step1_output)
+    except Exception:
+        pass
+
+    # Cleanup: delete all MCP service messages in background (fully async, no await)
+    # Start cleanup BEFORE returning to ensure it runs even if caller exits immediately
+    async def _cleanup_messages():
+        """Background task to delete MCP service messages from Telegram."""
+        for srv in mcp_servers:
+            if isinstance(srv, MCPServerStdioHook):
+                # Fire-and-forget: don't await, let each cleanup run independently
+                asyncio.create_task(srv.cleanup_service_messages())
+        logging.debug("[call] MCP service message cleanup tasks created")
+    
+    # Start cleanup in background, don't wait for it
+    asyncio.create_task(_cleanup_messages())
+    logging.debug("[call] MCP service message cleanup started in background")
+    
+    # MCP servers are automatically cleaned up by AsyncExitStack when context exits
+    # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)
+    logging.debug("[call] MCP servers will be cleaned up by AsyncExitStack")
+    
+    # Return directly instead of yield (no context manager cleanup needed after)
+    return agent, cfg, session
