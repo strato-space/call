@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time, uuid
 from typing import Any, Optional, Literal
 from pydantic import BaseModel
@@ -20,7 +21,7 @@ from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payloa
 from call.lib.logging import configure_logging
 from call.lib import repo_db as repo_db_module
 from contextlib import asynccontextmanager
-from call.app.call import preinitialize_mcp_servers_async
+from call.app.call import preinitialize_mcp_servers_async, MCPInitializationError
 
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
@@ -44,7 +45,12 @@ configure_logging()
 async def lifespan(app: FastAPI):
     """Initialize MCP servers at startup to avoid cold start during first requests."""
     # Pre-initialize MCP servers to avoid cold start during first call
-    await preinitialize_mcp_servers_async("actions")
+    try:
+        await preinitialize_mcp_servers_async("actions")
+    except MCPInitializationError as exc:
+        logger = logging.getLogger("call.actions")
+        logger.critical("MCP initialization failed during startup: %s", exc)
+        raise
 
     yield
 

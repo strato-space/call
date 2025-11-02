@@ -29,9 +29,9 @@ async def test_mcp_hook_preserves_large_data():
     # Create hook instance with mocked parent
     with patch('call.app.call.MCPServerStdio.__init__', return_value=None):
         hook = MCPServerStdioHook(
-            session=AsyncMock(),
-            read_stream=AsyncMock(),
-            write_stream=AsyncMock()
+            params={"command": "test", "args": []},
+            name="test",
+            client_session_timeout_seconds=120
         )
         hook._mcp_title = "test"
         hook._MCPServerStdioHook__last_tg_text = None
@@ -39,7 +39,7 @@ async def test_mcp_hook_preserves_large_data():
         hook._MCPServerStdioHook__service_message_ids = []
         
         # Mock the parent call_tool to return our large data
-        async def mock_parent_call_tool(tool_name, arguments):
+        async def mock_parent_call_tool(self, tool_name, arguments):
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
@@ -74,9 +74,9 @@ async def test_mcp_hook_display_truncation_doesnt_affect_pipeline():
     
     with patch('call.app.call.MCPServerStdio.__init__', return_value=None):
         hook = MCPServerStdioHook(
-            session=AsyncMock(),
-            read_stream=AsyncMock(),
-            write_stream=AsyncMock()
+            params={"command": "test", "args": []},
+            name="test",
+            client_session_timeout_seconds=120
         )
         hook._mcp_title = "test"
         hook._MCPServerStdioHook__last_tg_text = None
@@ -89,12 +89,12 @@ async def test_mcp_hook_display_truncation_doesnt_affect_pipeline():
             nonlocal display_text_sent
             display_text_sent = text
         
-        async def mock_parent_call_tool(tool_name, arguments):
+        async def mock_parent_call_tool(self, tool_name, arguments):
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
             with patch.object(hook, '_MCPServerStdioHook__edit_message_text', mock_edit_message):
-                with patch.dict('os.environ', {'CALL_DEBUG': '0'}):  # Enable truncation for display
+                with patch.dict('os.environ', {}, clear=True):  # Clear DEBUG_MODE to enable truncation
                     result = await hook.call_tool("test_tool", {})
     
     # Verify display was truncated
@@ -134,16 +134,16 @@ async def test_mcp_hook_json_array_integrity():
     
     with patch('call.app.call.MCPServerStdio.__init__', return_value=None):
         hook = MCPServerStdioHook(
-            session=AsyncMock(),
-            read_stream=AsyncMock(),
-            write_stream=AsyncMock()
+            params={"command": "test", "args": []},
+            name="fs",
+            client_session_timeout_seconds=120
         )
         hook._mcp_title = "fs"
         hook._MCPServerStdioHook__last_tg_text = None
         hook._MCPServerStdioHook__telegram_last_message = None
         hook._MCPServerStdioHook__service_message_ids = []
         
-        async def mock_parent_call_tool(tool_name, arguments):
+        async def mock_parent_call_tool(self, tool_name, arguments):
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):

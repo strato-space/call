@@ -37,11 +37,30 @@ Review the relevant directory documentation before making changes; many subsyste
 ## Coding Principles
 - **Preferred engineering principles**:
   - Favor the KISS approach — prefer straightforward solutions, avoid unnecessary abstractions, and remove dead fallbacks.
-  - Apply SOLID design tenets; compose behavior through Dependency Injection instead of global state so components stay testable.
+  - Apply SOLID design tenets; compose behavior through Dependency Injection instead of global state so components stays testable.
   - Keep helper functions small, cohesive, and readable. Extract utilities rather than allowing sprawling functions to accrete conditional branches.
   - Avoid fallback pathways that obscure control flow. Make failure explicit and surface structured errors instead of silent recovery.
-  - Log every exception and every I/O error, even when execution can continue, so operational issues are always observable.
+  - **Never suppress exceptions silently**: Every `except` block must log the exception before suppressing. Use `logging.debug()`, `logging.warning()`, or `logging.error()` depending on severity. Silent `except: pass` is forbidden.
+  - Log every I/O error, even when execution can continue, so operational issues are always observable.
   - Access dataclass and config attributes directly. Do not use `getattr` for fields like `cfg.id` or `sub_cfg.instructions`; rely on explicit attribute access so static analyzers (and tests) stay accurate.
+
+## MCP Lifecycle: RAII Pattern
+
+### Initialization (Fail-Fast)
+- **ENABLE_MCP=1 mandatory** — Aborts with `MCPInitializationError` if disabled
+- **Config cached once** — `_initialize_mcp_servers_once()` validates & caches YAML. Server instances NOT cached
+- **No fallbacks** — Init failures terminate immediately
+
+### Server Lifecycle (C++ RAII)
+- **Fresh per call** — `_prepare_mcp_servers(astack)` creates new instances each run
+- **Same async context** — `astack.enter_async_context()` ensures `__aenter__/__aexit__` run in same task
+- **Auto cleanup** — `AsyncExitStack` destroys servers when context exits (no subprocess orphans)
+- **Non-singleton** — Servers created/destroyed per call with proper lifecycle
+
+### Development Rules
+- Always pass `AsyncExitStack` to `_prepare_mcp_servers()`
+- Never create servers without cleanup context
+- Let `MCPInitializationError` propagate
 
 ## Contribution Workflow
 

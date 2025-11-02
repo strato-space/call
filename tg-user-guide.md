@@ -36,17 +36,20 @@ Examples:
 - `/prompts_draft --project AgentFab --prompt 3*-*`
 
 ## How messages are parsed
-- __Private DMs__
+- **Private DMs**
   - Plain text (no @) → run as input-only (equivalent to `/call <input>`)
-  - `@Target <input>` → passed to library for resolution (priority: prompt > agent > project)
+  - `@Target <input>` → passed to library for resolution (priority: prompt > agent > project). Target must include the `@` prefix.
   - A single `@ <input>` → input-only (no target)
-  - Leading `@BotName` is allowed and stripped
+  - Leading `@ProjectNameBot` is allowed and stripped; if no explicit `@Target` follows, project bots fall back to the project orchestrator (`project.md`).
+  - `@StratoSpaceAiBot` without a target launches "void" mode (no instructions, just user input). With `@Target`, it can execute any prompt/agent/project in the catalog.
   - Note: Bot layer does NOT pre-validate targets. Resolution delegated to `call_api.call_async()`.
 
-- __Group chats__
-  - Only messages with explicit @-mention are handled
-  - `@Target <input>` → passed to library for resolution
-  - `@BotName Target <input>` behaves the same way
+- **Group chats**
+  - Only messages that mention the bot handle explicitly are handled (either `@ProjectNameBot` or `@StratoSpaceAiBot`)
+  - `@Target <input>` → passed to library for resolution (target must start with `@`)
+  - `@ProjectNameBot <input>` → when no explicit `@Target` follows, project bots invoke their project orchestrator (`project.md`)
+  - `@ProjectNameBot @Target <input>` behaves the same way (bot name stripped, `@Target` delegated)
+  - `@StratoSpaceAiBot ...` → universal bot; falls back to void mode without `@Target`, otherwise executes the referenced card
   - `@ <input>` → input-only
   - Note: Unknown targets will trigger error from library (not silently ignored by bot)
 
