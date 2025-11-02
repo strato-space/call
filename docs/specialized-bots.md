@@ -91,7 +91,7 @@ python -m call.telegram_bot.bot --bot-name YourProjectBot
 The bot will:
 - Extract project name: `YourProjectBot` → `YourProject`
 - Load token from `TELEGRAM_TOKEN.YourProject`
-- Set default target to `YourProject`
+- Set default target name to `YourProject` which invoike `YourProject/project.md` card.
 
 ## Implementation Details
 

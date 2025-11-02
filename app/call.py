@@ -675,10 +675,10 @@ def debug_dump_cfg_preview(cfg) -> None:
     debug_print("[cfg]", "Agent instructions len:", str(len(instr)))
 
 
-async def _validate_and_cache_mcp_config() -> tuple[dict[str, Any], dict | None]:
+async def _validate_and_cache_mcp_config() -> dict | None:
     """Validate MCP configuration and cache it exactly once.
     
-    Returns empty servers dict (servers NOT cached) and config YAML.
+    Returns config YAML dict.
     Server instances are created fresh per call via _prepare_mcp_servers().
     
     Raises MCPInitializationError if validation fails.
@@ -689,7 +689,7 @@ async def _validate_and_cache_mcp_config() -> tuple[dict[str, Any], dict | None]
 
     # Return cached result if already initialized
     if _MCP_INIT_STATE is _MCPInitState.READY:
-        return dict(_MCP_SERVERS_CACHE), _MCP_CONFIG_CACHE
+        return _MCP_CONFIG_CACHE
 
     # Re-raise previous failure
     if _MCP_INIT_STATE is _MCPInitState.FAILED:
@@ -699,7 +699,7 @@ async def _validate_and_cache_mcp_config() -> tuple[dict[str, Any], dict | None]
     if _MCP_INIT_STATE is _MCPInitState.IN_PROGRESS:
         await event.wait()
         if _MCP_INIT_STATE is _MCPInitState.READY:
-            return dict(_MCP_SERVERS_CACHE), _MCP_CONFIG_CACHE
+            return _MCP_CONFIG_CACHE
         raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
 
     # Start initialization
@@ -749,7 +749,7 @@ async def _validate_and_cache_mcp_config() -> tuple[dict[str, Any], dict | None]
         _MCP_CONFIG_CACHE = cfg_yaml
         _MCP_INIT_STATE = _MCPInitState.READY
         event.set()
-        return {}, _MCP_CONFIG_CACHE  # Empty dict for backward compat, config is what matters
+        return _MCP_CONFIG_CACHE
 
     except MCPInitializationError as exc:
         logging.error("[mcp] Init failed: %s", exc)
@@ -798,7 +798,7 @@ async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
     """Async helper to validate MCP config (servers are created fresh per call)."""
     tag = f"[{module_tag}]" if not module_tag.startswith("[") else module_tag
     debug_print(tag, "[STARTUP]", "Validating MCP config...")
-    _, cfg_yaml = await _validate_and_cache_mcp_config()
+    cfg_yaml = await _validate_and_cache_mcp_config()
     enabled_names = [
         name for name, spec in (cfg_yaml or {}).get("mcpServers", {}).items()
         if isinstance(spec, dict) and spec.get("enabled", False)

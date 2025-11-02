@@ -48,7 +48,7 @@ Review the relevant directory documentation before making changes; many subsyste
 
 ### Initialization (Fail-Fast)
 - **ENABLE_MCP=1 mandatory** — Aborts with `MCPInitializationError` if disabled
-- **Config cached once** — `_initialize_mcp_servers_once()` validates & caches YAML. Server instances NOT cached
+- **Config cached once** — `_validate_and_cache_mcp_config()` validates & caches YAML. Server instances NOT cached
 - **No fallbacks** — Init failures terminate immediately
 
 ### Server Lifecycle (C++ RAII)

@@ -94,7 +94,7 @@ async def test_mcp_hook_display_truncation_doesnt_affect_pipeline():
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
             with patch.object(hook, '_MCPServerStdioHook__edit_message_text', mock_edit_message):
-                with patch.dict('os.environ', {}, clear=True):  # Clear DEBUG_MODE to enable truncation
+                with patch.dict('os.environ', {}, clear=True):  # Clear CALL_DEBUG to enable truncation
                     result = await hook.call_tool("test_tool", {})
     
     # Verify display was truncated

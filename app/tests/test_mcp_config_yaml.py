@@ -38,8 +38,8 @@ async def test_preinitialize_mcp_servers_async_validates_config(monkeypatch):
 
     async def fake_initialize_once():
         captured_tag["called"] = captured_tag.get("called", 0) + 1
-        # Return empty servers dict, config with enabled servers
-        return {}, {"mcpServers": {"fs": {"enabled": True}}}
+        # Return config with enabled servers
+        return {"mcpServers": {"fs": {"enabled": True}}}
 
     monkeypatch.setattr(call_module, "_validate_and_cache_mcp_config", fake_initialize_once)
 
@@ -55,7 +55,7 @@ def test_preinitialize_mcp_servers_sync_runs_event_loop(monkeypatch):
 
     async def fake_initialize_once():
         call_count["count"] += 1
-        return {}, {"mcpServers": {"seq": {"enabled": True}}}
+        return {"mcpServers": {"seq": {"enabled": True}}}
 
     monkeypatch.setattr(call_module, "_validate_and_cache_mcp_config", fake_initialize_once)
 
@@ -85,14 +85,12 @@ async def test_initialize_success_and_prepare_reuse(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
     monkeypatch.setenv("ENABLE_MCP", "1")
 
-    servers_first, cfg_first = await _validate_and_cache_mcp_config()
-    # Servers dict is empty - only config is cached
-    assert servers_first == {}
+    cfg_first = await _validate_and_cache_mcp_config()
+    # Only config is cached (servers created fresh per call)
     assert cfg_first["mcpServers"]
     assert "fake" in cfg_first["mcpServers"]
 
-    servers_second, cfg_second = await _validate_and_cache_mcp_config()
-    assert servers_second == servers_first
+    cfg_second = await _validate_and_cache_mcp_config()
     assert cfg_second == cfg_first
 
     # _prepare_mcp_servers requires AsyncExitStack - test in integration tests
