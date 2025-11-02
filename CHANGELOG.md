@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 
+## 2025-11-02
+
+- **MCP RAII Lifecycle:** Implemented C++-style RAII pattern for MCP server lifecycle management. Server instances are now created fresh per call with `AsyncExitStack` cleanup, ensuring constructor/destructor run in same async context. Eliminates "cancel scope in different task" errors and prevents subprocess orphans. (`app/call.py`, `AGENTS.md`)
+- **MCP Config:** Renamed `_initialize_mcp_servers_once()` → `_validate_and_cache_mcp_config()` to accurately reflect functionality. Function now returns only config dict (not tuple), servers are NOT cached. Updated all callers and tests. (`app/call.py`, `app/tests/test_mcp_config_yaml.py`)
+- **Exception Handling:** Removed all silent exception suppression (`except: pass`). Every exception handler now logs via `logging.debug()`, `logging.warning()`, or `logging.exception()`. Updated `lib/api.py`, `telegram_bot/bot.py`, and `app/call.py`. (`AGENTS.md`)
+- **Telegram Bot:** Fixed `_normalize_token()` to strip leading `@` prefix from agent/prompt names, matching test expectations. (`telegram_bot/bot.py`)
+- **Telegram Bot:** Updated `_log_update()` to log exceptions instead of silent suppression. (`telegram_bot/bot.py`)
+- **Tests:** Fixed 12 failing tests - updated MCP hook mocks for RAII pattern, fixed @ prefix normalization tests, updated CLI project resolution test, added group chat type attribute. All 12 tests now passing. (`app/tests/test_mcp_hook_integrity.py`, `app/tests/test_telegram_bot_handlers.py`, `app/tests/test_cli_prompts_and_exec.py`, `app/tests/test_telegram_bot_logging.py`)
+- **Documentation:** Updated `AGENTS.md` with MCP Lifecycle RAII Pattern section detailing initialization, server lifecycle, and development rules. Function names updated throughout docs.
+
 ## 2025-10-24
 
 - **MCP Hook:** Restored full MCP tool payloads by separating display formatting from the agent pipeline. See [2025-10-24-bugfix-mcp-hook-integrity](docs/changelog/2025-10-24-bugfix-mcp-hook-integrity.md).
