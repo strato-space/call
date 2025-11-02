@@ -1096,6 +1096,13 @@ async def call_async(
       3) project name
       The first match sets the corresponding field if it wasn't already set explicitly.
     """
+    # Wait for MCP servers to be ready (lazy init on first call)
+    try:
+        await app_call.wait_for_mcp_init(timeout=120.0)
+    except Exception as e:
+        logging.debug("[api] MCP init wait: %s", e)
+        # Continue even if MCP init fails - not all calls require MCP
+    
     # Event short-circuit: when event is supplied, acknowledge without invoking the pipeline
     if event is not None:
         event_str = str(event)
