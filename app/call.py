@@ -676,10 +676,10 @@ def debug_dump_cfg_preview(cfg) -> None:
 
 
 async def _validate_and_cache_mcp_config() -> dict | None:
-    """Validate MCP configuration and cache it exactly once.
+    """Validate MCP config, create servers once, cache both.
     
     Returns config YAML dict.
-    Server instances are created fresh per call via _prepare_mcp_servers().
+    Server instances created once and cached for reuse.
     
     Raises MCPInitializationError if validation fails.
     """
@@ -745,8 +745,14 @@ async def _validate_and_cache_mcp_config() -> dict | None:
         logging.info("[mcp] Config validated - %d enabled servers: %s", enabled_count, enabled_names)
         debug_print("[mcp]", f"✅ Config valid - {enabled_count} enabled servers: {enabled_names}")
 
-        # Cache only config, NOT server instances (they're created fresh per call for proper RAII)
+        # Create servers once and cache them (singleton pattern)
+        debug_print("[mcp]", "Creating MCP server instances (singleton - will be reused)...")
+        servers = await _build_mcp_servers_from_yaml(cfg_yaml, None)
+        _MCP_SERVERS_CACHE = {srv.name: srv for srv in servers} if servers else {}
         _MCP_CONFIG_CACHE = cfg_yaml
+        logging.info("[mcp] Created %d MCP server instances (cached for reuse)", len(_MCP_SERVERS_CACHE))
+        debug_print("[mcp]", f"✅ {len(_MCP_SERVERS_CACHE)} servers created and cached: {list(_MCP_SERVERS_CACHE.keys())}")
+        
         _MCP_INIT_STATE = _MCPInitState.READY
         event.set()
         return _MCP_CONFIG_CACHE
@@ -767,45 +773,44 @@ async def _validate_and_cache_mcp_config() -> dict | None:
 
 
 async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[list[Any], dict | None]:
-    """Return MCP servers list, blocking until initialization completes.
-    
-    Creates fresh server instances registered with astack for proper cleanup.
-    Config is cached, but server instances are NOT - they're created/destroyed per call.
-    """
-    # Validate config is ready (but don't use cached server instances)
+    """Return cached singleton MCP servers, reused across calls."""
     if _MCP_INIT_STATE is _MCPInitState.NOT_STARTED or _MCP_INIT_STATE is _MCPInitState.IN_PROGRESS:
-        # Initialize config once (validates ENABLE_MCP, loads yaml, etc)
         await _validate_and_cache_mcp_config()
     
     if _MCP_INIT_STATE is _MCPInitState.FAILED:
         raise _MCP_INIT_ERROR or MCPInitializationError("MCP init failed")
     
-    # Config is ready - now create FRESH server instances with proper lifecycle
-    if astack is None:
-        raise MCPInitializationError(
-            "AsyncExitStack required for MCP server lifecycle management. "
-            "Cannot create MCP servers without proper cleanup context."
-        )
+    # Return cached singleton servers
+    return list(_MCP_SERVERS_CACHE.values()), _MCP_CONFIG_CACHE
+
+
+async def cleanup_mcp_servers() -> None:
+    """Cleanup MCP servers at shutdown."""
+    global _MCP_SERVERS_CACHE
+    if not _MCP_SERVERS_CACHE:
+        return
     
-    # RAII: Create fresh servers and register with exit stack for destruction in same async context
-    logging.debug("[mcp] Creating fresh MCP server instances with AsyncExitStack cleanup")
-    servers = await _build_mcp_servers_from_yaml(_MCP_CONFIG_CACHE, astack)
-    logging.info("[mcp] Created %d MCP server instances (will auto-cleanup on context exit)", len(servers))
-    return servers, _MCP_CONFIG_CACHE
+    debug_print("[mcp]", f"Cleaning up {len(_MCP_SERVERS_CACHE)} MCP servers...")
+    for name, server in _MCP_SERVERS_CACHE.items():
+        try:
+            if hasattr(server, '__aexit__'):
+                await server.__aexit__(None, None, None)
+                debug_print("[mcp]", f"✅ Closed server: {name}")
+        except Exception as e:
+            logging.warning("[mcp] Failed to close server %s: %s", name, e)
+    
+    _MCP_SERVERS_CACHE = {}
+    logging.info("[mcp] All MCP servers cleaned up")
 
 
 async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
-    """Async helper to validate MCP config (servers are created fresh per call)."""
+    """Async helper to initialize MCP servers (singleton, reused)."""
     tag = f"[{module_tag}]" if not module_tag.startswith("[") else module_tag
-    debug_print(tag, "[STARTUP]", "Validating MCP config...")
+    debug_print(tag, "[STARTUP]", "Initializing MCP servers...")
     cfg_yaml = await _validate_and_cache_mcp_config()
-    enabled_names = [
-        name for name, spec in (cfg_yaml or {}).get("mcpServers", {}).items()
-        if isinstance(spec, dict) and spec.get("enabled", False)
-    ]
-    debug_print(tag, "[STARTUP]", f"✅ Config valid - {len(enabled_names)} enabled servers: {enabled_names}")
-    logging.getLogger("call.mcp").info("%s MCP config validated - %d enabled servers", tag, len(enabled_names))
-    return {}  # No server instances cached - they're created fresh per call
+    debug_print(tag, "[STARTUP]", f"✅ {len(_MCP_SERVERS_CACHE)} servers initialized and cached")
+    logging.getLogger("call.mcp").info("%s MCP servers initialized - %d cached", tag, len(_MCP_SERVERS_CACHE))
+    return {}  # Server instances cached in _MCP_SERVERS_CACHE
 
 
 def preinitialize_mcp_servers_sync(module_tag: str) -> dict[str, Any]:
