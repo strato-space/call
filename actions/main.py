@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time, uuid
 from typing import Any, Optional, Literal
@@ -21,8 +20,8 @@ from call.lib.api import write as api_write
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
 from call.lib import repo_db as repo_db_module
-from contextlib import asynccontextmanager, AsyncExitStack
-from call.app.call import preinitialize_mcp_servers_async, cleanup_mcp_servers, MCPInitializationError, _set_mcp_exit_stack
+from contextlib import asynccontextmanager
+from call.app.call import start_mcp_owner_task, stop_mcp_owner_task
 
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
@@ -47,47 +46,14 @@ async def lifespan(app: FastAPI):
     """Initialize MCP servers at startup to avoid cold start during first requests."""
     logger = logging.getLogger("call.actions")
     
-    # Create AsyncExitStack in main lifespan context
-    exit_stack = AsyncExitStack()
-    await exit_stack.__aenter__()
-    _set_mcp_exit_stack(exit_stack)
-    logger.info("MCP exit stack created in main context")
-    
-    # Start MCP initialization in background - don't block startup
-    async def _init_background():
-        try:
-            await preinitialize_mcp_servers_async("actions")
-            logger.info("MCP servers initialized successfully (background)")
-        except MCPInitializationError as exc:
-            logger.error("MCP initialization failed (background): %s", exc, exc_info=True)
-    
-    init_task = asyncio.create_task(_init_background())
-    logger.info("MCP initialization started in background")
+    # Start MCP owner task - initialization proceeds in background
+    await start_mcp_owner_task("actions")
+    logger.info("MCP owner task started for Actions lifespan")
 
     yield
-    
-    # Shutdown: wait for init if still running
-    if not init_task.done():
-        logger.info("Waiting for background init to complete before shutdown...")
-        try:
-            await asyncio.wait_for(init_task, timeout=30.0)
-        except asyncio.TimeoutError:
-            logger.warning("Init task timeout during shutdown")
-            init_task.cancel()
-        except Exception as e:
-            logger.warning("Init task error during shutdown: %s", e)
-    
-    # Shutdown: cleanup cache and exit stack
-    try:
-        await cleanup_mcp_servers()
-    except Exception as e:
-        logger.warning("MCP cache cleanup error: %s", e)
-    
-    try:
-        await exit_stack.__aexit__(None, None, None)
-        logger.info("MCP exit stack closed in main context")
-    except Exception as e:
-        logger.error("Exit stack cleanup error: %s", e)
+
+    await stop_mcp_owner_task()
+    logger.info("MCP owner task stopped for Actions lifespan")
 
 app = FastAPI(title="Call Actions API", version="2.0.2", lifespan=lifespan)
 

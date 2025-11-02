@@ -1096,6 +1096,9 @@ async def call_async(
       3) project name
       The first match sets the corresponding field if it wasn't already set explicitly.
     """
+    # Lazily import app-layer functions to avoid hard import at module load time
+    from call.app import call as app_call
+
     # Wait for MCP servers to be ready (lazy init on first call)
     try:
         await app_call.wait_for_mcp_init(timeout=120.0)
@@ -1137,9 +1140,6 @@ async def call_async(
             except Exception:
                 pass
             token_override = None
-
-    # Lazily import app-layer functions to avoid hard import at module load time
-    from call.app import call as app_call
 
     # Project-only guard: ensure selection errors bubble up before building cfg
     auto_selected_agent = False
