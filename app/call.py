@@ -335,6 +335,75 @@ def _set_mcp_exit_stack(astack: AsyncExitStack) -> None:
     _MCP_EXIT_STACK = astack
 
 
+def create_mcp_lifespan_callbacks() -> tuple[callable, callable]:
+    """Create post_init and post_shutdown callbacks for PTB-style applications.
+    
+    Returns:
+        (post_init, post_shutdown): Callback functions for ApplicationBuilder
+        
+    Usage:
+        post_init, post_shutdown = create_mcp_lifespan_callbacks()
+        app = ApplicationBuilder().post_init(post_init).post_shutdown(post_shutdown).build()
+    """
+    _mcp_init_task = None
+    _mcp_exit_stack = None
+    
+    async def _post_init(application):
+        """Initialize MCP servers in background after application starts."""
+        nonlocal _mcp_init_task, _mcp_exit_stack
+        
+        log = logging.getLogger("call.mcp.lifespan")
+        
+        # Create AsyncExitStack in application's event loop
+        _mcp_exit_stack = AsyncExitStack()
+        await _mcp_exit_stack.__aenter__()
+        _set_mcp_exit_stack(_mcp_exit_stack)
+        log.info("MCP exit stack created in event loop")
+        
+        # Start MCP initialization in background
+        async def _init_background():
+            try:
+                await preinitialize_mcp_servers_async("app")
+                log.info("MCP servers initialized successfully (background)")
+            except MCPInitializationError as exc:
+                log.error("MCP initialization failed (background): %s", exc, exc_info=True)
+        
+        _mcp_init_task = asyncio.create_task(_init_background())
+        log.info("MCP initialization started in background")
+    
+    async def _post_shutdown(application):
+        """Cleanup MCP servers on application shutdown."""
+        nonlocal _mcp_init_task, _mcp_exit_stack
+        
+        log = logging.getLogger("call.mcp.lifespan")
+        
+        # Wait for init if still running
+        if _mcp_init_task and not _mcp_init_task.done():
+            log.info("Waiting for background init to complete before shutdown...")
+            try:
+                await asyncio.wait_for(_mcp_init_task, timeout=30.0)
+            except asyncio.TimeoutError:
+                log.warning("Init task timeout during shutdown")
+                _mcp_init_task.cancel()
+            except Exception as e:
+                log.warning("Init task error during shutdown: %s", e)
+        
+        # Cleanup
+        try:
+            await cleanup_mcp_servers()
+        except Exception as e:
+            log.warning("MCP cache cleanup error: %s", e)
+        
+        if _mcp_exit_stack:
+            try:
+                await _mcp_exit_stack.__aexit__(None, None, None)
+                log.info("MCP exit stack closed in event loop")
+            except Exception as e:
+                log.error("Exit stack cleanup error: %s", e)
+    
+    return _post_init, _post_shutdown
+
+
 async def wait_for_mcp_init(timeout: float = 120.0) -> None:
     """Wait for MCP servers to finish initializing. Safe to call multiple times.
     
@@ -1797,15 +1866,18 @@ async def _notify_digest_if_applicable(
             message_thread_id=use_thread_id,
             image_path=None,
         )
-    except Exception:
-        pass
+        logging.debug("[call] send_digest_notification completed")
+    except Exception as e:
+        logging.warning("[call] send_digest_notification error: %s", e)
 
     try:
+        logging.debug("[call] Starting post_run_git_push...")
         await post_run_git_push(
             agent_name=(getattr(cfg, "id", "") or ""), user_input=user_input
         )
-    except Exception:
-        pass
+        logging.debug("[call] post_run_git_push completed")
+    except Exception as e:
+        logging.warning("[call] post_run_git_push error: %s", e)
 
 
 async def _send_error_notification(
@@ -4506,6 +4578,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         selected_chat_id=selected_chat_id,
         selected_thread_id=selected_thread_id,
     )
+    logging.debug("[call] Digest notification completed")
 
     # Expose final_output to callers via cfg
     try:
