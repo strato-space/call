@@ -2088,6 +2088,28 @@ async def send_digest_notification(
         f"image_path={image_path}",
     )
 
+    # Auto-format JSON arrays/objects as YAML for readability
+    # Check if text looks like JSON (starts/ends with {}[])
+    try:
+        if text and isinstance(text, str):
+            stripped = text.strip()
+            if stripped and (
+                (stripped[0] == '[' and stripped[-1] == ']') or
+                (stripped[0] == '{' and stripped[-1] == '}')
+            ):
+                try:
+                    # Parse JSON and convert to YAML
+                    parsed = json.loads(stripped)
+                    yaml_text = _dump_yaml_literal(parsed)
+                    if yaml_text:
+                        text = f"<pre><code class=\"language-yaml\">{yaml_text}</code></pre>"
+                        debug_print("[format]", "Converted JSON array/object to YAML format")
+                except (json.JSONDecodeError, Exception) as e:
+                    logging.debug("[format] Failed to parse/convert JSON to YAML: %s", e)
+                    # Keep original text if JSON parsing fails
+    except Exception as e:
+        logging.debug("[format] Failed to check/format JSON: %s", e)
+
     # If content is too long for Telegram, publish and use resulting URL
     local_url: str | None = None
     try:

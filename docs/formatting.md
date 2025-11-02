@@ -447,6 +447,77 @@ The YAML formatting system in Call ensures:
 
 This approach balances human readability with machine parseability and makes debug logs easy to understand and copy-paste. The consistent use of YAML across all debug output (MCP tools and agents-as-tools) provides a unified debugging experience.
 
+## Automatic JSON-to-YAML Conversion for Agent Output
+
+### Auto-Format Overview
+
+When an agent returns JSON arrays or objects as the final output (identified by first and last characters being `[]` or `{}`), the system automatically converts them to YAML format for improved readability in Telegram messages.
+
+### Detection Logic
+
+**Trigger conditions:**
+1. Output text is non-empty string
+2. After stripping whitespace, first character is `[` or `{`
+3. After stripping whitespace, last character is `]` or `}`
+
+**Example inputs that trigger conversion:**
+```json
+[{"id": 1, "name": "Item"}]
+{"status": "ok", "data": [...]}
+  [1, 2, 3]  
+```
+
+### Conversion Process
+
+Located in `send_digest_notification()` at `app/call.py`:
+
+```python
+# Auto-format JSON arrays/objects as YAML for readability
+stripped = text.strip()
+if stripped and ((stripped[0] == '[' and stripped[-1] == ']') or 
+                  (stripped[0] == '{' and stripped[-1] == '}')):
+    parsed = json.loads(stripped)
+    yaml_text = _dump_yaml_literal(parsed)
+    text = f"<pre><code class=\"language-yaml\">{yaml_text}</code></pre>"
+```
+
+### Output Format
+
+**Before (raw JSON):**
+```json
+[{"type":"routing-item","topic":"VoiceBot UI","sources":[{"project":{"project_id":"123","name":"CRM Voice"}}]}]
+```
+
+**After (YAML in code block):**
+```yaml
+- type: routing-item
+  topic: VoiceBot UI
+  sources:
+  - project:
+      project_id: '123'
+      name: CRM Voice
+```
+
+### Benefits
+
+1. **Readability**: YAML indentation makes nested structures easier to scan
+2. **Telegram rendering**: Code blocks with `language-yaml` provide syntax highlighting
+3. **Copy-paste friendly**: YAML format is easier to read and edit
+4. **Automatic**: No agent modification needed - works for any JSON output
+
+### Error Handling
+
+If JSON parsing fails, the original text is preserved:
+- Invalid JSON syntax → send as-is
+- Conversion error → log debug message, send original
+- Preserves robustness for edge cases
+
+### Implementation Notes
+
+- Uses existing `_dump_yaml_literal()` function (same as MCP tool formatting)
+- Logged when conversion succeeds: `[format] Converted JSON array/object to YAML format`
+- Errors logged at debug level to avoid noise
+
 ## Agent Input/Output Formatting Rules
 
 ### Agent-as-Tool Invocations
