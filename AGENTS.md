@@ -44,23 +44,25 @@ Review the relevant directory documentation before making changes; many subsyste
   - Log every I/O error, even when execution can continue, so operational issues are always observable.
   - Access dataclass and config attributes directly. Do not use `getattr` for fields like `cfg.id` or `sub_cfg.instructions`; rely on explicit attribute access so static analyzers (and tests) stay accurate.
 
-## MCP Lifecycle: RAII Pattern
+## MCP Lifecycle: Singleton Pattern
 
 ### Initialization (Fail-Fast)
 - **ENABLE_MCP=1 mandatory** — Aborts with `MCPInitializationError` if disabled
-- **Config cached once** — `_validate_and_cache_mcp_config()` validates & caches YAML. Server instances NOT cached
+- **Servers created once** — `_validate_and_cache_mcp_config()` validates YAML and creates all MCP servers
+- **Cached for reuse** — Server instances stored in `_MCP_SERVERS_CACHE` and reused across all calls
 - **No fallbacks** — Init failures terminate immediately
 
-### Server Lifecycle (C++ RAII)
-- **Fresh per call** — `_prepare_mcp_servers(astack)` creates new instances each run
-- **Same async context** — `astack.enter_async_context()` ensures `__aenter__/__aexit__` run in same task
-- **Auto cleanup** — `AsyncExitStack` destroys servers when context exits (no subprocess orphans)
-- **Non-singleton** — Servers created/destroyed per call with proper lifecycle
+### Server Lifecycle (Singleton)
+- **Created at init** — All servers created during `_validate_and_cache_mcp_config()` call
+- **Reused per call** — `_prepare_mcp_servers()` returns cached singleton instances
+- **Cleanup at shutdown** — `cleanup_mcp_servers()` properly closes all servers and clears cache
+- **Performance** — Avoids repeated server creation/destruction overhead
 
 ### Development Rules
-- Always pass `AsyncExitStack` to `_prepare_mcp_servers()`
-- Never create servers without cleanup context
+- Servers initialized once, reused many times
+- Call `cleanup_mcp_servers()` at application shutdown
 - Let `MCPInitializationError` propagate
+- Do not manually create/destroy server instances
 
 ## Contribution Workflow
 
