@@ -4163,6 +4163,15 @@ async def _build_mcp_servers_from_yaml(
             if not cmd:
                 return None
             
+            # Log BEFORE starting server creation
+            try:
+                parts = [str(cmd)] + [str(a) for a in (args or [])]
+                pretty_cmd = shlex.join(parts)
+                debug_print("[mcp]", f"⏳ Starting server '{name}'...")
+                logging.info("[mcp] Starting server '%s': %s", name, pretty_cmd)
+            except Exception as e:
+                logging.debug("[mcp] Failed to log server start for '%s': %s", name, e)
+            
             # Create server hook and register with exit stack
             server = await astack.enter_async_context(
                 MCPServerStdioHook(
@@ -4172,16 +4181,9 @@ async def _build_mcp_servers_from_yaml(
                 )
             )
             
-            try:
-                parts = [str(cmd)] + [str(a) for a in (args or [])]
-                pretty_cmd = shlex.join(parts)
-                debug_print(
-                    "[mcp]",
-                    f"Started MCP stdio server '{name}' with command: {pretty_cmd}",
-                )
-                logging.info("[mcp] Started server '%s': %s", name, pretty_cmd)
-            except Exception as e:
-                logging.debug("[mcp] Failed to log server start for '%s': %s", name, e)
+            # Log AFTER server is ready
+            debug_print("[mcp]", f"✅ Server '{name}' ready")
+            logging.info("[mcp] Server '%s' ready", name)
             return server
 
         disabled_names: list[str] = []
