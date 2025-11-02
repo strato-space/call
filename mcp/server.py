@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from pathlib import Path
 from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
-from call.app.call import preinitialize_mcp_servers_async, cleanup_mcp_servers, MCPInitializationError, _set_mcp_exit_stack, wait_for_mcp_init
+from call.app.call import MCPInitializationError, wait_for_mcp_init, start_mcp_owner_task, stop_mcp_owner_task
 
 try:
     # FastMCP SDK
@@ -47,54 +47,17 @@ async def lifespan(app: FastMCP):
     )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     
-    # Create AsyncExitStack in main lifespan context
-    exit_stack = AsyncExitStack()
-    await exit_stack.__aenter__()
-    _set_mcp_exit_stack(exit_stack)
-    log.info("MCP exit stack created in main context")
-    
-    # Start MCP initialization in background - DON'T BLOCK initialize response
-    # Claude Desktop has 60s timeout, our init takes 81s
-    # This ensures cancel scopes are created in same task that will close them
-    async def _init_background():
-        try:
-            await preinitialize_mcp_servers_async("mcp")
-            log.info("MCP servers initialized successfully (background)")
-        except Exception as e:
-            log.error("MCP initialization failed (background): %s", e, exc_info=True)
-    
-    init_task = asyncio.create_task(_init_background())
-    log.info("MCP initialization started in background")
-    debug_print("[mcp]", "[START]", "MCP server ready (init in progress)")
+    # Start MCP owner task - initialization happens in the background task
+    await start_mcp_owner_task("mcp")
+    log.info("MCP owner task started for server lifespan")
+    debug_print("[mcp]", "[START]", "MCP server ready (owner running)")
 
     yield {}
-    
-    # Shutdown: wait for init if still running
-    if not init_task.done():
-        log.info("Waiting for background init to complete before shutdown...")
-        try:
-            await asyncio.wait_for(init_task, timeout=30.0)
-        except asyncio.TimeoutError:
-            log.warning("Init task timeout during shutdown")
-            init_task.cancel()
-        except Exception as e:
-            log.warning("Init task error during shutdown: %s", e)
-    
-    # Shutdown: cleanup cache, then exit stack
-    # Clear server cache
-    try:
-        await cleanup_mcp_servers()
-    except Exception as e:
-        log.warning("MCP cache cleanup error: %s", e)
-    
-    # Exit the stack in same context it was entered - this closes all MCP servers
-    try:
-        debug_print("[mcp]", "Exiting AsyncExitStack (closing all MCP servers)...")
-        await exit_stack.__aexit__(None, None, None)
-        debug_print("[mcp]", "✅ All MCP servers closed via AsyncExitStack")
-        log.info("MCP exit stack closed in main context")
-    except Exception as e:
-        log.error("Exit stack cleanup error: %s", e)
+
+    # Shutdown: signal the owner task to clean up
+    await stop_mcp_owner_task()
+    log.info("MCP owner task stopped for server lifespan")
+    debug_print("[mcp]", "[STOP]", "MCP server shutdown complete")
 
 
 mcp = FastMCP("mcp-call", lifespan=lifespan)
