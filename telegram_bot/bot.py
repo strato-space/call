@@ -1488,7 +1488,7 @@ def main() -> None:
         pass
     
     # MCP initialization - use shared helper from call.py
-    post_init, post_shutdown = create_mcp_lifespan_callbacks()
+    post_init, post_shutdown = create_mcp_lifespan_callbacks("bot")
     
     app = (
         ApplicationBuilder()

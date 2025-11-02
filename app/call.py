@@ -48,7 +48,7 @@ import base64
 import re
 import shlex
 import time
-from contextlib import asynccontextmanager, ExitStack, AsyncExitStack
+from contextlib import asynccontextmanager, ExitStack, AsyncExitStack, suppress
 import urllib.parse
 from pathlib import Path
 
@@ -301,7 +301,7 @@ AGENT_CACHE: dict[str, Agent] = {}
 
 # MCP servers singleton cache: (name → server instance)
 # Lazy-loaded on first use, shared across all agent runs
-# Removed: _MCP_SERVERS_CACHE - servers are now created fresh per call with proper RAII cleanup
+_MCP_SERVERS_CACHE: dict[str, Any] = {}
 _MCP_SERVERS_LOCK = asyncio.Lock()
 
 
@@ -317,130 +317,215 @@ _MCP_INIT_ERROR: MCPInitializationError | None = None
 _MCP_INIT_EVENT: asyncio.Event | None = None
 _MCP_CONFIG_CACHE: dict | None = None
 _MCP_EXIT_STACK: AsyncExitStack | None = None  # Global exit stack for singleton MCP servers
+_MCP_OWNER_TASK: asyncio.Task | None = None
+_MCP_OWNER_TAG: str | None = None
+_MCP_OWNER_SHUTDOWN_EVENT: asyncio.Event | None = None
+_MCP_OWNER_LOCK = asyncio.Lock()
 
 
 def _reset_mcp_state() -> None:
-    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_CONFIG_CACHE, _MCP_SERVERS_CACHE, _MCP_EXIT_STACK
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_CONFIG_CACHE
+    global _MCP_SERVERS_CACHE, _MCP_EXIT_STACK, _MCP_OWNER_TASK, _MCP_OWNER_TAG, _MCP_OWNER_SHUTDOWN_EVENT
     _MCP_INIT_STATE = _MCPInitState.NOT_STARTED
     _MCP_INIT_ERROR = None
     _MCP_INIT_EVENT = None
     _MCP_CONFIG_CACHE = None
     _MCP_SERVERS_CACHE = {}
     _MCP_EXIT_STACK = None
+    _MCP_OWNER_TASK = None
+    _MCP_OWNER_TAG = None
+    _MCP_OWNER_SHUTDOWN_EVENT = None
 
 
-def _set_mcp_exit_stack(astack: AsyncExitStack) -> None:
-    """Set the global MCP exit stack. Must be called from main lifespan context."""
+def _set_mcp_exit_stack(astack: AsyncExitStack | None) -> None:
+    """Set or clear the global MCP exit stack from the owner task."""
     global _MCP_EXIT_STACK
     _MCP_EXIT_STACK = astack
 
 
-def create_mcp_lifespan_callbacks() -> tuple[callable, callable]:
+def _on_mcp_owner_done(task: asyncio.Task) -> None:
+    """Callback to reset global state when the owner task finishes."""
+    global _MCP_OWNER_TASK, _MCP_OWNER_TAG, _MCP_OWNER_SHUTDOWN_EVENT
+    log = logging.getLogger("call.mcp.owner")
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        log.info("MCP owner task cancelled")
+    except Exception:
+        log.exception("MCP owner task failed")
+    _MCP_OWNER_TASK = None
+    _MCP_OWNER_TAG = None
+    _MCP_OWNER_SHUTDOWN_EVENT = None
+
+
+async def _mcp_owner_main(tag: str) -> None:
+    """Owner task that manages MCP initialization and cleanup."""
+    global _MCP_OWNER_SHUTDOWN_EVENT
+
+    log = logging.getLogger("call.mcp.owner")
+    shutdown_event = asyncio.Event()
+    _MCP_OWNER_SHUTDOWN_EVENT = shutdown_event
+
+    debug_tag = f"[mcp-owner:{tag}]"
+    log.info("MCP owner task starting (tag=%s)", tag)
+    debug_print(debug_tag, "starting owner task")
+
+    try:
+        async with AsyncExitStack() as exit_stack:
+            _set_mcp_exit_stack(exit_stack)
+            log.info("MCP owner exit stack entered")
+            debug_print(debug_tag, "exit stack entered")
+
+            try:
+                await preinitialize_mcp_servers_async(tag)
+                log.info("MCP owner initialization complete")
+                debug_print(debug_tag, "init complete")
+            except Exception:
+                log.exception("MCP owner initialization failed")
+                raise
+
+            log.info("MCP owner waiting for shutdown signal")
+            debug_print(debug_tag, "awaiting shutdown signal")
+
+            try:
+                await asyncio.shield(shutdown_event.wait())
+            except asyncio.CancelledError:
+                log.info("MCP owner task cancelled while waiting for shutdown; forcing cleanup")
+                shutdown_event.set()
+
+            log.info("MCP owner shutdown signaled")
+            debug_print(debug_tag, "shutdown signaled")
+
+            try:
+                await cleanup_mcp_servers()
+            except Exception:
+                log.exception("MCP owner cleanup failed")
+            else:
+                log.info("MCP owner cleanup complete")
+                debug_print(debug_tag, "cleanup complete")
+    finally:
+        _set_mcp_exit_stack(None)
+        log.info("MCP owner exit stack closed")
+        debug_print(debug_tag, "exit stack cleared")
+
+
+async def start_mcp_owner_task(tag: str) -> asyncio.Task:
+    """Ensure the MCP owner task is running and return it."""
+    global _MCP_OWNER_TASK, _MCP_OWNER_TAG
+
+    async with _MCP_OWNER_LOCK:
+        if _MCP_OWNER_TASK and not _MCP_OWNER_TASK.done():
+            if _MCP_OWNER_TAG != tag:
+                logging.getLogger("call.mcp.owner").info(
+                    "Reusing existing MCP owner task (current tag=%s, requested=%s)",
+                    _MCP_OWNER_TAG,
+                    tag,
+                )
+                debug_print(
+                    f"[mcp-owner:{_MCP_OWNER_TAG}]",
+                    f"reuse requested by tag={tag}",
+                )
+            return _MCP_OWNER_TASK
+
+        loop = asyncio.get_running_loop()
+        _MCP_OWNER_TAG = tag
+        task = loop.create_task(_mcp_owner_main(tag), name=f"mcp-owner:{tag}")
+        task.add_done_callback(_on_mcp_owner_done)
+        _MCP_OWNER_TASK = task
+        logging.getLogger("call.mcp.owner").info("MCP owner task created (tag=%s)", tag)
+        debug_print(f"[mcp-owner:{tag}]", "owner task created")
+        return task
+
+
+async def stop_mcp_owner_task(timeout: float = 30.0) -> None:
+    """Signal the MCP owner task to shut down and wait for completion."""
+    async with _MCP_OWNER_LOCK:
+        task = _MCP_OWNER_TASK
+        shutdown_event = _MCP_OWNER_SHUTDOWN_EVENT
+
+    if not task or task.done():
+        return
+
+    log = logging.getLogger("call.mcp.owner")
+
+    if shutdown_event and not shutdown_event.is_set():
+        shutdown_event.set()
+        log.info("Signaled MCP owner shutdown")
+        debug_print(f"[mcp-owner:{_MCP_OWNER_TAG}]", "shutdown signaled")
+
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.TimeoutError:
+        log.warning("Timed out waiting for MCP owner task to finish")
+        task.cancel()
+    except Exception:
+        log.exception("Error while awaiting MCP owner task completion")
+
+def create_mcp_lifespan_callbacks(tag: str = "app") -> tuple[callable, callable]:
     """Create post_init and post_shutdown callbacks for PTB-style applications.
-    
-    Returns:
-        (post_init, post_shutdown): Callback functions for ApplicationBuilder
-        
-    Usage:
-        post_init, post_shutdown = create_mcp_lifespan_callbacks()
-        app = ApplicationBuilder().post_init(post_init).post_shutdown(post_shutdown).build()
+
+    Args:
+        tag: Human-readable identifier for logging (e.g. "actions", "bot").
     """
-    _mcp_init_task = None
-    _mcp_exit_stack = None
-    
+
     async def _post_init(application):
-        """Initialize MCP servers in background after application starts."""
-        nonlocal _mcp_init_task, _mcp_exit_stack
-        
         log = logging.getLogger("call.mcp.lifespan")
-        
-        # Create AsyncExitStack in application's event loop
-        _mcp_exit_stack = AsyncExitStack()
-        await _mcp_exit_stack.__aenter__()
-        _set_mcp_exit_stack(_mcp_exit_stack)
-        log.info("MCP exit stack created in event loop")
-        
-        # Start MCP initialization in background
-        async def _init_background():
-            try:
-                await preinitialize_mcp_servers_async("app")
-                log.info("MCP servers initialized successfully (background)")
-            except MCPInitializationError as exc:
-                log.error("MCP initialization failed (background): %s", exc, exc_info=True)
-        
-        _mcp_init_task = asyncio.create_task(_init_background())
-        log.info("MCP initialization started in background")
-    
+        log.info("Starting MCP owner for %s", tag)
+        debug_print(f"[mcp-lifespan:{tag}]", "post_init -> start owner")
+        await start_mcp_owner_task(tag)
+
     async def _post_shutdown(application):
-        """Cleanup MCP servers on application shutdown."""
-        nonlocal _mcp_init_task, _mcp_exit_stack
-        
         log = logging.getLogger("call.mcp.lifespan")
-        
-        # Wait for init if still running
-        if _mcp_init_task and not _mcp_init_task.done():
-            log.info("Waiting for background init to complete before shutdown...")
-            try:
-                await asyncio.wait_for(_mcp_init_task, timeout=30.0)
-            except asyncio.TimeoutError:
-                log.warning("Init task timeout during shutdown")
-                _mcp_init_task.cancel()
-            except Exception as e:
-                log.warning("Init task error during shutdown: %s", e)
-        
-        # Cleanup
-        try:
-            await cleanup_mcp_servers()
-        except Exception as e:
-            log.warning("MCP cache cleanup error: %s", e)
-        
-        if _mcp_exit_stack:
-            try:
-                await _mcp_exit_stack.__aexit__(None, None, None)
-                log.info("MCP exit stack closed in event loop")
-            except Exception as e:
-                log.error("Exit stack cleanup error: %s", e)
-    
+        log.info("Stopping MCP owner for %s", tag)
+        debug_print(f"[mcp-lifespan:{tag}]", "post_shutdown -> stop owner")
+        await stop_mcp_owner_task()
+
     return _post_init, _post_shutdown
 
 
 async def wait_for_mcp_init(timeout: float = 120.0) -> None:
     """Wait for MCP servers to finish initializing. Safe to call multiple times.
-    
+
     Args:
         timeout: Maximum seconds to wait for initialization (default 120s)
-        
+
     Raises:
         MCPInitializationError: If initialization failed or timeout
     """
-    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT
-    
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_OWNER_TASK
+
     # Already initialized successfully
     if _MCP_INIT_STATE == _MCPInitState.READY:
         return
-    
+
     # Initialization failed previously
     if _MCP_INIT_STATE == _MCPInitState.FAILED:
         raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
-    
-    # Wait for initialization to complete
-    if _MCP_INIT_STATE == _MCPInitState.IN_PROGRESS:
-        if _MCP_INIT_EVENT is None:
-            _MCP_INIT_EVENT = asyncio.Event()
-        
-        try:
-            await asyncio.wait_for(_MCP_INIT_EVENT.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            raise MCPInitializationError(f"MCP initialization timeout after {timeout}s")
-        
-        # Check final state after wait
-        if _MCP_INIT_STATE == _MCPInitState.FAILED:
-            raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
-        
+
+    # Auto-start the owner task if nothing has kicked it off yet
+    if _MCP_OWNER_TASK is None or _MCP_OWNER_TASK.done():
+        await start_mcp_owner_task("waiter")
+
+    # Ensure we have an event to wait on
+    event = _ensure_mcp_event()
+
+    # Re-check in case initialization completed while starting the owner
+    if _MCP_INIT_STATE == _MCPInitState.READY:
         return
-    
-    # Not started yet - this shouldn't happen in normal flow
-    raise MCPInitializationError("MCP initialization not started")
+
+    if _MCP_INIT_STATE == _MCPInitState.FAILED:
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise MCPInitializationError(f"MCP initialization timeout after {timeout}s") from exc
+
+    if _MCP_INIT_STATE == _MCPInitState.FAILED:
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+
+    if _MCP_INIT_STATE != _MCPInitState.READY:
+        raise MCPInitializationError("MCP initialization did not reach ready state")
 
 
 class MCPInitializationError(RuntimeError):
@@ -1852,7 +1937,13 @@ async def _notify_digest_if_applicable(
     use_chat_id = selected_chat_id
     use_thread_id = selected_thread_id
     try:
-        await send_digest_notification(
+        logging.info(
+            "[digest] Sending digest notification chat=%s thread=%s agent=%s",
+            use_chat_id,
+            use_thread_id,
+            getattr(cfg, "id", ""),
+        )
+        result = await send_digest_notification(
             agent_name=(cfg.id or ""),
             agent_path=(cfg.path or None),
             buttons=(
@@ -1866,18 +1957,22 @@ async def _notify_digest_if_applicable(
             message_thread_id=use_thread_id,
             image_path=None,
         )
-        logging.debug("[call] send_digest_notification completed")
+        logging.info(
+            "[digest] send_digest_notification result=%s", bool(result)
+        )
     except Exception as e:
-        logging.warning("[call] send_digest_notification error: %s", e)
+        logging.warning("[digest] send_digest_notification error: %s", e)
 
     try:
-        logging.debug("[call] Starting post_run_git_push...")
+        logging.info("[digest] Starting post_run_git_push")
         await post_run_git_push(
             agent_name=(getattr(cfg, "id", "") or ""), user_input=user_input
         )
-        logging.debug("[call] post_run_git_push completed")
+        logging.info("[digest] post_run_git_push completed")
     except Exception as e:
-        logging.warning("[call] post_run_git_push error: %s", e)
+        logging.warning("[digest] post_run_git_push error: %s", e)
+
+    logging.info("[digest] Digest notification completed")
 
 
 async def _send_error_notification(
@@ -2358,37 +2453,89 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
     - Uses user_input as-is (preserve newlines)
     - No fallback names
     """
+    if os.environ.get("CALL_DISABLE_POST_RUN_PUSH", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        logging.info("[git] post_run_git_push disabled via CALL_DISABLE_POST_RUN_PUSH")
+        return
+
     try:
         prompt_repo = discover_prompt_repo()
-        commit_msg = f"{agent_name} {user_input}"
+    except Exception as exc:
+        logging.debug("[git] discover_prompt_repo failed: %s", exc)
+        return
 
-        from asyncio.subprocess import PIPE
+    commit_msg = f"{agent_name} {user_input}"
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
 
-        async def _run_git(cmd: list[str]) -> tuple[int, bytes, bytes]:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(prompt_repo),
-                stdout=PIPE,
-                stderr=PIPE,
+    from asyncio.subprocess import PIPE
+
+    def _truncate(data: bytes, limit: int = 2048) -> str:
+        if not data:
+            return ""
+        text = data.decode("utf-8", "replace")
+        if len(text) > limit:
+            return text[:limit] + "…"
+        return text
+
+    async def _run_git(step: str, cmd: list[str], timeout: float = 10.0) -> tuple[int, bytes, bytes]:
+        logging.debug("[git] %s start: %s", step, " ".join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(prompt_repo),
+            stdout=PIPE,
+            stderr=PIPE,
+            env=env,
+        )
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logging.warning("[git] %s timeout after %.1fs", step, timeout)
+            with suppress(Exception):
+                proc.kill()
+            raise
+        rc = proc.returncode
+        logging.debug(
+            "[git] %s done rc=%s stdout=%s stderr=%s",
+            step,
+            rc,
+            _truncate(out),
+            _truncate(err),
+        )
+        return rc, out, err
+
+    try:
+        rc_status, status_out, _ = await _run_git(
+            "status", ["git", "status", "--porcelain", "-uno"]
+        )
+        if rc_status != 0:
+            logging.debug("[git] status failed rc=%s", rc_status)
+            return
+        if status_out.strip() == b"":
+            logging.info("[git] No changes detected; skipping push")
+            return
+
+        await _run_git("add", ["git", "add", "-A", "."])
+        rc_commit, commit_out, commit_err = await _run_git(
+            "commit", ["git", "commit", "-m", commit_msg]
+        )
+        if rc_commit != 0:
+            logging.info(
+                "[git] Commit skipped rc=%s stdout=%s stderr=%s",
+                rc_commit,
+                _truncate(commit_out),
+                _truncate(commit_err),
             )
-            out, err = await proc.communicate()
-            return proc.returncode, out, err
+            return
 
-        # Check if there are any changes first; if none, return silently
-        rc, out, _ = await _run_git(["git", "status", "--porcelain", "-uno"])
-        if rc != 0:
-            return  # fail silently per requirement to avoid stdout logging
-        if out.strip() == b"":
-            return  # no changes
-
-        # Changes exist: add, commit, and push
-        await _run_git(["git", "add", "-A", "."])
-        rc_commit, _, _ = await _run_git(["git", "commit", "-m", commit_msg])
-        if rc_commit == 0:
-            await _run_git(["git", "push"])
-        # else: nothing to commit; return silently
-    except Exception:
-        # Fail silently to avoid writing to stdout as per requirements
+        await _run_git("push", ["git", "push"])
+        logging.info("[git] push completed successfully")
+    except Exception as exc:
+        logging.debug("[git] post_run_git_push aborted: %s", exc)
         return
 
 
