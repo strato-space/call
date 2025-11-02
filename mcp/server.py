@@ -53,19 +53,19 @@ async def lifespan(app: FastMCP):
     _set_mcp_exit_stack(exit_stack)
     log.info("MCP exit stack created in main context")
     
-    # Start MCP initialization in background (non-blocking)
-    init_task = asyncio.create_task(preinitialize_mcp_servers_async("mcp"))
-    log.info("MCP initialization started in background")
-    debug_print("[mcp]", "[START]", "MCP init running in background, server ready")
+    # Initialize MCP servers synchronously in main context (not background)
+    # This ensures all cancel scopes are created in same task that will close them
+    try:
+        await preinitialize_mcp_servers_async("mcp")
+        log.info("MCP servers initialized successfully")
+    except Exception as e:
+        log.error("MCP initialization failed: %s", e)
+    
+    debug_print("[mcp]", "[START]", "MCP server ready")
 
     yield {}
     
-    # Shutdown: wait for init, cleanup cache, then exit stack
-    try:
-        await init_task
-    except Exception as e:
-        log.warning("Background MCP init error: %s", e)
-    
+    # Shutdown: cleanup cache, then exit stack
     # Clear server cache
     try:
         await cleanup_mcp_servers()
