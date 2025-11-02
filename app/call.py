@@ -316,15 +316,17 @@ _MCP_INIT_STATE: _MCPInitState = _MCPInitState.NOT_STARTED
 _MCP_INIT_ERROR: MCPInitializationError | None = None
 _MCP_INIT_EVENT: asyncio.Event | None = None
 _MCP_CONFIG_CACHE: dict | None = None
+_MCP_EXIT_STACK: AsyncExitStack | None = None  # Global exit stack for singleton MCP servers
 
 
 def _reset_mcp_state() -> None:
-    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_CONFIG_CACHE, _MCP_SERVERS_CACHE
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_CONFIG_CACHE, _MCP_SERVERS_CACHE, _MCP_EXIT_STACK
     _MCP_INIT_STATE = _MCPInitState.NOT_STARTED
     _MCP_INIT_ERROR = None
     _MCP_INIT_EVENT = None
     _MCP_CONFIG_CACHE = None
     _MCP_SERVERS_CACHE = {}
+    _MCP_EXIT_STACK = None
 
 
 class MCPInitializationError(RuntimeError):
@@ -683,7 +685,7 @@ async def _validate_and_cache_mcp_config() -> dict | None:
     
     Raises MCPInitializationError if validation fails.
     """
-    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_SERVERS_CACHE, _MCP_CONFIG_CACHE
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_SERVERS_CACHE, _MCP_CONFIG_CACHE, _MCP_EXIT_STACK
 
     event = _ensure_mcp_event()
 
@@ -745,9 +747,11 @@ async def _validate_and_cache_mcp_config() -> dict | None:
         logging.info("[mcp] Config validated - %d enabled servers: %s", enabled_count, enabled_names)
         debug_print("[mcp]", f"✅ Config valid - {enabled_count} enabled servers: {enabled_names}")
 
-        # Create servers once and cache them (singleton pattern)
+        # Create servers once with global exit stack (singleton pattern)
         debug_print("[mcp]", "Creating MCP server instances (singleton - will be reused)...")
-        servers = await _build_mcp_servers_from_yaml(cfg_yaml, None)
+        _MCP_EXIT_STACK = AsyncExitStack()
+        await _MCP_EXIT_STACK.__aenter__()  # Enter the exit stack context
+        servers = await _build_mcp_servers_from_yaml(cfg_yaml, _MCP_EXIT_STACK)
         _MCP_SERVERS_CACHE = {srv.name: srv for srv in servers} if servers else {}
         _MCP_CONFIG_CACHE = cfg_yaml
         logging.info("[mcp] Created %d MCP server instances (cached for reuse)", len(_MCP_SERVERS_CACHE))
@@ -786,21 +790,21 @@ async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[li
 
 async def cleanup_mcp_servers() -> None:
     """Cleanup MCP servers at shutdown."""
-    global _MCP_SERVERS_CACHE
-    if not _MCP_SERVERS_CACHE:
+    global _MCP_SERVERS_CACHE, _MCP_EXIT_STACK
+    if not _MCP_EXIT_STACK:
         return
     
     debug_print("[mcp]", f"Cleaning up {len(_MCP_SERVERS_CACHE)} MCP servers...")
-    for name, server in _MCP_SERVERS_CACHE.items():
-        try:
-            if hasattr(server, '__aexit__'):
-                await server.__aexit__(None, None, None)
-                debug_print("[mcp]", f"✅ Closed server: {name}")
-        except Exception as e:
-            logging.warning("[mcp] Failed to close server %s: %s", name, e)
-    
-    _MCP_SERVERS_CACHE = {}
-    logging.info("[mcp] All MCP servers cleaned up")
+    try:
+        # Exit the global async context - this will cleanup all registered servers
+        await _MCP_EXIT_STACK.__aexit__(None, None, None)
+        debug_print("[mcp]", f"✅ All MCP servers cleaned up via AsyncExitStack")
+        logging.info("[mcp] All MCP servers cleaned up")
+    except Exception as e:
+        logging.warning("[mcp] Failed to cleanup MCP servers: %s", e)
+    finally:
+        _MCP_SERVERS_CACHE = {}
+        _MCP_EXIT_STACK = None
 
 
 async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
@@ -4159,19 +4163,14 @@ async def _build_mcp_servers_from_yaml(
             if not cmd:
                 return None
             
-            # Create server hook
-            hook = MCPServerStdioHook(
-                params={"command": cmd, "args": args},
-                name=name,
-                client_session_timeout_seconds=timeout,
+            # Create server hook and register with exit stack
+            server = await astack.enter_async_context(
+                MCPServerStdioHook(
+                    params={"command": cmd, "args": args},
+                    name=name,
+                    client_session_timeout_seconds=timeout,
+                )
             )
-            
-            # For singleton pattern (astack=None), call __aenter__ directly
-            # For per-call pattern (astack provided), register with exit stack
-            if astack is None:
-                server = await hook.__aenter__()
-            else:
-                server = await astack.enter_async_context(hook)
             
             try:
                 parts = [str(cmd)] + [str(a) for a in (args or [])]
