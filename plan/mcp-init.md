@@ -25,12 +25,12 @@
 - Telegram Bot: uses `create_mcp_lifespan_callbacks()` to wire `post_init/post_shutdown` that enter/exit the AsyncExitStack and warm up MCP in background.
 - CLI: lazy init on first use (no pre-init). First call path triggers `_validate_and_cache_mcp_config()` via `_prepare_mcp_servers()`.
 
-## Refactor Plan — MCPManager in call.lib
+## Refactor Plan — call.lib.mcp_manager module
 
-- Create `call.lib.mcp_manager.MCPManager` with single responsibility: own MCP lifecycle and config.
-- Use this class only from `call.lib` and `call.app`. External entry points (MCP server, Actions API, CLI, Telegram bot) must call exported lib-level helpers (see below) rather than touching the manager directly.
+- Create `call.lib.mcp_manager` module with single responsibility: own MCP lifecycle and config (expose a singleton manager object).
+- Use this module only from `call.lib` and `call.app`. External entry points (MCP server, Actions API, CLI, Telegram bot) must call exported lib-level helpers (see below) rather than touching the manager directly.
 
-### Class responsibilities
+### Module responsibilities
 
 - Manage state machine: `NOT_STARTED | IN_PROGRESS | READY | FAILED`, with readiness and shutdown events.
 - Parse and validate config (YAML/JSON) and materialize MCP servers exactly once.
@@ -82,9 +82,10 @@
 
 ### Migration steps
 
-- Move MCP-specific functions from `call.app.call` into `call.lib.mcp_manager` methods:
+- Move MCP-specific functions from `call.app.call` into `call.lib.mcp_manager` module functions:
   - `_load_mcp_yaml_config`, state/event handling, config validation, server creation, readiness wait, cleanup.
-  - Replace `preinitialize_mcp_servers_async/sync`, `_prepare_mcp_servers`, `wait_for_mcp_init`, `cleanup_mcp_servers`, `_set_mcp_exit_stack` with manager methods.
+  - Replace `preinitialize_mcp_servers_async/sync`, `_prepare_mcp_servers`, `wait_for_mcp_init`, `cleanup_mcp_servers`, `_set_mcp_exit_stack` with `call.lib.mcp_manager` module functions.
+
 - Implement `call.lib.runtime` facade exposing only `init_runtime_async`, `ensure_runtime_ready`, `shutdown_runtime`, `get_mcp_servers`.
 - Update `call.app.call.build_and_run_agent()` to call `get_mcp_servers()` from lib rather than internal globals.
 - Update `mcp/server.py`, `actions/main.py`, `telegram_bot/bot.py`, and `cli/main.py` to use the new lib functions.
@@ -147,3 +148,43 @@
 ## Status
 
 - Patterns described here are implemented in the codebase and aligned with `README.md` and `AGENTS.md`.
+
+## Commit verification and checklist
+
+- **Owner task in app layer**
+  - [v] `_mcp_owner_main(tag)` implemented in `call.app.call`
+  - [v] `start_mcp_owner_task(tag)` and `stop_mcp_owner_task()` implemented
+  - [v] `wait_for_mcp_init()` autostarts owner as `waiter` when needed (CLI-safe)
+  - [v] `create_mcp_lifespan_callbacks(tag?)` provided for PTB-style apps
+
+- **Entry points**
+  - [v] MCP server (`call/mcp/server.py`) uses `start_mcp_owner_task("mcp")` on startup and `stop_mcp_owner_task()` on shutdown
+  - [v] Actions API (`call/actions/main.py`) uses `start_mcp_owner_task("actions")` and `stop_mcp_owner_task()` in lifespan
+  - [ ] Telegram bot (`call/telegram_bot/bot.py`) calls `create_mcp_lifespan_callbacks()` without tag — update to `create_mcp_lifespan_callbacks("bot")`
+  - [v] CLI (`call/lib/api.py`) waits for readiness in `call_async()` via `await app_call.wait_for_mcp_init(120)`; `call()` routes through `call_async()`
+
+- **Lib refactor (managerization)**
+  - [ ] Create `call.lib.mcp_manager` module (with singleton manager) and move MCP lifecycle functions from `call.app.call`
+  - [ ] Provide `call.lib.runtime` facade: `init_runtime_async`, `ensure_runtime_ready`, `shutdown_runtime` (sync), `get_mcp_servers`
+  - [ ] Update `call.app.call.build_and_run_agent()` to fetch servers via `get_mcp_servers()`
+  - [ ] Update entry points to use `call.lib.runtime` facade instead of `call.app.call`
+
+- **Shutdown and sync destroy**
+  - [ ] Add a sync `shutdown_runtime()` (lib) for non-async contexts (e.g., CLI teardown, process exit)
+  - [ ] Ensure tests and tools call the sync shutdown in teardown when owner was autostarted
+
+- **Docs & tests**
+  - [v] AGENTS.md updated to describe owner-task pattern and entrypoint hooks
+  - [ ] Add tests for owner autostart (CLI), readiness wait, and orderly shutdown without hangs
+
+## Shutdown observation (pytest logs)
+
+- Observed sequence:
+  - **Digest completed**, then service-message cleanup logs
+  - Owner task: "cancelled while waiting for shutdown; forcing cleanup", then "shutdown signaled", "cleanup complete"
+- Interpretation:
+  - `stop_mcp_owner_task()` likely timed out and cancelled the owner while waiting; owner handled `CancelledError`, set the shutdown event, and finished cleanup.
+  - No explicit timeout warning was logged, suggesting the task finished promptly after cancellation.
+- Follow-ups (plan):
+  - [ ] Provide a sync `shutdown_runtime()` in lib and ensure all entry points/tests use it to avoid dangling owner in CLI/pytest contexts
+  - [ ] Verify that no other background tasks remain (e.g., service cleanup, git push) and add timeouts if needed
