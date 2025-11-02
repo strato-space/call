@@ -52,15 +52,15 @@ Universal bots (like `StratoSpaceAiBot`) continue to show full command reference
 | Input | Behavior |
 |-------|----------|
 | `статус проекта` | Invokes `project.md` with input |
-| `@Target задачи` | Invokes specified target |
+| `@Target задачи` | Invokes specified target (target name must include `@`) |
 
 ### Group Chats
 
 | Input | Behavior |
 |-------|----------|
-| `@BotName статус` | Invokes `project.md` with input |
-| `@BotName @Target задачи` | Invokes specified target |
-| `@Target задачи` | Invokes specified target |
+| `@ProjectNameBot статус` | Invokes `project.md` with input |
+| `@ProjectNameBot @Target задачи` | Invokes specified `@Target` |
+| `@Target задачи` | Invokes specified target (target name must include `@`) |
 | Regular text | Ignored (no bot mention) |
 
 ## Setup
@@ -70,8 +70,8 @@ Universal bots (like `StratoSpaceAiBot`) continue to show full command reference
 ```text
 prompt/
   YourProject/
-    project.md         # Orchestrator with goal in metadata
-    PM-1.md           # Optional sub-agents
+    project.md        # Orchestrator with goal in metadata
+    PM-1.md           # Optional sub-agents or prompts
     PM-2.md
 ```
 

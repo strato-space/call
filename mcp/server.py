@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
-from call.app.call import preinitialize_mcp_servers_async
+from call.app.call import preinitialize_mcp_servers_async, MCPInitializationError
 
 try:
     # FastMCP SDK
@@ -28,40 +28,6 @@ from call.lib.api import write as api_write
 from call.lib import repo_db as repo_db_module
 
 
-_warmup_task: asyncio.Task | None = None
-
-
-def _schedule_warmup(tag: str = "mcp") -> None:
-    global _warmup_task
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
-    if _warmup_task is not None and not _warmup_task.done():
-        return
-
-    async def _run() -> None:
-        try:
-            debug_print("[mcp]", "[STARTUP]", f"Warmup task starting for tag '{tag}'")
-            await preinitialize_mcp_servers_async(tag)
-            debug_print("[mcp]", "[STARTUP]", f"Warmup task finished for tag '{tag}'")
-        except Exception as exc:  # pragma: no cover - best effort logging
-            try:
-                debug_print(
-                    "[mcp]",
-                    "[STARTUP]",
-                    f"Warmup task failed for tag '{tag}': {type(exc).__name__}: {exc}",
-                )
-            except Exception:
-                pass
-
-    try:
-        _warmup_task = loop.create_task(_run())
-    except Exception:
-        pass
-
-
 @asynccontextmanager
 async def lifespan(app: FastMCP):
     # Load environment deterministically: call/.env then repo-root .env (do not override OS env)
@@ -73,10 +39,7 @@ async def lifespan(app: FastMCP):
     except Exception:
         pass
     # Configure logging (DEBUG when CALL_DEBUG=1, else INFO)
-    try:
-        call_logging()
-    except Exception:
-        pass
+    call_logging()
     log = get_logger("mcp")
     log.info(
         "Starting mcp-call server (env loaded: call/.env exists=%s)",
@@ -84,8 +47,12 @@ async def lifespan(app: FastMCP):
     )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     
-    # Pre-initialize MCP servers in background to avoid initialize timeout
-    _schedule_warmup("mcp")
+    try:
+        await preinitialize_mcp_servers_async("mcp")
+    except MCPInitializationError as exc:
+        log = get_logger("mcp")
+        log.critical("MCP initialization failed during server startup: %s", exc)
+        raise
 
     yield {}
 

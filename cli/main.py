@@ -30,7 +30,7 @@ import faulthandler
 from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
-from call.app.call import preinitialize_mcp_servers_sync
+from call.app.call import preinitialize_mcp_servers_sync, MCPInitializationError
 from call.lib import repo_db as repo_db_module
 from dotenv import load_dotenv
 from pathlib import Path as _Path
@@ -1284,20 +1284,14 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Pre-initialize MCP servers so first CLI call doesn't incur cold start
-    try:
-        preinitialize_mcp_servers_sync("cli")
-    except Exception as exc:  # pragma: no cover - best effort
-        debug_print("[cli]", "[STARTUP]", f"❌ MCP pre-initialization failed: {type(exc).__name__}: {exc}")
+    # Configure logging FIRST so MCP init messages are visible
+    call_logging(
+        level=(_logging.DEBUG if bool(getattr(args, "debug", False)) else None),
+        json=bool(getattr(args, "json_logs", False)),
+    )
 
-    # Configure logging once per CLI process (DEBUG if CALL_DEBUG=1, else INFO)
-    try:
-        call_logging(
-            level=(_logging.DEBUG if bool(getattr(args, "debug", False)) else None),
-            json=bool(getattr(args, "json_logs", False)),
-        )
-    except Exception:
-        pass
+    # MCP servers will be initialized lazily by build_and_run_agent when needed
+    # (pre-init in CLI main() caused stream closure issues across event loops)
 
     return args.func(args)
 

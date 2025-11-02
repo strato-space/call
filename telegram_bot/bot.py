@@ -77,7 +77,7 @@ from telegram.request import HTTPXRequest
 # Library facade
 from call.lib import api as call_api
 from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
-from call.app.call import preinitialize_mcp_servers_sync
+from call.app.call import preinitialize_mcp_servers_sync, MCPInitializationError
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
     telegram_prepare_html,
@@ -260,8 +260,8 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             sanitized = _sanitize_false_fields(update_dict)
             raw_json = json.dumps(sanitized, ensure_ascii=False)
             log.info("Update raw: %s", raw_json)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug("[bot] Failed to log raw update: %s", e)
     return None
 
 
@@ -557,6 +557,10 @@ _TARGET_TOKEN_RE = re.compile(r"^@[A-Za-z0-9][A-Za-z0-9_\-./:*]*$")
 def _normalize_token(tok: str) -> str:
     try:
         s = (tok or "").strip()
+        # Strip leading @ prefix
+        if s.startswith("@"):
+            s = s[1:]
+        # Strip trailing punctuation
         s = _TRAILING_PUNCT_RE.sub("", s)
         if s.endswith(".md"):
             s = s[:-3]
@@ -617,11 +621,20 @@ def _resolve_agent_and_input(
         except Exception:
             pass
         parts = body.lstrip().split(None, 1)
-        head = parts[0].strip()
+        head_raw = parts[0]
+        head = head_raw.strip()
+        head_norm = _normalize_token(head_raw)
         rest = parts[1] if len(parts) > 1 else ""
 
+        # Group chats must mention the bot explicitly (@BotName ...)
+        if not is_private:
+            if not own:
+                return "", "", False
+            if head_norm != own:
+                return "", "", False
+
         # '@BotName ...' -> address bot explicitly; next token may be target
-        if own and (head == own):
+        if own and (head == own or head_norm == own):
             if not rest.strip():
                 return "", "", False
             sub = rest.strip().split(None, 1)
@@ -1419,10 +1432,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 def main() -> None:
     # Configure logging once per bot process (DEBUG if CALL_DEBUG=1, else INFO)
-    try:
-        call_logging()
-    except Exception:
-        pass
+    call_logging()
     # Parse CLI args
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -1469,8 +1479,12 @@ def main() -> None:
     except Exception:
         pass
 
-    # Pre-initialize MCP servers to avoid cold start during first call
-    preinitialize_mcp_servers_sync("bot")
+    # Pre-initialize MCP servers (fail-fast if unavailable)
+    try:
+        preinitialize_mcp_servers_sync("bot")
+    except MCPInitializationError as exc:
+        log.critical("MCP initialization failed: %s", exc)
+        raise SystemExit(1) from exc
 
     # Use the single source of truth to get the token for polling
     polling_token = get_project_token(PROJECT_NAME)

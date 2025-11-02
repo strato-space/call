@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Dict, Any
 from agents.model_settings import ModelSettings
@@ -38,6 +40,7 @@ def discover_agent_yaml(agent_name: str, project: str | None = None):
 import os
 import argparse
 import asyncio
+import enum
 import importlib
 import logging
 from typing import Optional, Dict, Any, List, Callable, Awaitable, Type, Union
@@ -298,9 +301,45 @@ AGENT_CACHE: dict[str, Agent] = {}
 
 # MCP servers singleton cache: (name → server instance)
 # Lazy-loaded on first use, shared across all agent runs
-_MCP_SERVERS_CACHE: dict[str, Any] = {}
+# Removed: _MCP_SERVERS_CACHE - servers are now created fresh per call with proper RAII cleanup
 _MCP_SERVERS_LOCK = asyncio.Lock()
-_MCP_SERVERS_INITIALIZED = False
+
+
+class _MCPInitState(enum.Enum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    READY = "ready"
+    FAILED = "failed"
+
+
+_MCP_INIT_STATE: _MCPInitState = _MCPInitState.NOT_STARTED
+_MCP_INIT_ERROR: MCPInitializationError | None = None
+_MCP_INIT_EVENT: asyncio.Event | None = None
+_MCP_CONFIG_CACHE: dict | None = None
+
+
+def _reset_mcp_state() -> None:
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT, _MCP_CONFIG_CACHE, _MCP_SERVERS_CACHE
+    _MCP_INIT_STATE = _MCPInitState.NOT_STARTED
+    _MCP_INIT_ERROR = None
+    _MCP_INIT_EVENT = None
+    _MCP_CONFIG_CACHE = None
+    _MCP_SERVERS_CACHE = {}
+
+
+class MCPInitializationError(RuntimeError):
+    """Raised when MCP servers fail to initialize."""
+
+    def __init__(self, message: str, *, cause: Exception | None = None):
+        super().__init__(message)
+        self.cause = cause
+
+
+def _ensure_mcp_event() -> asyncio.Event:
+    global _MCP_INIT_EVENT
+    if _MCP_INIT_EVENT is None:
+        _MCP_INIT_EVENT = asyncio.Event()
+    return _MCP_INIT_EVENT
 
 
 def get_or_create_agent(
@@ -618,159 +657,166 @@ def _attrs_to_yaml_text(attrs) -> str | None:
 
 def debug_dump_cfg_preview(cfg) -> None:
     """Debug: dump cfg attributes and instruction preview to the log."""
-    try:
-        ytxt = _attrs_to_yaml_text(getattr(cfg, "attributes", None))
-        if ytxt:
-            debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
-    except Exception:
-        pass
+    ytxt = _attrs_to_yaml_text(getattr(cfg, "attributes", None))
+    if ytxt:
+        debug_print("[cfg]", "attributes (YAML):\n" + ytxt)
 
-    try:
-        attrs_has_instr = isinstance(getattr(cfg, "attributes", None), dict) and (
-            "instructions" in (cfg.attributes or {})
-        )
-    except Exception:
-        attrs_has_instr = False
+    attrs_has_instr = isinstance(getattr(cfg, "attributes", None), dict) and (
+        "instructions" in (cfg.attributes or {})
+    )
 
     if attrs_has_instr:
         return
 
-    try:
-        instr = getattr(cfg, "instructions", "") or ""
-        preview = instr[:4096] + ("…" if len(instr) > 4096 else "")
+    instr = getattr(cfg, "instructions", "") or ""
+    preview = instr[:4096] + ("…" if len(instr) > 4096 else "")
 
-        debug_print("[cfg]", "Agent instructions preview: |-\n" + preview)
-        debug_print("[cfg]", "Agent instructions len:", str(len(instr)))
-    except Exception:
-        pass
+    debug_print("[cfg]", "Agent instructions preview: |-\n" + preview)
+    debug_print("[cfg]", "Agent instructions len:", str(len(instr)))
 
 
-async def _initialize_mcp_servers_once() -> tuple[dict[str, Any], dict | None]:
-    """Initialize MCP servers singleton cache (called once, thread-safe).
+async def _validate_and_cache_mcp_config() -> tuple[dict[str, Any], dict | None]:
+    """Validate MCP configuration and cache it exactly once.
     
-    Returns:
-        (servers_by_name, cfg_yaml)
+    Returns empty servers dict (servers NOT cached) and config YAML.
+    Server instances are created fresh per call via _prepare_mcp_servers().
+    
+    Raises MCPInitializationError if validation fails.
     """
-    global _MCP_SERVERS_INITIALIZED
-    
-    cfg_yaml: dict | None = None
-    servers_by_name: dict[str, Any] = {}
-    
+    global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_SERVERS_CACHE, _MCP_CONFIG_CACHE
+
+    event = _ensure_mcp_event()
+
+    # Return cached result if already initialized
+    if _MCP_INIT_STATE is _MCPInitState.READY:
+        return dict(_MCP_SERVERS_CACHE), _MCP_CONFIG_CACHE
+
+    # Re-raise previous failure
+    if _MCP_INIT_STATE is _MCPInitState.FAILED:
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+
+    # Wait if initialization is in progress
+    if _MCP_INIT_STATE is _MCPInitState.IN_PROGRESS:
+        await event.wait()
+        if _MCP_INIT_STATE is _MCPInitState.READY:
+            return dict(_MCP_SERVERS_CACHE), _MCP_CONFIG_CACHE
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
+
+    # Start initialization
+    async with _MCP_SERVERS_LOCK:
+        if _MCP_INIT_STATE is _MCPInitState.NOT_STARTED:
+            _MCP_INIT_STATE = _MCPInitState.IN_PROGRESS
+            event.clear()
+        else:
+            return await _validate_and_cache_mcp_config()
+
+    cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
+    enabled = os.environ.get("ENABLE_MCP", "").strip().lower() in {"1", "true", "yes", "on"}
+
     try:
-        cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
-        path = Path(cfg_path)
         
-        if not path.exists():
-            logging.info("[mcp] No config file at %s", cfg_path)
-            debug_print("[mcp]", f"No MCP config at {cfg_path}")
-            return servers_by_name, None
-            
-        cfg_yaml = _load_mcp_yaml_config(path)
-        enabled_flag = os.environ.get("ENABLE_MCP", "")
-        enabled = str(enabled_flag).strip().lower() in {"1", "true", "yes", "on"}
         
         logging.info("[mcp] ENABLE_MCP=%s config_path=%s", enabled, cfg_path)
         debug_print("[mcp]", f"ENABLE_MCP={enabled} config_path={cfg_path}")
-        
+
         if not enabled:
-            logging.info("[mcp] MCP disabled by ENABLE_MCP flag")
-            return servers_by_name, cfg_yaml
-            
+            raise MCPInitializationError("ENABLE_MCP must be 1 for the platform to operate")
+
+        path = Path(cfg_path)
+        if not path.exists():
+            raise MCPInitializationError(f"MCP config not found: {cfg_path}")
+
+        cfg_yaml = _load_mcp_yaml_config(path)
         if not cfg_yaml or not isinstance(cfg_yaml.get("mcpServers"), dict):
-            logging.info("[mcp] No mcpServers section in config")
-            return servers_by_name, cfg_yaml
-            
-        # Install custom asyncio exception handler to suppress known MCP cleanup errors
-        try:
-            loop = asyncio.get_running_loop()
-            loop.set_exception_handler(_suppress_mcp_cleanup_errors)
-            logging.debug("[mcp] Installed custom exception handler for MCP cleanup")
-        except Exception:
-            pass
-            
-        # Build servers without AsyncExitStack (they will live for app lifetime)
-        servers_by_name = await _build_mcp_servers_singleton(cfg_yaml)
-        
-        if servers_by_name:
-            names = list(servers_by_name.keys())
-            logging.info("[mcp] Initialized MCP servers: %s", names)
-            debug_print("[mcp]", f"✅ MCP servers initialized: {names}")
-        else:
-            logging.info("[mcp] No MCP servers started")
-            
+            raise MCPInitializationError("MCP config missing 'mcpServers' section")
+
+        # Validate config has at least one enabled server
+        enabled_count = sum(
+            1 for spec in cfg_yaml.get("mcpServers", {}).values()
+            if isinstance(spec, dict) and spec.get("enabled", False)
+        )
+        if enabled_count == 0:
+            raise MCPInitializationError("No enabled MCP servers in config")
+
+        enabled_names = [
+            name for name, spec in cfg_yaml.get("mcpServers", {}).items()
+            if isinstance(spec, dict) and spec.get("enabled", False)
+        ]
+        logging.info("[mcp] Config validated - %d enabled servers: %s", enabled_count, enabled_names)
+        debug_print("[mcp]", f"✅ Config valid - {enabled_count} enabled servers: {enabled_names}")
+
+        # Cache only config, NOT server instances (they're created fresh per call for proper RAII)
+        _MCP_CONFIG_CACHE = cfg_yaml
+        _MCP_INIT_STATE = _MCPInitState.READY
+        event.set()
+        return {}, _MCP_CONFIG_CACHE  # Empty dict for backward compat, config is what matters
+
+    except MCPInitializationError as exc:
+        logging.error("[mcp] Init failed: %s", exc)
+        _MCP_INIT_STATE = _MCPInitState.FAILED
+        _MCP_INIT_ERROR = exc
+        event.set()
+        raise
     except Exception as exc:
-        logging.exception("[mcp] Failed to initialize MCP servers")
-        debug_print("[mcp]", f"❌ Error initializing MCP: {type(exc).__name__}: {exc}")
-        
-    _MCP_SERVERS_INITIALIZED = True
-    return servers_by_name, cfg_yaml
+        logging.exception("[mcp] Unexpected init error")
+        wrapper = MCPInitializationError("MCP init failed", cause=exc)
+        _MCP_INIT_STATE = _MCPInitState.FAILED
+        _MCP_INIT_ERROR = wrapper
+        event.set()
+        raise wrapper
 
 
 async def _prepare_mcp_servers(astack: AsyncExitStack | None = None) -> tuple[list[Any], dict | None]:
-    """Get MCP servers from singleton cache (lazy-loaded on first use).
-
-    Thread-safe lazy initialization: first call initializes, subsequent calls
-    return cached instances. Servers live for the application lifetime.
+    """Return MCP servers list, blocking until initialization completes.
+    
+    Creates fresh server instances registered with astack for proper cleanup.
+    Config is cached, but server instances are NOT - they're created/destroyed per call.
     """
-    global _MCP_SERVERS_CACHE, _MCP_SERVERS_INITIALIZED
-
-    async with _MCP_SERVERS_LOCK:
-        if not _MCP_SERVERS_INITIALIZED:
-            logging.info("[mcp] First call: initializing MCP servers singleton...")
-            debug_print("[mcp]", "🔧 First call: initializing MCP servers...")
-            servers_by_name, cfg_yaml = await _initialize_mcp_servers_once()
-            _MCP_SERVERS_CACHE.update(servers_by_name)
-        else:
-            logging.debug("[mcp] Reusing cached MCP servers")
-            debug_print("[mcp]", f"♻️  Reusing {len(_MCP_SERVERS_CACHE)} cached MCP servers")
-            # Reload cfg_yaml for consistency
-            cfg_path = os.environ.get("MCP_CONFIG_PATH", str(_call_dir / "mcp_config.yaml"))
-            path = Path(cfg_path)
-            cfg_yaml = _load_mcp_yaml_config(path) if path.exists() else None
-
-    # Return servers as list for backward compatibility
-    servers_list = list(_MCP_SERVERS_CACHE.values())
-    return servers_list, cfg_yaml
+    # Validate config is ready (but don't use cached server instances)
+    if _MCP_INIT_STATE is _MCPInitState.NOT_STARTED or _MCP_INIT_STATE is _MCPInitState.IN_PROGRESS:
+        # Initialize config once (validates ENABLE_MCP, loads yaml, etc)
+        await _validate_and_cache_mcp_config()
+    
+    if _MCP_INIT_STATE is _MCPInitState.FAILED:
+        raise _MCP_INIT_ERROR or MCPInitializationError("MCP init failed")
+    
+    # Config is ready - now create FRESH server instances with proper lifecycle
+    if astack is None:
+        raise MCPInitializationError(
+            "AsyncExitStack required for MCP server lifecycle management. "
+            "Cannot create MCP servers without proper cleanup context."
+        )
+    
+    # RAII: Create fresh servers and register with exit stack for destruction in same async context
+    logging.debug("[mcp] Creating fresh MCP server instances with AsyncExitStack cleanup")
+    servers = await _build_mcp_servers_from_yaml(_MCP_CONFIG_CACHE, astack)
+    logging.info("[mcp] Created %d MCP server instances (will auto-cleanup on context exit)", len(servers))
+    return servers, _MCP_CONFIG_CACHE
 
 
 async def preinitialize_mcp_servers_async(module_tag: str) -> dict[str, Any]:
-    """Async helper to warm up MCP servers with module-tag logging."""
-
-    raw_tag = str(module_tag or "mcp").strip() or "mcp"
-    tag = raw_tag if (raw_tag.startswith("[") and raw_tag.endswith("]")) else f"[{raw_tag}]"
-    logger = logging.getLogger("call.mcp")
-
-    debug_print(tag, "[STARTUP]", "Pre-initializing MCP servers...")
-    try:
-        servers_by_name, _cfg_yaml = await _initialize_mcp_servers_once()
-        names = list(servers_by_name.keys())
-        if names:
-            debug_print(tag, "[STARTUP]", f"✅ Pre-initialized MCP servers: {names}")
-            logger.info("%s Pre-initialized %d MCP servers: %s", tag, len(names), names)
-        else:
-            debug_print(tag, "[STARTUP]", "No MCP servers to pre-initialize")
-            logger.info("%s No MCP servers to pre-initialize", tag)
-        return servers_by_name
-    except Exception as exc:  # pragma: no cover - best-effort logging
-        debug_print(tag, "[STARTUP]", f"❌ Failed to pre-initialize MCP servers: {type(exc).__name__}: {exc}")
-        logger.warning("%s Failed to pre-initialize MCP servers: %s", tag, exc)
-        return {}
+    """Async helper to validate MCP config (servers are created fresh per call)."""
+    tag = f"[{module_tag}]" if not module_tag.startswith("[") else module_tag
+    debug_print(tag, "[STARTUP]", "Validating MCP config...")
+    _, cfg_yaml = await _validate_and_cache_mcp_config()
+    enabled_names = [
+        name for name, spec in (cfg_yaml or {}).get("mcpServers", {}).items()
+        if isinstance(spec, dict) and spec.get("enabled", False)
+    ]
+    debug_print(tag, "[STARTUP]", f"✅ Config valid - {len(enabled_names)} enabled servers: {enabled_names}")
+    logging.getLogger("call.mcp").info("%s MCP config validated - %d enabled servers", tag, len(enabled_names))
+    return {}  # No server instances cached - they're created fresh per call
 
 
 def preinitialize_mcp_servers_sync(module_tag: str) -> dict[str, Any]:
     """Sync helper to warm up MCP servers outside of an event loop."""
-
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(preinitialize_mcp_servers_async(module_tag))
-
+    
     if loop.is_running():
-        raise RuntimeError(
-            "preinitialize_mcp_servers_sync() cannot be used while the event loop is running; "
-            "call preinitialize_mcp_servers_async() and await it instead."
-        )
-
+        raise RuntimeError("Cannot use sync init while event loop is running")
     return loop.run_until_complete(preinitialize_mcp_servers_async(module_tag))
 
 
@@ -4077,8 +4123,8 @@ async def _build_mcp_servers_from_yaml(
                 "[mcp]",
                 f"Config contains {len(cfg_yaml.get('mcpServers') or {})} server entries",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[mcp] Failed to print config info: %s", e)
 
         async def _open_stdio(name: str, spec: dict, timeout: int):
             cmd = (spec or {}).get("command")
@@ -4100,8 +4146,9 @@ async def _build_mcp_servers_from_yaml(
                     "[mcp]",
                     f"Started MCP stdio server '{name}' with command: {pretty_cmd}",
                 )
-            except Exception:
-                pass
+                logging.info("[mcp] Started server '%s': %s", name, pretty_cmd)
+            except Exception as e:
+                logging.debug("[mcp] Failed to log server start for '%s': %s", name, e)
             return server
 
         disabled_names: list[str] = []
@@ -4145,8 +4192,8 @@ async def _build_mcp_servers_from_yaml(
                         debug_print(
                             "[mcp]", f"Skipping remote '{name}': bridge.command missing"
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.debug("[mcp] Failed to log skip message for '%s': %s", name, e)
             else:
                 if "serverUrl" in spec:
                     logging.info(
@@ -4159,8 +4206,8 @@ async def _build_mcp_servers_from_yaml(
                             "[mcp]",
                             f"Skipping remote '{name}': no bridge for serverUrl={spec.get('serverUrl')}",
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.debug("[mcp] Failed to log skip message for '%s': %s", name, e)
 
         if disabled_names:
             try:
@@ -4168,8 +4215,9 @@ async def _build_mcp_servers_from_yaml(
                     "[mcp]",
                     "Skipping disabled servers: " + ", ".join(sorted(disabled_names)),
                 )
-            except Exception:
-                pass
+                logging.info("[mcp] Disabled servers: %s", ", ".join(sorted(disabled_names)))
+            except Exception as e:
+                logging.debug("[mcp] Failed to log disabled servers: %s", e)
     return mcp_servers_started
 
 
@@ -4209,6 +4257,12 @@ def image_genetation_tool(
 @asynccontextmanager
 async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     """Async context manager that builds an Agent from a ready-to-run cfg and runs one turn.
+    
+    MCP Lifecycle (RAII Pattern):
+      - Creates fresh MCP server instances via AsyncExitStack.enter_async_context()
+      - Ensures __aenter__ and __aexit__ run in same async task (no cancel scope errors)
+      - Automatically cleans up servers when context exits (no subprocess orphans)
+      - Servers are NOT cached globally - created/destroyed per call
 
     Expected cfg attributes (duck-typed DTO):
       - name: str
@@ -4220,21 +4274,18 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     """
     async with AsyncExitStack() as astack:
 
+        # CRITICAL: Initialize MCP servers first and block until ready
+        debug_print("[call]", "[MCP] Initializing MCP servers (blocking)...")
+        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
+        debug_print("[call]", f"[MCP] ✅ MCP servers ready: {len(mcp_servers)} servers")
+
         debug_print("[call]", "user_input (raw): |-\n" + user_input)
         debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
         debug_dump_cfg_preview(cfg)
 
-        try:
-            debug_print("[call]", "[GIT] starting git pull...")
-        except Exception:
-            pass
+        debug_print("[call]", "[GIT] starting git pull...")
         await _git_pull_prompt_repo()
-        try:
-            debug_print("[call]", "[GIT] git pull completed")
-        except Exception:
-            pass
-
-        mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack)
+        debug_print("[call]", "[GIT] git pull completed")
         tools = await build_tools_for_cfg(cfg)
 
         # Agents-as-Tools: populate helper tools declared in project/agent card.
@@ -4273,28 +4324,11 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             mcp_servers=mcp_servers,
         )
 
-        run_context = RunContextWrapper(context=context)
-        try:
-            debug_print("[call]", "[MCP] listing tools from servers...")
-        except Exception:
-            pass
-        for srv in mcp_servers:
-            _ = await srv.list_tools(run_context, agent)
-        try:
-            debug_print("[call]", "[MCP] tools listed")
-        except Exception:
-            pass
-
+        # MCP tools will be listed lazily by agents library when needed
         # Initialize bot: prefer CALL_TELEGRAM_TOKEN or use project from cfg
-        try:
-            debug_print("[call]", "[BOT] initializing bot...")
-        except Exception:
-            pass
+        debug_print("[call]", "[BOT] initializing bot...")
         await _init_bot_safe(project_name=(cfg.project or None))
-        try:
-            debug_print("[call]", "[BOT] bot initialized")
-        except Exception:
-            pass
+        debug_print("[call]", "[BOT] bot initialized")
 
         # Save globally for subsequent messages (defaults come from .env; Telegram bot may override)
         global selected_chat_id, selected_thread_id
@@ -4303,10 +4337,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         session = _create_session_if_any(selected_chat_id, selected_thread_id)
 
         # Send welcome message with agent link and run context (after config is ready)
-        try:
-            debug_print("[call]", "[BANNER] sending welcome banner...")
-        except Exception:
-            pass
+        debug_print("[call]", "[BANNER] sending welcome banner...")
         await _send_welcome_banner(
             cfg=cfg,
             user_input=user_input,
@@ -4314,10 +4345,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             selected_chat_id=selected_chat_id,
             selected_thread_id=selected_thread_id,
         )
-        try:
-            debug_print("[call]", "[BANNER] welcome banner sent")
-        except Exception:
-            pass
+        debug_print("[call]", "[BANNER] welcome banner sent")
 
         # Run the main agent once with normalized input string (session-enabled)
 
@@ -4347,7 +4375,8 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 raise RuntimeError(
                     'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
                 )
-            # Non-fatal errors: log a concise one-liner and surface a short error (no stack)
+            # Non-fatal errors: log full exception and surface a short error
+            logging.exception("[app] Agent run failed")
             short_msg = str(e) or "Error"
             debug_print("[app]", f"Error during main agent run: {short_msg}")
             step1_output = f"Error: {short_msg}"
@@ -4389,5 +4418,9 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             for srv in mcp_servers:
                 if isinstance(srv, MCPServerStdioHook):
                     await srv.cleanup_service_messages()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[call] Failed to cleanup MCP service messages: %s", e)
+        
+        # MCP servers are automatically cleaned up by AsyncExitStack when context exits
+        # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)
+        logging.debug("[call] MCP servers will be cleaned up by AsyncExitStack")

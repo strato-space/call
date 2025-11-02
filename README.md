@@ -627,26 +627,31 @@ Call provides a production Telegram bot with intelligent message parsing and con
 
 **Message Parsing:**
 
+Project-specific "project bots" (also called specialized bots) follow the naming pattern `<ProjectName>Bot` (for example, `StratoProjectBot`). When you mention such a bot without providing an explicit `@Target`, it falls back to the project orchestrator (`project.md`).
+
 **Private DMs:**
 
 - Plain text (no `@`) → input-only execution (equivalent to `/call <input>`)
-- `@Target <input>` → passed to library for resolution (priority: prompt > agent > project)
-- `@BotName Target <input>` → bot name is stripped, Target passed to library
+- `@Target <input>` → passed to library for resolution (priority: prompt > agent > project). Target must include the `@` prefix.
+- `@ProjectNameBot [@Target] <input>` → bot name is stripped, `@Target` passed to the library. When no second `@` token is present the bot falls back to the project orchestrator.
 - `@ <input>` → input-only (no target)
 
 **Group chats:**
 
-- Only messages with `@`-mention are handled
-- `@Target <input>` → passed to library for resolution
-- `@BotName Target <input>` → Target passed to library (same behavior)
+- Only messages that mention the bot handle explicitly are handled (either `@ProjectNameBot` for project bots or `@StratoSpaceAiBot` for the universal bot)
+- `@Target <input>` → passed to library for resolution (target must start with `@`)
+- `@ProjectNameBot <input>` → when no explicit `@Target` follows, the project orchestrator (`project.md`) is invoked (project bots only)
+- `@ProjectNameBot @Target <input>` → `@Target` passed to library (same behavior as private chats)
+- `@StratoSpaceAiBot ...` → universal bot (no default target, handles any project/agent/prompt)
 - Messages without `@` are ignored
 
 **Target Resolution:**
 
-- Bot layer does **NOT** pre-validate targets
+- Bot layer does **NOT** pre-validate targets beyond requiring the explicit `@` prefix
 - All target resolution delegated to `call_api.call_async()` (prompt > agent > project hierarchy)
 - Unknown targets trigger errors from library (not silently ignored by bot)
-- Project scoping derives from bot name (`AgentFabBot` → `AgentFab`)
+- Project scoping derives from bot name (`AgentFabBot` → `AgentFab`). When only the bot is mentioned, project bots run their project orchestrator automatically.
+- `StratoSpaceAiBot` is universal: it never injects a default project. Without `@Target` it runs the LLM in "void" mode (user input only, no card instructions). With `@Target` it can execute any prompt/agent/project found in the repository.
 - Enable `CALL_DEBUG=1` to trace parsing decisions in logs (`[bot]` prefix).
 
 **Context Extraction:**

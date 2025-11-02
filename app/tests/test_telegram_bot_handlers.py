@@ -85,8 +85,9 @@ class DummyMessage:
 
 
 class DummyChat:
-    def __init__(self, id=100):
+    def __init__(self, id=100, type="group"):
         self.id = id
+        self.type = type
 
 
 class DummyUpdate:
@@ -250,7 +251,9 @@ def test_plain_group_at_target_delegates_to_library(monkeypatch):
     services = FakeCallApi()
     tg_bot.set_services(call_api_module=services)
     monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
-    upd = DummyUpdate("@UnknownAgent run")
+    # Set bot name so group messages work
+    tg_bot.SELECTED_BOT_NAME = "TestBot"
+    upd = DummyUpdate("@TestBot UnknownAgent run")
     ctx = DummyContext()
 
     async def _runner():

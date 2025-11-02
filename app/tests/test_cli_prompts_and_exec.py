@@ -298,7 +298,7 @@ def test_cli_notify_event_only_ack():
 
 
 def test_cli_call_echo_resolved_project_agent_null():
-    """Test that AgentFab resolves as project-level prompt (project.md is indexed as prompt)."""
+    """Test that AgentFab resolves as project type."""
     code, out, err = _run_cli(
         [
             "call",
@@ -312,10 +312,10 @@ def test_cli_call_echo_resolved_project_agent_null():
     data = json.loads(out)
     assert isinstance(data, dict)
     resolved = data.get("resolved") or {}
-    # After project-level prompts feature: AgentFab is resolved as prompt (project.md)
-    assert resolved.get("type") == "prompt"
+    # AgentFab is a project
+    assert resolved.get("type") == "project"
     assert resolved.get("project") == "AgentFab"
-    assert resolved.get("agent") in (None, "")  # No agent for project-level prompts
+    assert resolved.get("agent") in (None, "")  # No agent for projects
     assert isinstance(resolved.get("path"), str)
     assert "AgentFab" in resolved.get("path", "")
 

@@ -8,6 +8,7 @@ import os
 import sqlite3
 import asyncio
 import json
+import logging
 from pathlib import Path as _Path
 from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
@@ -962,8 +963,8 @@ def _error_payload_event(
             import traceback
 
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[api] Failed to format debug traceback in _error_payload_event: %s", e)
 
     if details is not None:
         payload["details"] = details
@@ -1032,8 +1033,8 @@ def _error_payload(
             import traceback
 
             payload["debug"] = traceback.format_exc().strip().splitlines()[-20:]
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[api] Failed to format debug traceback in _error_payload: %s", e)
 
     if details is not None:
         payload["details"] = details
@@ -1330,6 +1331,7 @@ async def call_async(
                     actual_sid = None
         except Exception as e:
             # Convert pipeline errors to structured error; map known tracing 403 to 403
+            logging.exception("[api] Pipeline execution failed")
             msg = str(e)
             status = 500
             err_code = "PIPELINE_ERROR"
@@ -1376,13 +1378,13 @@ async def call_async(
         if dump_task is not None:
             try:
                 dump_task.cancel()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug("[api] Failed to cancel dump task: %s", e)
         if dump_fp is not None:
             try:
                 dump_fp.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug("[api] Failed to close dump file: %s", e)
         _reset_override()
 
     # If the pipeline returned a plain-text error (e.g., "Error: ...\n\nTraceback ..."),
