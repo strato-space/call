@@ -1320,15 +1320,15 @@ async def call_async(
             )
 
         try:
-            # Use the app layer context manager to build and run the agent once with a ready config.
-            async with app_call.build_and_run_agent(
+            # Build and run the agent once with a ready config (returns directly, no context manager)
+            agent_obj, _cfg, _session = await app_call.build_and_run_agent(
                 cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")
-            ) as (agent_obj, _cfg, _session):
-                final_output = getattr(_cfg, "_last_final_output", None)
-                try:
-                    actual_sid = getattr(_session, "id", None)
-                except Exception:
-                    actual_sid = None
+            )
+            final_output = getattr(_cfg, "_last_final_output", None)
+            try:
+                actual_sid = getattr(_session, "id", None)
+            except Exception:
+                actual_sid = None
         except Exception as e:
             # Convert pipeline errors to structured error; map known tracing 403 to 403
             logging.exception("[api] Pipeline execution failed")
