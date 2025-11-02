@@ -4447,13 +4447,19 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
 
         yield agent, cfg, session
 
-        # Cleanup: delete all MCP service messages after final result is delivered
-        try:
-            for srv in mcp_servers:
-                if isinstance(srv, MCPServerStdioHook):
-                    await srv.cleanup_service_messages()
-        except Exception as e:
-            logging.debug("[call] Failed to cleanup MCP service messages: %s", e)
+        # Cleanup: delete all MCP service messages in background (non-blocking)
+        # This ensures API returns quickly even if Telegram cleanup is slow
+        async def _cleanup_messages():
+            try:
+                for srv in mcp_servers:
+                    if isinstance(srv, MCPServerStdioHook):
+                        await srv.cleanup_service_messages()
+            except Exception as e:
+                logging.debug("[call] Failed to cleanup MCP service messages: %s", e)
+        
+        # Start cleanup in background, don't wait for it
+        asyncio.create_task(_cleanup_messages())
+        logging.debug("[call] MCP service message cleanup started in background")
         
         # MCP servers are automatically cleaned up by AsyncExitStack when context exits
         # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)

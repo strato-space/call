@@ -20,8 +20,8 @@ from call.lib.api import write as api_write
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload
 from call.lib.logging import configure_logging
 from call.lib import repo_db as repo_db_module
-from contextlib import asynccontextmanager
-from call.app.call import preinitialize_mcp_servers_async, MCPInitializationError
+from contextlib import asynccontextmanager, AsyncExitStack
+from call.app.call import preinitialize_mcp_servers_async, cleanup_mcp_servers, MCPInitializationError, _set_mcp_exit_stack
 
 
 # Expose thin wrappers for test monkeypatching (delegate to API)
@@ -44,15 +44,35 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize MCP servers at startup to avoid cold start during first requests."""
-    # Pre-initialize MCP servers to avoid cold start during first call
+    logger = logging.getLogger("call.actions")
+    
+    # Create AsyncExitStack in main lifespan context
+    exit_stack = AsyncExitStack()
+    await exit_stack.__aenter__()
+    _set_mcp_exit_stack(exit_stack)
+    logger.info("MCP exit stack created in main context")
+    
+    # Pre-initialize MCP servers synchronously in main context
     try:
         await preinitialize_mcp_servers_async("actions")
+        logger.info("MCP servers initialized successfully")
     except MCPInitializationError as exc:
-        logger = logging.getLogger("call.actions")
         logger.critical("MCP initialization failed during startup: %s", exc)
         raise
 
     yield
+    
+    # Shutdown: cleanup cache and exit stack
+    try:
+        await cleanup_mcp_servers()
+    except Exception as e:
+        logger.warning("MCP cache cleanup error: %s", e)
+    
+    try:
+        await exit_stack.__aexit__(None, None, None)
+        logger.info("MCP exit stack closed in main context")
+    except Exception as e:
+        logger.error("Exit stack cleanup error: %s", e)
 
 app = FastAPI(title="Call Actions API", version="2.0.2", lifespan=lifespan)
 
