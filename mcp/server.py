@@ -47,14 +47,18 @@ async def lifespan(app: FastMCP):
     )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     
-    try:
-        await preinitialize_mcp_servers_async("mcp")
-    except MCPInitializationError as exc:
-        log = get_logger("mcp")
-        log.critical("MCP initialization failed during server startup: %s", exc)
-        raise
+    # Start MCP initialization in background (non-blocking)
+    init_task = asyncio.create_task(preinitialize_mcp_servers_async("mcp"))
+    log.info("MCP initialization started in background")
+    debug_print("[mcp]", "[START]", "MCP init running in background, server ready")
 
     yield {}
+    
+    # Wait for background init to complete on shutdown
+    try:
+        await init_task
+    except Exception as e:
+        log.warning("Background MCP init error: %s", e)
 
 
 mcp = FastMCP("mcp-call", lifespan=lifespan)
