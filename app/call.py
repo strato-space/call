@@ -347,7 +347,7 @@ async def wait_for_mcp_init(timeout: float = 120.0) -> None:
     global _MCP_INIT_STATE, _MCP_INIT_ERROR, _MCP_INIT_EVENT
     
     # Already initialized successfully
-    if _MCP_INIT_STATE == _MCPInitState.INITIALIZED:
+    if _MCP_INIT_STATE == _MCPInitState.READY:
         return
     
     # Initialization failed previously
@@ -355,7 +355,7 @@ async def wait_for_mcp_init(timeout: float = 120.0) -> None:
         raise _MCP_INIT_ERROR or MCPInitializationError("MCP initialization failed")
     
     # Wait for initialization to complete
-    if _MCP_INIT_STATE == _MCPInitState.INITIALIZING:
+    if _MCP_INIT_STATE == _MCPInitState.IN_PROGRESS:
         if _MCP_INIT_EVENT is None:
             _MCP_INIT_EVENT = asyncio.Event()
         
