@@ -1476,9 +1476,11 @@ def call(
     """
     Thin sync wrapper over call_async. All selection and error handling is in call_async.
     """
-    try:
-        return asyncio.run(
-            call_async(
+    async def _call_with_owner_cleanup() -> Dict[str, Any]:
+        try:
+            from call.app import call as app_call
+        except Exception:
+            return await call_async(
                 project=project,
                 agent=agent,
                 prompt=prompt,
@@ -1492,7 +1494,50 @@ def call(
                 echo=echo,
                 debug=debug,
             )
-        )
+
+        owner_was_running = False
+        try:
+            owner_was_running = app_call.is_mcp_owner_running()
+        except Exception:
+            owner_was_running = False
+
+        try:
+            return await call_async(
+                project=project,
+                agent=agent,
+                prompt=prompt,
+                target=target,
+                input=input,
+                event=event,
+                attributes=attributes,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                session_id=session_id,
+                echo=echo,
+                debug=debug,
+            )
+        finally:
+            try:
+                owner_running_after = app_call.is_mcp_owner_running()
+                owner_tag = app_call.get_mcp_owner_tag()
+            except Exception:
+                owner_running_after = False
+                owner_tag = None
+
+            if (
+                not owner_was_running
+                and owner_running_after
+                and owner_tag == "waiter"
+            ):
+                try:
+                    await app_call.stop_mcp_owner_task()
+                except Exception:
+                    logging.getLogger("call.api").exception(
+                        "Failed to stop MCP owner task after call()"
+                    )
+
+    try:
+        return asyncio.run(_call_with_owner_cleanup())
     except Exception as e:
         return _error_payload(
             agent or "",
