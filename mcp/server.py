@@ -200,6 +200,11 @@ async def mcp_call(
     ctx: Context | None = None,
 ) -> Any:
     """Invoke a single agent/prompt selection by name (uses same rules as /call)."""
+    
+    log = get_logger("mcp.tool.call")
+    log.info("[CALL] Tool invoked: name=%s, input_len=%d, echo=%s, session_id=%s, event=%s, model=%s", 
+             name, len(input) if input else 0, echo, session_id, event, model)
+    debug_print("[mcp]", "[CALL]", f"Tool invoked: name={name}, input_len={len(input) if input else 0}")
 
     try:
         attrs = None
@@ -207,6 +212,8 @@ async def mcp_call(
             model_str = str(model).strip()
             if model_str:
                 attrs = {"model": model_str}
+        
+        log.debug("[CALL] Calling api_call_async...")
         res = await api_call_async(
             project=None,
             agent=None,
@@ -218,8 +225,23 @@ async def mcp_call(
             echo=echo,
             attributes=attrs,
         )
+        
+        # Log result details
+        res_type = type(res).__name__
+        res_ok = res.get("ok") if isinstance(res, dict) else None
+        res_len = len(str(res)) if res is not None else 0
+        
+        log.info("[CALL] ✅ Tool completed: type=%s, ok=%s, result_len=%d", res_type, res_ok, res_len)
+        debug_print("[mcp]", "[CALL]", f"✅ Tool completed: type={res_type}, ok={res_ok}, result_len={res_len}")
+        
+        # Log first 500 chars of result for debugging
+        if res is not None:
+            res_preview = str(res)[:500]
+            log.debug("[CALL] Result preview (500 chars): %s", res_preview)
+        
         return res
     except Exception as exc:
+        log.error("[CALL] ❌ Tool failed: %s: %s", type(exc).__name__, exc, exc_info=True)
         debug_print("[mcp]", "[ERROR]", f"Tool call failed: {type(exc).__name__}: {exc}")
         # Return structured error instead of raising to prevent FastMCP cancel scope issues
         return {
