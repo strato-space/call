@@ -4158,14 +4158,21 @@ async def _build_mcp_servers_from_yaml(
             args = (spec or {}).get("args") or []
             if not cmd:
                 return None
-            # Use our Telegram-integrated hook and ensure lifecycle is tied to astack
-            server = await astack.enter_async_context(
-                MCPServerStdioHook(
-                    params={"command": cmd, "args": args},
-                    name=name,
-                    client_session_timeout_seconds=timeout,
-                )
+            
+            # Create server hook
+            hook = MCPServerStdioHook(
+                params={"command": cmd, "args": args},
+                name=name,
+                client_session_timeout_seconds=timeout,
             )
+            
+            # For singleton pattern (astack=None), call __aenter__ directly
+            # For per-call pattern (astack provided), register with exit stack
+            if astack is None:
+                server = await hook.__aenter__()
+            else:
+                server = await astack.enter_async_context(hook)
+            
             try:
                 parts = [str(cmd)] + [str(a) for a in (args or [])]
                 pretty_cmd = shlex.join(parts)
