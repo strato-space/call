@@ -3549,44 +3549,50 @@ class MCPServerStdioHook(MCPServerStdio):
             raise
 
     async def cleanup_service_messages(self) -> None:
-        """Delete all tracked service messages from Telegram."""
+        """Delete all tracked service messages from Telegram. All exceptions are caught and logged."""
         log = logging.getLogger("call.mcp.cleanup")
         
-        # Check if cleanup is enabled via environment variable
-        cleanup_enabled = os.environ.get("TG_CLEANUP_MCP_MESSAGES", "1").strip().lower()
-        if cleanup_enabled not in ("1", "true", "yes", "on"):
-            log.debug("[%s] Cleanup disabled via TG_CLEANUP_MCP_MESSAGES=%s", self.name, cleanup_enabled)
-            return
-        
-        message_count = len(self.__service_message_ids)
-        if message_count == 0:
-            log.debug("[%s] No service messages to cleanup", self.name)
-            return
-        
-        log.info("[%s] Starting cleanup of %d service messages", self.name, message_count)
-        
         try:
-            await _init_bot_safe()
-        except Exception as e:
-            log.error("[%s] Failed to initialize bot for cleanup: %s", self.name, e, exc_info=True)
-            return
-        
-        deleted_count = 0
-        failed_count = 0
-        
-        for chat_id, msg_id in self.__service_message_ids:
+            # Check if cleanup is enabled via environment variable
+            cleanup_enabled = os.environ.get("TG_CLEANUP_MCP_MESSAGES", "1").strip().lower()
+            if cleanup_enabled not in ("1", "true", "yes", "on"):
+                log.debug("[%s] Cleanup disabled via TG_CLEANUP_MCP_MESSAGES=%s", self.name, cleanup_enabled)
+                return
+            
+            message_count = len(self.__service_message_ids)
+            if message_count == 0:
+                log.debug("[%s] No service messages to cleanup", self.name)
+                return
+            
+            log.info("[%s] Starting cleanup of %d service messages", self.name, message_count)
+            
             try:
-                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                deleted_count += 1
-                log.debug("[%s] Deleted message: chat_id=%s, msg_id=%s", self.name, chat_id, msg_id)
+                await _init_bot_safe()
             except Exception as e:
-                failed_count += 1
-                log.warning("[%s] Failed to delete message (chat_id=%s, msg_id=%s): %s", 
-                           self.name, chat_id, msg_id, e)
+                log.error("[%s] Failed to initialize bot for cleanup: %s", self.name, e, exc_info=True)
+                return
+            
+            deleted_count = 0
+            failed_count = 0
+            
+            for chat_id, msg_id in self.__service_message_ids:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                    deleted_count += 1
+                    log.debug("[%s] Deleted message: chat_id=%s, msg_id=%s", self.name, chat_id, msg_id)
+                except Exception as e:
+                    failed_count += 1
+                    log.warning("[%s] Failed to delete message (chat_id=%s, msg_id=%s): %s", 
+                               self.name, chat_id, msg_id, e)
+            
+            self.__service_message_ids.clear()
+            log.info("[%s] Cleanup completed: deleted=%d, failed=%d, total=%d", 
+                    self.name, deleted_count, failed_count, message_count)
         
-        self.__service_message_ids.clear()
-        log.info("[%s] Cleanup completed: deleted=%d, failed=%d, total=%d", 
-                self.name, deleted_count, failed_count, message_count)
+        except Exception as e:
+            # Catch-all for any unexpected errors in cleanup logic itself
+            log.error("[%s] Unexpected error in cleanup_service_messages: %s", 
+                     self.name, e, exc_info=True)
 
 
 # -------- Call subsystem helpers --------
@@ -4465,22 +4471,15 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     # Expose final_output to callers via cfg
     try:
         setattr(cfg, "_last_final_output", step1_output)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning("[call] Failed to set _last_final_output: %s", e)
 
-    # Cleanup: delete all MCP service messages in background (fully async, no await)
-    # Start cleanup BEFORE returning to ensure it runs even if caller exits immediately
-    async def _cleanup_messages():
-        """Background task to delete MCP service messages from Telegram."""
-        for srv in mcp_servers:
-            if isinstance(srv, MCPServerStdioHook):
-                # Fire-and-forget: don't await, let each cleanup run independently
-                asyncio.create_task(srv.cleanup_service_messages())
-        logging.debug("[call] MCP service message cleanup tasks created")
-    
-    # Start cleanup in background, don't wait for it
-    asyncio.create_task(_cleanup_messages())
-    logging.debug("[call] MCP service message cleanup started in background")
+    # Cleanup: delete all MCP service messages in background (fire-and-forget)
+    # All error handling is inside cleanup_service_messages()
+    for srv in mcp_servers:
+        if isinstance(srv, MCPServerStdioHook):
+            asyncio.create_task(srv.cleanup_service_messages())
+    logging.debug("[call] MCP cleanup started for %d servers", len(mcp_servers))
     
     # MCP servers are automatically cleaned up by AsyncExitStack when context exits
     # This ensures __aenter__ and __aexit__ run in the same async task (RAII principle)
