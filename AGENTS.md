@@ -67,52 +67,59 @@ Review the relevant directory documentation before making changes; many subsyste
 - This prevents "cancel scope in different task" errors
 - Let `MCPInitializationError` propagate
 
-### Unified Background Initialization Pattern
+### Unified Owner-Task Initialization Pattern
 
-**All entry points use the same strategy:**
+**All entry points delegate lifecycle work to the MCP owner task:**
 
-1. **MCP Server** (`mcp/server.py`) - async lifespan
-2. **Actions API** (`actions/main.py`) - async lifespan  
-3. **Telegram Bot** (`telegram_bot/bot.py`) - PTB post_init/post_shutdown callbacks
-4. **CLI** (`cli/main.py`) - lazy init on first call (no pre-init needed)
-
-```python
-# Async entry points (MCP Server, Actions API)
-async def lifespan(app):
-    exit_stack = AsyncExitStack()
-    await exit_stack.__aenter__()
-    _set_mcp_exit_stack(exit_stack)
-    
-    # Start init in background - returns immediately
-    init_task = asyncio.create_task(preinitialize_mcp_servers_async(...))
-    
-    yield {}  # Fast response (Claude Desktop / API clients)
-    
-    # Shutdown: wait for init, then cleanup
-    if not init_task.done():
-        await asyncio.wait_for(init_task, timeout=30.0)
-    await cleanup_mcp_servers()
-    await exit_stack.__aexit__(None, None, None)
+```
+┌───────────────────────┐        start_mcp_owner_task(tag)
+│ entry point (server)  │ ────────────────────────────────▶ ┌──────────────────┐
+└───────────────────────┘                                    │ owner task       │
+                                                             │  AsyncExitStack  │
+                                                             │  preinitialize() │
+                                                             │  wait shutdown   │
+                                                             └────────┬─────────┘
+                                                                      │ stop_mcp_owner_task()
+                                                                      ▼
+                                                             cleanup_mcp_servers()
 ```
 
-```python
-# Telegram Bot (PTB callbacks in bot's event loop)
-async def _post_init(application):
-    _exit_stack = AsyncExitStack()
-    await _exit_stack.__aenter__()
-    _set_mcp_exit_stack(_exit_stack)
-    
-    # Start background init
-    _init_task = asyncio.create_task(preinitialize_mcp_servers_async("bot"))
+- **MCP Owner Task** (`start_mcp_owner_task(tag)`) spins up a dedicated task that:
+  1. Enters a single `AsyncExitStack`
+  2. Calls `preinitialize_mcp_servers_async(tag)`
+  3. Waits on an internal shutdown event
+  4. Cleans up MCP servers and exits the stack in the same task
+- **Shutdown** occurs via `stop_mcp_owner_task()`, which signals the shutdown event and awaits task completion.
+- **Autostart**: `wait_for_mcp_init()` starts the owner automatically when invoked from CLI contexts that have not started a lifespan.
 
-async def _post_shutdown(application):
-    if not _init_task.done():
-        await asyncio.wait_for(_init_task, timeout=30.0)
-    await cleanup_mcp_servers()
-    await _exit_stack.__aexit__(None, None, None)
+Updated entry point hooks:
 
-app = ApplicationBuilder().post_init(_post_init).post_shutdown(_post_shutdown).build()
-```
+1. **MCP Server** (`mcp/server.py`)
+   ```python
+   async def lifespan(app):
+       await start_mcp_owner_task("mcp")
+       yield {}
+       await stop_mcp_owner_task()
+   ```
+2. **Actions API** (`actions/main.py`)
+   ```python
+   async def lifespan(app):
+       await start_mcp_owner_task("actions")
+       yield
+       await stop_mcp_owner_task()
+   ```
+3. **Telegram Bot** (`telegram_bot/bot.py`)
+   ```python
+   post_init, post_shutdown = create_mcp_lifespan_callbacks("bot")
+   ApplicationBuilder().post_init(post_init).post_shutdown(post_shutdown)
+   ```
+4. **CLI** (`lib/api.py`) — imports `call.app.call` lazily and waits:
+   ```python
+   from call.app import call as app_call
+   await app_call.wait_for_mcp_init(120.0)
+   ```
+
+`wait_for_mcp_init()` reuses the existing owner task when available and starts a "waiter" owner otherwise. This keeps CLI invocations safe while avoiding duplicate startup work.
 
 ### Tool Handler Pattern
 ```python
