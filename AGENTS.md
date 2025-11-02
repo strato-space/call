@@ -59,10 +59,12 @@ Review the relevant directory documentation before making changes; many subsyste
 - **Performance** — Avoids repeated server creation/destruction overhead
 
 ### Development Rules
-- Servers initialized once, reused many times
-- Call `cleanup_mcp_servers()` at application shutdown
+- Create `AsyncExitStack` in main lifespan context BEFORE initialization
+- Call `_set_mcp_exit_stack(exit_stack)` before `preinitialize_mcp_servers_async()`
+- Initialize MCP synchronously in same task (no background tasks)
+- Exit stack in same context: `await exit_stack.__aexit__(None, None, None)`
+- This prevents "cancel scope in different task" errors
 - Let `MCPInitializationError` propagate
-- Do not manually create/destroy server instances
 
 ## Contribution Workflow
 
