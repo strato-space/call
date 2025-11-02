@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
-from call.app.call import preinitialize_mcp_servers_async, MCPInitializationError
+from call.app.call import preinitialize_mcp_servers_async, cleanup_mcp_servers, MCPInitializationError
 
 try:
     # FastMCP SDK
@@ -54,11 +54,16 @@ async def lifespan(app: FastMCP):
 
     yield {}
     
-    # Wait for background init to complete on shutdown
+    # Shutdown: wait for init and cleanup
     try:
         await init_task
     except Exception as e:
         log.warning("Background MCP init error: %s", e)
+    
+    try:
+        await cleanup_mcp_servers()
+    except Exception as e:
+        log.warning("MCP cleanup error: %s", e)
 
 
 mcp = FastMCP("mcp-call", lifespan=lifespan)
