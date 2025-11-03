@@ -49,18 +49,12 @@ def test_call_success_with_prompt_override(monkeypatch):
     class _DummySession:
         pass
 
-    class _CM:
-        def __init__(self, out):
-            self.out = out
-
-        async def __aenter__(self):
-            return _DummyAgent(), _Cfg(self.out), _DummySession()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_build_and_run_agent(*, cfg, user_input=""):
-        return _CM(f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{user_input}")
+    async def fake_build_and_run_agent(*, cfg, user_input=""):
+        return (
+            _DummyAgent(),
+            _Cfg(f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{user_input}"),
+            _DummySession(),
+        )
 
     monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
 

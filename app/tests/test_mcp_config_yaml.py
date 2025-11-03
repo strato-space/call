@@ -2,6 +2,8 @@ import importlib
 from pathlib import Path
 import pytest
 
+from contextlib import AsyncExitStack
+
 from call.app.call import (
     _load_mcp_yaml_config,
     preinitialize_mcp_servers_async,
@@ -9,6 +11,7 @@ from call.app.call import (
     _validate_and_cache_mcp_config,
     _prepare_mcp_servers,
     MCPInitializationError,
+    _set_mcp_exit_stack,
 )
 from call.app import call as call_module
 import asyncio
@@ -72,9 +75,23 @@ async def test_initialize_requires_enable_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
     monkeypatch.setenv("ENABLE_MCP", "0")
 
+    async def run_init():
+        return await _validate_and_cache_mcp_config()
+
     with pytest.raises(MCPInitializationError) as exc:
-        await _validate_and_cache_mcp_config()
+        await _with_exit_stack(run_init)
     assert "ENABLE_MCP" in str(exc.value)
+
+
+async def _with_exit_stack(func):
+    exit_stack = AsyncExitStack()
+    await exit_stack.__aenter__()
+    try:
+        _set_mcp_exit_stack(exit_stack)
+        return await func()
+    finally:
+        await exit_stack.__aexit__(None, None, None)
+        _set_mcp_exit_stack(None)
 
 
 @pytest.mark.anyio
@@ -85,12 +102,15 @@ async def test_initialize_success_and_prepare_reuse(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
     monkeypatch.setenv("ENABLE_MCP", "1")
 
-    cfg_first = await _validate_and_cache_mcp_config()
+    async def run_init():
+        return await _validate_and_cache_mcp_config()
+
+    cfg_first = await _with_exit_stack(run_init)
     # Only config is cached (servers created fresh per call)
     assert cfg_first["mcpServers"]
     assert "fake" in cfg_first["mcpServers"]
 
-    cfg_second = await _validate_and_cache_mcp_config()
+    cfg_second = await _with_exit_stack(run_init)
     assert cfg_second == cfg_first
 
     # _prepare_mcp_servers requires AsyncExitStack - test in integration tests

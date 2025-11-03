@@ -295,8 +295,10 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
     app_call.selected_thread_id = 222
     app_call.force_no_session = False
 
-    async with app_call.build_and_run_agent(cfg, user_input="hi"):
-        pass
+    agent, cfg_out, session = await app_call.build_and_run_agent(cfg, user_input="hi")
+
+    assert agent is None or hasattr(agent, "__class__")
+    assert cfg_out is cfg
 
     assert banner_calls, "_send_welcome_banner should be invoked"
     assert banner_calls[0]["cfg"] is cfg
@@ -379,7 +381,6 @@ async def test_build_and_run_agent_uses_embed_helper(monkeypatch):
 
     json_input = json.dumps({"context": []})
 
-    async with app_call.build_and_run_agent(cfg, user_input=json_input):
-        pass
+    await app_call.build_and_run_agent(cfg, user_input=json_input)
 
     assert embed_calls == [json_input]

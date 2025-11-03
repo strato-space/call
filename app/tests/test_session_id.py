@@ -73,19 +73,9 @@ def test_session_id_in_success_response(monkeypatch):
         def __init__(self, sid):
             self.id = sid
 
-    class _CM:
-        def __init__(self, sid):
-            self.sid = sid
-
-        async def __aenter__(self):
-            return _DummyAgent(), _Cfg("ok"), _DummySession(self.sid)
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_build_and_run_agent(*, cfg, user_input=""):
+    async def fake_build_and_run_agent(*, cfg, user_input=""):
         # Simulate a created session id (agentless format chat[:thread])
-        return _CM("-100123:10")
+        return _DummyAgent(), _Cfg("ok"), _DummySession("-100123:10")
 
     monkeypatch.setattr(
         app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True
@@ -125,26 +115,12 @@ def test_session_id_override_parsed_and_used(monkeypatch):
         def __init__(self, sid):
             self.id = sid
 
-    class _CM:
-        def __init__(self, name):
-            self._name = name
-
-        async def __aenter__(self):
-            # Build SID from globals set by lib.api (parsed from session_id)
-            chat = getattr(app_call, "selected_chat_id", None)
-            thr = getattr(app_call, "selected_thread_id", None)
-            sid = (
-                f"{self._name}:{chat}:{thr}"
-                if thr is not None
-                else f"{self._name}:{chat}"
-            )
-            return _DummyAgent(), _Cfg("ok"), _DummySession(sid)
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_build_and_run_agent(*, cfg, user_input=""):
-        return _CM(cfg.agent)
+    async def fake_build_and_run_agent(*, cfg, user_input=""):
+        # Build SID from globals set by lib.api (parsed from session_id)
+        chat = getattr(app_call, "selected_chat_id", None)
+        thr = getattr(app_call, "selected_thread_id", None)
+        sid = f"{cfg.agent}:{chat}:{thr}" if thr is not None else f"{cfg.agent}:{chat}"
+        return _DummyAgent(), _Cfg("ok"), _DummySession(sid)
 
     monkeypatch.setattr(
         app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True
@@ -183,16 +159,9 @@ def test_no_session_without_routing(monkeypatch):
     class _DummyAgent:
         pass
 
-    class _CM:
-        async def __aenter__(self):
-            # No session created path
-            return _DummyAgent(), _Cfg("ok"), None
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_build_and_run_agent(*, cfg, user_input=""):
-        return _CM()
+    async def fake_build_and_run_agent(*, cfg, user_input=""):
+        # No session created path
+        return _DummyAgent(), _Cfg("ok"), None
 
     monkeypatch.setattr(
         app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True

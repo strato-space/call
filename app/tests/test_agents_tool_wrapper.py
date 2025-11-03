@@ -138,8 +138,7 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
         mcp=[],
     )
 
-    async with app_call.build_and_run_agent(cfg, user_input="hello"):
-        pass
+    await app_call.build_and_run_agent(cfg, user_input="hello")
 
     assert created_tools, "Expected helper tool to be built"
     wrapped_handler = created_tools[0].on_invoke_tool

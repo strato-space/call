@@ -65,7 +65,7 @@ def test_bot_log_update_emits_raw_json(monkeypatch, caplog):
 
     monkeypatch.setenv("CALL_DEBUG", "1")
     monkeypatch.setattr(mod, "Update", DummyUpdate, raising=False)
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="call.bot")
 
     # Act
     asyncio.run(mod._log_update(DummyUpdate(), None))

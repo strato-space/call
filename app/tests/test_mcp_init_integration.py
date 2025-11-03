@@ -77,8 +77,7 @@ async def test_build_and_run_agent_initializes_mcp_first(monkeypatch, tmp_path):
     
     # Execute build_and_run_agent
     try:
-        async with call_module.build_and_run_agent(cfg, "test input"):
-            pass
+        await call_module.build_and_run_agent(cfg, "test input")
     except Exception as e:
         # Capture any errors but still check call order
         print(f"Error during execution: {e}")
@@ -128,8 +127,7 @@ async def test_mcp_init_failure_prevents_execution(monkeypatch, tmp_path):
     
     # Verify that MCPInitializationError is raised
     with pytest.raises(call_module.MCPInitializationError, match="Test MCP failure"):
-        async with call_module.build_and_run_agent(cfg, "test"):
-            pass
+        await call_module.build_and_run_agent(cfg, "test")
     
     # Verify git_pull was never called
     assert call_order == ["mcp_prepare_failed"], \
