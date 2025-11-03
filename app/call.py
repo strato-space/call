@@ -3250,6 +3250,13 @@ class MCPServerStdioHook(MCPServerStdio):
 
     from typing import Any
 
+    @staticmethod
+    def _env_flag(name: str, default: bool = False) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in ("1", "true", "yes", "on")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Per-instance last message holder
@@ -3265,6 +3272,9 @@ class MCPServerStdioHook(MCPServerStdio):
             str(getattr(self, "name", "") or "").strip()
             or str(getattr(self, "id", "") or "").strip()
             or type(self).__name__
+        )
+        self._telegram_debug_enabled: bool = self._env_flag(
+            "CALL_DEBUG_TELEGRAM", default=False
         )
 
     @staticmethod
@@ -3464,8 +3474,10 @@ class MCPServerStdioHook(MCPServerStdio):
             text = text[: max_len - 3] + "..."
         return text.rstrip("\n")
 
-    async def __send_message(self, text: str) -> Message:
+    async def __send_message(self, text: str) -> Optional[Message]:
         """Send a new Telegram message for this MCP instance and cache it. Never raises."""
+        if not self._telegram_debug_enabled:
+            return self.__telegram_last_message
         # Prefix with MCP title and sanitize; use common send path with consistent target selection
         header = f"<b>{self._mcp_title}</b>\n\n"
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
@@ -3498,6 +3510,8 @@ class MCPServerStdioHook(MCPServerStdio):
 
     async def __edit_message_text(self, text: str) -> None:
         """Edit this instance's message; if missing, send a new one. Never raises."""
+        if not self._telegram_debug_enabled:
+            return
         header = f"<b>{self._mcp_title}</b>\n\n"
         # Escape body as code to avoid Telegram parsing HTML comments or tags inside content
         escaped_body = _html.escape(text or "")
