@@ -10,7 +10,7 @@
 
 ## Списки промптов в Prompt Repo
 
-- `/prompts_draft`  — список промптов в статусе draft со ссылками на githib 
+- `/prompts_draft`  — список промптов в статусе draft со ссылками на githib
 - `/prompts_ready`  — список промптов в статусе ready со ссылками на githib
 - [Prompt Repo: strato-space/prompt](https://github.com/strato-space/prompt)
 
@@ -28,12 +28,12 @@
 
 - Сейчас контекстные боксы создаются созданием папки в Prompt Repository:
   - [AgentFab/ContentBoxes](https://github.com/strato-space/prompt/tree/main/AgentFab/ContentBoxes)
-- Создайте новую подпапку с понятным именем и поместите внутрь необходимые материалы (md, txt, csv и т.д.). 
+- Создайте новую подпапку с понятным именем и поместите внутрь необходимые материалы (md, txt, csv и т.д.).
 - После обновления github выполните `/reload`.
 
 ## Как использовать контексный бокс
 
-- в input в любом месте текста указать context-box: @BusinessAnalytycAgent 
+- в input в любом месте текста указать context-box: @BusinessAnalytycAgent
 
 ## Как изменить состав или инстукции AgentFab
 
@@ -53,7 +53,7 @@
 - Имена чувствительны к регистру. Используйте точные названия `Project`, `Agent`, `Prompt`, как в Prompt Repo.
 - Бот работае в личных сообщениях и в группах с указанием команды /call.
 - В процессе работы @AgentFab бот выводит помежуточные шаги, вызовы MCP Filesystem, MCP Sequential Thinking, MCP Voicebot, вызовы дочених агентов в ту же группу где вызывана команда /call
-- Бот сохранияет истрию переписки даже при перезапуске, и позволят строить длительные диалоги с агентами и промптами. 
+- Бот сохранияет истрию переписки даже при перезапуске, и позволят строить длительные диалоги с агентами и промптами.
 
 
 ## Быстрый старт
@@ -95,9 +95,9 @@
 - `/prompts_ready --project * --prompt 10* --target r:*`
 - `/prompts_draft --project AgentFab --prompt 3*-*`
 
-# Документация разрабочка
+## Документация разрабочка
 
-## Как парсятся сообщения
+### Как парсятся сообщения
 
 - __Личные сообщения__
   - Простой текст (без @) → запускается как input‑only (аналог `/call <input>`)
@@ -113,7 +113,7 @@
   - `@ <input>` → input‑only
   - Примечание: Неизвестные targets вызовут ошибку из библиотеки (не игнорируются ботом молча)
 
-## Резолвинг цели и приоритеты
+### Резолвинг цели и приоритеты
 
 - Если указан `target`, приоритет такой:
   1) prompt
@@ -127,7 +127,7 @@
     - `path:UxFab/DialogPostAnalysis`
     - `path:UxFab`
 
-## Шаблоны (wildcards) в тексте
+### Шаблоны (wildcards) в тексте
 
 - Токены вида `@31-*` или `32-*` резолвятся через БД репозитория.
 - Первая найденная карточка по каждому токену добавляется в контекст как файловая ссылка
@@ -140,7 +140,7 @@
 - `@31-*` → добавит один контекстный файл
 - `31-* 32-*` → добавит два контекстных файла
 
-## Соответствие MCP (mcp-voicebot)
+### Соответствие MCP (mcp-voicebot)
 
 - Инструменты:
   - `agents(query?, include_aliases?, project_name?)`
@@ -169,7 +169,7 @@
 - Ровно один из `project|agent|prompt|target` должен быть указан.
 - В Telegram чаще всего используется `target`; остальное формируется парсером.
 
-## ToDo примеры curl команд 
+## ToDo примеры curl команд
 
 - todo
 
@@ -263,7 +263,7 @@ py -m call.cli.main call --target AgentFab --parse-input "31-OnlineQuestionsBabo
 }
 ```
 
-```
+```bash
 py -m call.cli.main exec --target AgentFab --parse-input "31-OnlineQuestionsBabook 32-InterviewSummary" --echo
 {
   "target": "AgentFab",
