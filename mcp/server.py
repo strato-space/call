@@ -138,7 +138,53 @@ async def mcp_exec(
     payload: Dict[str, Any],
     ctx: Context | None = None,
 ) -> Any:
-    """Execute via payload (best for content buckets)."""
+    """Execute via payload (best for content buckets).
+
+    Example payload from Actions API docs:
+
+    ```json
+    {
+     "agent": "UxResearcherReq",
+     "input": "user message text",
+     "replay": "replay to message text",
+     "context":
+      [
+          {
+              "type": "text",
+              "text": "foo headline line.\nbar summary line.\nbaz call-to-action button description.",
+              "source": {
+                  "type": "file",
+                  "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-",
+                  "name": "foo-bar-document.docx"
+              }
+          },
+          {
+              "type": "text",
+              "text": "foo question about service? bar cloud offer allows foo chain registration. baz on-prem build does not include that.",
+              "source": {
+                  "type": "session",
+                  "_id": "68afe646ef46aed531a8ecc5",
+                  "name": "foo bar voicebot session"
+              }
+          },
+          {
+              "type": "session",
+              "_id": "68c7ab4cab67ffbd365062f1"
+          },
+          {
+              "type": "file",
+              "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-"
+          }
+      ]
+    }
+    ```
+
+    See `prompt/schema/context-array.md` for the canonical context array schema.
+
+    Fields mirror the exec payload contract — provide exactly one selector
+    (`project`|`agent`|`prompt`|`target`) plus optional `context`, `input`,
+    `model`, `session_id`, and `echo`.
+    """
     try:
         # Forward to the library's single-source-of-truth payload interpreter
         kwargs, err = api_interpret_exec_payload(payload)

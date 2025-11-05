@@ -660,15 +660,43 @@ When replying to messages, the bot builds structured JSON payloads:
 
 ```json
 {
-  "target": "@Name",
-  "input": "main text",
-  "context": [
-    {"type": "text", "text": "reply text"},
-    {"type": "text", "url": "https://api.telegram.org/file/..."}
-  ],
-  "replay": "reply text"
+ "agent": "UxResearcherReq",
+ "input": "optional user message text",
+ "replay": "optional replay to message text",
+ "context":
+  [
+      {
+          "type": "text",
+          "text": "foo headline line.\nbar summary line.\nbaz call-to-action button description.",
+          "source": {
+              "type": "file",
+              "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-",
+              "name": "foo-bar-document.docx"
+          }
+      },
+      {
+          "type": "text",
+          "text": "foo question about service? bar cloud offer allows foo chain registration. baz on-prem build does not include that.",
+          "source": {
+              "type": "session",
+              "_id": "68afe646ef46aed531a8ecc5",
+              "name": "foo bar voicebot session"
+          }
+      },
+      {
+          "type": "session",
+          "_id": "68c7ab4cab67ffbd365062f1"
+      },
+      {
+          "type": "file",
+          "file_id": "13LlOsEr6AGw6n6YX1mzrUIVUdH3xT63-"
+      }
+  ]
 }
+
 ```
+see repo: prompt/schema/context-array.md
+
 
 **Inline Token Resolution:**
 
