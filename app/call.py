@@ -1713,35 +1713,12 @@ def _build_agent_tool(
         pass
 
     try:
-        attrs_yaml = _attrs_to_yaml_text(sub_cfg.attributes)
-        if attrs_yaml:
-            debug_print(
-                "[tools]",
-                f"Sub-cfg attributes (YAML) for {getattr(sub_cfg, 'id', None) or sub_name}:\n"
-                + attrs_yaml,
-            )
-    except Exception:
-        pass
-
-    try:
         sub_attrs_has_instr = isinstance(sub_cfg.attributes, dict) and (
             "instructions" in (sub_cfg.attributes or {})
         )
     except Exception:
         sub_attrs_has_instr = False
     if not sub_attrs_has_instr:
-        try:
-            prev = sub_cfg.instructions or ""
-            if len(prev) > 2048:
-                prev = prev[:2045] + "..."
-            debug_print(
-                "[tools]",
-                f"Sub-cfg instructions preview for {getattr(sub_cfg, 'id', None) or sub_name}:\n"
-                + prev,
-            )
-        except Exception:
-            pass
-
         sub_agent = get_or_create_agent(
             name=(sub_cfg.id or sub_name),
             instructions=(sub_cfg.instructions or ""),
