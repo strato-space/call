@@ -891,8 +891,39 @@ def main() -> int:
         event_value = (args.event or "").strip()
 
         # Input and content/context
-        if args.input:
-            payload["input"] = args.input
+        input_text = None
+        input_file = getattr(args, "input_file", "")
+        if input_file:
+            try:
+                text_path = _Path(input_file).expanduser()
+                input_text = text_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                _emit_output(
+                    {
+                        "ok": False,
+                        "error_code": 400,
+                        "description": f"--input-file not found: {input_file}",
+                        "code": "BAD_REQUEST",
+                    },
+                    getattr(args, "format", "json"),
+                )
+                return 1
+            except Exception as exc:
+                _emit_output(
+                    {
+                        "ok": False,
+                        "error_code": 400,
+                        "description": f"Failed to read --input-file: {exc}",
+                        "code": "BAD_REQUEST",
+                    },
+                    getattr(args, "format", "json"),
+                )
+                return 1
+        elif args.input:
+            input_text = args.input
+
+        if input_text is not None:
+            payload["input"] = input_text
         ctx: list = []
         for ci in args.content_item or []:
             try:
@@ -1120,6 +1151,11 @@ def main() -> int:
     )
     p_exec.add_argument(
         "--input", default="", help="Plain LLM input text (merged into payload)"
+    )
+    p_exec.add_argument(
+        "--input-file",
+        default="",
+        help="Read LLM input text from file (overrides --input when provided)",
     )
     p_exec.add_argument(
         "--parse-input",
