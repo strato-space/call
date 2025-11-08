@@ -642,9 +642,8 @@ def _resolve_agent_and_input(
             cand = _normalize_token(cand_raw)
             tail = sub[1] if len(sub) > 1 else ""
             # Return candidate as target only if it resembles a catalog identifier
-            candidate = cand if cand.startswith("@") else f"@{cand}" if cand else ""
-            if candidate and _looks_like_target(candidate):
-                return candidate.lstrip("@"), tail, True
+            if cand_raw.startswith("@") and _looks_like_target(cand_raw):
+                return cand.lstrip("@"), tail, True
             # No candidate -> treat all as input-only
             return "", rest.strip(), True
         # '@Target ...' -> return target without validation
