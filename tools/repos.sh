@@ -40,14 +40,19 @@ ensure_venv() {
     return 0
   fi
 
-  local python_bin
-  if ! python_bin="$(detect_python_binary)"; then
-    echo "Python interpreter not found. Please install Python 3 before continuing." >&2
+  if ! ensure_uv; then
+    echo "The 'uv' tool is required to provision the virtual environment. Please install uv and retry." >&2
     return 1
   fi
 
-  log_section "Creating Python virtual environment (.venv) with ${python_bin}"
-  "${python_bin}" -m venv .venv
+  log_section "Creating Python virtual environment (.venv) with uv"
+  uv venv --python 3.13.5 --clear --seed .venv
+
+  if [ -f ".venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    . ".venv/bin/activate"
+    echo "Activated virtual environment using .venv/bin/activate"
+  fi
 }
 
 activate_venv() {
@@ -211,29 +216,30 @@ install_uv_windows() {
 }
 
 ensure_uv() {
-  if command_exists uv; then
-    echo "uv is already installed."
-    return 0
+  if ! command_exists uv; then
+    local uname_s
+    uname_s="$(uname -s)"
+    case "$uname_s" in
+      Linux*) install_uv_linux ;;
+      MINGW*|MSYS*|CYGWIN*) install_uv_windows ;;
+      *)
+        echo "Unsupported platform (${uname_s}). Install uv manually: https://docs.astral.sh/uv/getting-started/installation/" >&2
+        return 1
+        ;;
+    esac
   fi
 
-  local uname_s
-  uname_s="$(uname -s)"
-  case "$uname_s" in
-    Linux*) install_uv_linux ;;
-    MINGW*|MSYS*|CYGWIN*) install_uv_windows ;;
-    *)
-      echo "Unsupported platform (${uname_s}). Install uv manually: https://docs.astral.sh/uv/getting-started/installation/" >&2
-      return 1
-      ;;
-  esac
-
-  if command_exists uv; then
-    echo "uv installation confirmed."
-    return 0
+  if ! command_exists uv; then
+    echo "uv was not detected after installation attempts. Please install it manually." >&2
+    return 1
   fi
 
-  echo "uv was not detected after installation attempts. Please install it manually." >&2
-  return 1
+  log_section "Ensuring uv Python toolchain 3.13.5"
+  if ! uv python install 3.13.5 >/dev/null 2>&1; then
+    uv python install 3.13.5
+  fi
+
+  return 0
 }
 
 install_mcp_node_servers() {
@@ -448,7 +454,10 @@ if [ "$DO_PULL" = true ]; then
     systemctl daemon-reload
     log_section "Restarting call, voice, tg-ro, tg, tgbot services"
     sudo systemctl restart mcp@call mcp@voice mcp@tg-ro mcp@tg mcp@tgbot actions@call actions@voice
-    
+
+    log_section "Restarting bot services"
+    sudo systemctl restart bot@StratoProjectBot bot@StratoSpaceAiBot
+
     #to fix: fe, tm, gsh
     log_section "Restarting fs, seq, fe, mem, tm, gsh services"
     sudo systemctl restart mcp@fs mcp@seq mcp@fe mcp@mem mcp@tm mcp@gsh 
