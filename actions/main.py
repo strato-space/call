@@ -136,6 +136,7 @@ async def access_log(req: Request, call_next):
     dependencies=[Depends(bearer_guard)],
     operation_id="agents",
     summary="List available agents (hierarchical)",
+    openapi_extra={"x-openai-isConsequential": False},
 )
 def agents(
     project: str = Query("", description="Filter by project (supports * wildcard)"),
@@ -262,6 +263,7 @@ def notify_action_post(payload: NotifyPayload = Body(...)):
     dependencies=[Depends(bearer_guard)],
     operation_id="read",
     summary="Read raw card text from repo.db for any entity project/agent/prompt",
+    openapi_extra={"x-openai-isConsequential": False},
 )
 def read(id: str):
     try:
@@ -318,6 +320,7 @@ def write(id: str, payload: str = Body(..., media_type="text/plain")):
     dependencies=[Depends(bearer_guard)],
     operation_id="prompts",
     summary="List prompts (ready/draft)",
+    openapi_extra={"x-openai-isConsequential": False},
 )
 def prompts(
     project: str = Query("", description="Filter by project (exact)"),
@@ -348,6 +351,7 @@ def prompts(
     dependencies=[Depends(bearer_guard)],
     operation_id="models",
     summary="List available OpenAI models",
+    openapi_extra={"x-openai-isConsequential": False},
 )
 def models_endpoint():
     return api_models()

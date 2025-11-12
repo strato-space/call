@@ -9,6 +9,7 @@
       "get": {
         "summary": "List available agents (hierarchical)",
         "operationId": "agents",
+        "x-openai-isConsequential": false,
         "parameters": [
           {
             "name": "project",
@@ -239,6 +240,7 @@
       "get": {
         "summary": "Read raw card text from repo.db for any entity project/agent/prompt",
         "operationId": "read",
+        "x-openai-isConsequential": false,
         "parameters": [
           {
             "name": "id",
@@ -359,6 +361,7 @@
       "get": {
         "summary": "List prompts (ready/draft)",
         "operationId": "prompts",
+        "x-openai-isConsequential": false,
         "parameters": [
           {
             "name": "project",

@@ -293,7 +293,7 @@ if _env_file is None:
 from agents import Agent, Runner, WebSearchTool, SQLiteSession
 from agents.tool import FileSearchTool, FunctionTool, ImageGenerationTool, function_tool
 from agents.run_context import RunContextWrapper
-from agents.mcp import MCPServerStdio
+from agents.mcp import MCPServerSse, MCPServerStdio
 from agents.model_settings import ModelSettings
 
 # Simple Agent factory/cache to avoid re-instantiating identical Agents within a run
@@ -1007,8 +1007,23 @@ async def cleanup_mcp_servers() -> None:
     """Clear MCP server cache. Actual cleanup done by exit stack in lifespan."""
     global _MCP_SERVERS_CACHE
     
-    debug_print("[mcp]", f"Clearing {len(_MCP_SERVERS_CACHE)} MCP servers cache...")
+    count = len(_MCP_SERVERS_CACHE)
+    debug_print("[mcp]", f"Clearing {count} MCP servers cache...")
+
+    servers = _MCP_SERVERS_CACHE.items()
     _MCP_SERVERS_CACHE = {}
+
+    for name, server in list(servers):
+        close = getattr(server, "__aexit__", None)
+        if callable(close):
+            try:
+                await close(None, None, None)
+                logging.info("[mcp] MCP server '%s' closed", name)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logging.warning("[mcp] Failed to close MCP server '%s': %s", name, exc, exc_info=True)
+        else:
+            logging.debug("[mcp] Server '%s' has no __aexit__; skipping close", name)
+
     logging.info("[mcp] MCP server cache cleared")
 
 
@@ -4417,16 +4432,42 @@ async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
                     servers_by_name[name] = srv
             else:
                 logging.info("[mcp] Server '%s' has serverUrl but no bridge.command; skipping", name)
-        else:
-            if "serverUrl" in spec:
-                logging.info("[mcp] Server '%s' is remote but no bridge defined; skipping", name)
-    
-    if disabled_names:
-        logging.info("[mcp] Disabled servers: %s", ", ".join(sorted(disabled_names)))
-        debug_print("[mcp]", "Skipping disabled servers: " + ", ".join(sorted(disabled_names)))
+            continue
         
-    return servers_by_name
+        if "serverUrl" in spec:
+            try:
+                srv = MCPServerSse(
+                    params={
+                        "url": str(spec.get("serverUrl")),
+                        "headers": {
+                            k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
+                            for k, v in (spec.get("headers") or {}).items()
+                        },
+                    },
+                    name=name,
+                    client_session_timeout_seconds=float(spec.get("timeoutSeconds", 1200)),
+                )
+                await srv.__aenter__()
+                servers_by_name[name] = srv
+                logging.info("[mcp] Registered remote MCP server '%s' via SSE", name)
+                debug_print("[mcp]", f"✅ Registered remote '{name}' via SSE")
+                continue
+            except Exception as exc:
+                logging.info(
+                    "[mcp] Server '%s' is remote but failed to initialize SSE client: %s",
+                    name,
+                    exc,
+                )
+                try:
+                    debug_print(
+                        "[mcp]",
+                        f"❌ Failed to initialize SSE client for '{name}': {exc}",
+                    )
+                except Exception:
+                    pass
+                continue
 
+    # ... (rest of the code remains the same)
 
 async def _build_mcp_servers_from_yaml(
     cfg_yaml: dict | None, astack: AsyncExitStack
@@ -4521,18 +4562,38 @@ async def _build_mcp_servers_from_yaml(
                         logging.debug("[mcp] Failed to log skip message for '%s': %s", name, e)
             else:
                 if "serverUrl" in spec:
-                    logging.info(
-                        "MCP '%s' is remote (%s) but no bridge is defined; skipping.",
-                        name,
-                        spec.get("serverUrl"),
-                    )
                     try:
-                        debug_print(
-                            "[mcp]",
-                            f"Skipping remote '{name}': no bridge for serverUrl={spec.get('serverUrl')}",
+                        srv = MCPServerSse(
+                            params={
+                                "url": str(spec.get("serverUrl")),
+                                "headers": {
+                                    k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
+                                    for k, v in (spec.get("headers") or {}).items()
+                                },
+                            },
+                            name=name,
+                            client_session_timeout_seconds=float(spec.get("timeoutSeconds", 1200)),
                         )
-                    except Exception as e:
-                        logging.debug("[mcp] Failed to log skip message for '%s': %s", name, e)
+                        srv = await astack.enter_async_context(srv)
+                        mcp_servers_started.append(srv)
+                        logging.info("[mcp] Registered remote MCP server '%s' via SSE", name)
+                        debug_print("[mcp]", f"✅ Remote '{name}' ready via SSE")
+                        continue
+                    except Exception as exc:
+                        logging.info(
+                            "MCP '%s' is remote (%s) but failed to initialize SSE client: %s",
+                            name,
+                            spec.get("serverUrl"),
+                            exc,
+                        )
+                        try:
+                            debug_print(
+                                "[mcp]",
+                                f"Skipping remote '{name}': SSE init failed for serverUrl={spec.get('serverUrl')}: {exc}",
+                            )
+                        except Exception as e:
+                            logging.debug("[mcp] Failed to log SSE skip message for '%s': %s", name, e)
+                        continue
 
         if disabled_names:
             try:

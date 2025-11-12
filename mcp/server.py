@@ -12,6 +12,7 @@ from call.app.call import MCPInitializationError, wait_for_mcp_init, start_mcp_o
 try:
     # FastMCP SDK
     from mcp.server.fastmcp import FastMCP, Context
+    from mcp.types import ToolAnnotations
 except Exception as e:  # pragma: no cover
     raise SystemExit(f"FastMCP not available: {e}")
 
@@ -63,7 +64,7 @@ async def lifespan(app: FastMCP):
 mcp = FastMCP("mcp-call", lifespan=lifespan)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def agents(
     query: Optional[str] = None,
     include_aliases: bool = False,
@@ -76,7 +77,7 @@ def agents(
     return api_list(project=None, agent=None, prompt=None)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def prompts(
     project: Optional[str] = None,
     agent: Optional[str] = None,
@@ -89,7 +90,7 @@ def prompts(
     return items if isinstance(items, list) else ([items] if items else [])
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def read(id: str, ctx: Context | None = None) -> Any:
     """Return raw card text from repo.db."""
 
@@ -111,7 +112,7 @@ def read(id: str, ctx: Context | None = None) -> Any:
         }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(idempotentHint=True, destructiveHint=True))
 def write(id: str, text: str, ctx: Context | None = None) -> Any:
     """Persist card text to repo.db and filesystem."""
 
@@ -133,7 +134,7 @@ def write(id: str, text: str, ctx: Context | None = None) -> Any:
         }
 
 
-@mcp.tool(name="exec")
+@mcp.tool(name="exec", annotations=ToolAnnotations(openWorldHint=True))
 async def mcp_exec(
     payload: Dict[str, Any],
     ctx: Context | None = None,
@@ -202,7 +203,7 @@ async def mcp_exec(
         }
 
 
-@mcp.tool(name="notify")
+@mcp.tool(name="notify", annotations=ToolAnnotations(idempotentHint=True))
 async def mcp_notify(
     event: str,
     context: Optional[List[Dict[str, Any]]] = None,
@@ -238,7 +239,7 @@ async def mcp_notify(
         }
 
 
-@mcp.tool(name="call")
+@mcp.tool(name="call", annotations=ToolAnnotations(openWorldHint=True))
 async def mcp_call(
     name: str,
     input: str,
@@ -306,7 +307,7 @@ async def mcp_call(
         }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(idempotentHint=True))
 def reload(ctx: Context | None = None) -> Any:
     """Reload repository indices (agent/prompt) from .env configuration."""
     try:
@@ -338,7 +339,7 @@ def reload(ctx: Context | None = None) -> Any:
         }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def models(ctx: Context | None = None) -> Any:
     """List available OpenAI models."""
 
