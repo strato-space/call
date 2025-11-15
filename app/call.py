@@ -1009,21 +1009,7 @@ async def cleanup_mcp_servers() -> None:
     
     count = len(_MCP_SERVERS_CACHE)
     debug_print("[mcp]", f"Clearing {count} MCP servers cache...")
-
-    servers = _MCP_SERVERS_CACHE.items()
     _MCP_SERVERS_CACHE = {}
-
-    for name, server in list(servers):
-        close = getattr(server, "__aexit__", None)
-        if callable(close):
-            try:
-                await close(None, None, None)
-                logging.info("[mcp] MCP server '%s' closed", name)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logging.warning("[mcp] Failed to close MCP server '%s': %s", name, exc, exc_info=True)
-        else:
-            logging.debug("[mcp] Server '%s' has no __aexit__; skipping close", name)
-
     logging.info("[mcp] MCP server cache cleared")
 
 
