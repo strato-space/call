@@ -1283,14 +1283,17 @@ async def _git_pull_prompt_repo() -> None:
             debug_print("[git]", "git pull --rebase timed out after 10s, skipping")
             return
         except Exception as e:
+            # Compact log for unexpected errors during rebase pull
             debug_print("[git]", f"git pull --rebase failed: {type(e).__name__}: {e}")
             return
         if rc != 0:
+            # Rebase can fail when there are local changes; keep log compact but informative
+            stderr_len = len(err_rebase or b"")
             debug_print(
                 "[git]",
-                f"--rebase failed (rc={rc}), stderr: {err_rebase.decode(errors='ignore')[:300]}",
+                f"git pull --rebase failed (rc={rc}, stderr_bytes={stderr_len}); "
+                "retrying plain pull (common cause: local uncommitted changes)",
             )
-            debug_print("[git]", "retrying plain pull")
             try:
                 rc_plain, out_plain, err_plain = await asyncio.wait_for(
                     _run_git(["git", "pull"], env=git_env), timeout=10.0

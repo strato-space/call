@@ -6,6 +6,7 @@
 - Provision or refresh sibling repos with `tools/repos.sh --codex`; they land in `/workspace/{agent,prompt,voice,rms,server}`.
 - Install extras into that env and avoid global pip packages; use `uv pip compile` plus `pip install -r requirements.txt` for updates.
 - Stick with built-in linting; do not add formatters unless the project maintainers ask for them.
+ - Prompt repo updates: CLI entrypoints may log a compact message like `git pull --rebase failed (…); retrying plain pull (common cause: local uncommitted changes)` when local changes block `git pull --rebase`. This is expected; the code automatically falls back to a plain `git pull` and continues.
 
 ## Repository Orientation
 
