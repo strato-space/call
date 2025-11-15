@@ -3227,16 +3227,8 @@ async def edit_message_text(text):
         pass
 
 
-class MCPServerStdioHook(MCPServerStdio):
-    """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
-
-    Each instance maintains its own editable Telegram message. On first write,
-    a new message is created; subsequent writes edit that message. The MCP name
-    is printed at the top of the message.
-    
-    Debug messages are sent to debug_chat_id (from TELEGRAM_CHAT_ID in .env),
-    while typing status is sent to selected_chat_id (original request chat).
-    """
+class MCPServerHookMixin:
+    """Common Telegram logging and cleanup logic shared by MCP server wrappers."""
 
     from typing import Any
 
@@ -3310,7 +3302,6 @@ class MCPServerStdioHook(MCPServerStdio):
                 return [_dump_like_mapping(item) for item in obj]
             elif isinstance(obj, set):
                 return {_dump_like_mapping(item) for item in obj}
-
             return obj
 
         value = _dump_like_mapping(value)
@@ -3551,7 +3542,7 @@ class MCPServerStdioHook(MCPServerStdio):
             pass
             
         # Bind parent method to avoid 'super(): no arguments' inside nested closures
-        parent_call_tool = super(MCPServerStdioHook, self).call_tool
+        parent_call_tool = super().call_tool
 
         def _deep_unescape(o):
             if isinstance(o, str):
@@ -3868,6 +3859,26 @@ class MCPServerStdioHook(MCPServerStdio):
             # Catch-all for any unexpected errors in cleanup logic itself
             log.error("[%s] Unexpected error in cleanup_service_messages: %s", 
                      self.name, e, exc_info=True)
+
+
+class MCPServerStdioHook(MCPServerHookMixin, MCPServerStdio):
+    """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
+
+    Each instance maintains its own editable Telegram message. On first write,
+    a new message is created; subsequent writes edit that message. The MCP name
+    is printed at the top of the message.
+    
+    Debug messages are sent to debug_chat_id (from TELEGRAM_CHAT_ID in .env),
+    while typing status is sent to selected_chat_id (original request chat).
+    """
+
+    pass
+
+
+class MCPServerSseHook(MCPServerHookMixin, MCPServerSse):
+    """Wrapper for MCPServerSse that reuses the same Telegram logging mixin."""
+
+    pass
 
 
 # -------- Call subsystem helpers --------
@@ -4434,7 +4445,7 @@ async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
         
         if "serverUrl" in spec:
             try:
-                srv = MCPServerSse(
+                srv = MCPServerSseHook(
                     params={
                         "url": str(spec.get("serverUrl")),
                         "headers": {
@@ -4586,7 +4597,7 @@ async def _build_mcp_servers_from_yaml(
             else:
                 if "serverUrl" in spec:
                     try:
-                        srv = MCPServerSse(
+                        srv = MCPServerSseHook(
                             params={
                                 "url": str(spec.get("serverUrl")),
                                 "headers": {
@@ -4824,7 +4835,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     # Cleanup: delete all MCP service messages in background (fire-and-forget)
     # All error handling is inside cleanup_service_messages()
     for srv in mcp_servers:
-        if isinstance(srv, MCPServerStdioHook):
+        if isinstance(srv, MCPServerHookMixin):
             asyncio.create_task(srv.cleanup_service_messages())
     logging.debug("[call] MCP cleanup started for %d servers", len(mcp_servers))
     
