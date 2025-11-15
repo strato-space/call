@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -40,6 +41,14 @@ async def lifespan(app: FastMCP):
     except Exception:
         pass
     # Configure logging (DEBUG when CALL_DEBUG=1, else INFO)
+    
+    # Mark that we are running inside the call MCP server process so that
+    # client-side MCP initialization can avoid creating a recursive "call" MCP server.
+    try:
+        os.environ.setdefault("CALL_MCP_SERVER_MODE", "1")
+    except Exception:
+        pass
+
     call_logging()
     log = get_logger("mcp")
     log.info(

@@ -941,8 +941,17 @@ async def _validate_and_cache_mcp_config() -> dict | None:
             raise MCPInitializationError(f"MCP config not found: {cfg_path}")
 
         cfg_yaml = _load_mcp_yaml_config(path)
-        if not cfg_yaml or not isinstance(cfg_yaml.get("mcpServers"), dict):
-            raise MCPInitializationError("MCP config missing 'mcpServers' section")
+        if not cfg_yaml:
+            raise MCPInitializationError(
+                "MCP config is empty or invalid YAML; ensure it contains a top-level "
+                "'mcpServers' mapping with server entries indented under it (for example, "
+                "use '  time:' instead of 'time:' at the root)."
+            )
+        if not isinstance(cfg_yaml.get("mcpServers"), dict):
+            raise MCPInitializationError(
+                "MCP config must contain a top-level 'mcpServers' mapping; make sure all "
+                "MCP servers are nested under it with consistent indentation."
+            )
 
         # Validate config has at least one enabled server
         enabled_count = sum(
@@ -4477,6 +4486,25 @@ async def _build_mcp_servers_from_yaml(
         except Exception as e:
             logging.debug("[mcp] Failed to print config info: %s", e)
 
+        def _skip_self_call_server(name: str, spec: dict) -> bool:
+            mode = os.getenv("CALL_MCP_SERVER_MODE")
+            if not mode:
+                return False
+
+            lname = str(name).lower()
+            if lname == "call":
+                return True
+
+            url = str((spec or {}).get("serverUrl") or "").lower()
+            if "call-mcp." in url:
+                return True
+
+            for a in (spec or {}).get("args") or []:
+                if isinstance(a, str) and "call.mcp.server" in a:
+                    return True
+
+            return False
+
         async def _open_stdio(name: str, spec: dict, timeout: int):
             cmd = (spec or {}).get("command")
             args = (spec or {}).get("args") or []
@@ -4510,6 +4538,12 @@ async def _build_mcp_servers_from_yaml(
 
         for name, spec in (cfg_yaml.get("mcpServers") or {}).items():
             if not isinstance(spec, dict):
+                continue
+            if _skip_self_call_server(name, spec):
+                debug_print(
+                    "[mcp]",
+                    f"Skipping self-referential MCP server '{name}' in CALL_MCP_SERVER_MODE",
+                )
                 continue
             if not spec.get("enabled", False):
                 disabled_names.append(name)
