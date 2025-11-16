@@ -126,7 +126,7 @@ async def test_post_run_git_push_no_changes(monkeypatch, tmp_path):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    await app_call.post_run_git_push("Agent", "input")
+    await app_call.prompt_repo_git_add_commit_and_push("Agent", "input")
 
     assert commands == [
         (("git", "status", "--porcelain", "-uno"), "0")

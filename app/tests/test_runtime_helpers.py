@@ -258,7 +258,6 @@ async def test_build_and_run_agent_uses_send_welcome_banner(monkeypatch):
     monkeypatch.setattr(
         app_call, "send_digest_notification", lambda **_: None, raising=False
     )
-    monkeypatch.setattr(app_call, "post_run_git_push", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "init_bot", lambda **_: None, raising=False)
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 

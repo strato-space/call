@@ -568,8 +568,9 @@ def get_or_create_agent(
     try:
         if name in AGENT_CACHE:
             return AGENT_CACHE[name]
-    except Exception:
-        pass
+    except Exception as e:
+        # Cache read is best-effort; log and continue with fresh Agent
+        logging.debug("[agent-cache] Failed to read AGENT_CACHE for %s: %s", name, e)
     agent = Agent(
         name=name,
         instructions=instructions,
@@ -1192,8 +1193,11 @@ def _remote_url_with_token(remote_url: str | None, token: str | None) -> str | N
         return None
 
 
-async def _git_pull_prompt_repo() -> None:
-    """Ensure prompt repo is up-to-date before running the agent."""
+async def prompt_repo_git_pull_rebase() -> None:
+    """Run `git pull --rebase` (with plain pull fallback) in the prompt repo.
+
+    This helper only updates the local clone; it does not push.
+    """
     try:
         prompt_repo = discover_prompt_repo()
 
@@ -1966,15 +1970,6 @@ async def _notify_digest_if_applicable(
     except Exception as e:
         logging.warning("[digest] send_digest_notification error: %s", e)
 
-    try:
-        logging.info("[digest] Starting post_run_git_push")
-        await post_run_git_push(
-            agent_name=(getattr(cfg, "id", "") or ""), user_input=user_input
-        )
-        logging.info("[digest] post_run_git_push completed")
-    except Exception as e:
-        logging.warning("[digest] post_run_git_push error: %s", e)
-
     logging.info("[digest] Digest notification completed")
 
 
@@ -2449,8 +2444,8 @@ async def send_digest_notification(
         return None
 
 
-async def post_run_git_push(agent_name: str, user_input: str) -> None:
-    """Commit and push changes in the prompt repos after the run.
+async def prompt_repo_git_add_commit_and_push(agent_name: str, user_input: str) -> None:
+    """Commit and push changes in the prompt repo after an agent run.
 
     - Uses normalized agent_name resolved in the pipeline
     - Uses user_input as-is (preserve newlines)
@@ -2462,7 +2457,9 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
         "yes",
         "on",
     }:
-        logging.info("[git] post_run_git_push disabled via CALL_DISABLE_POST_RUN_PUSH")
+        logging.info(
+            "[git] prompt_repo_git_add_commit_and_push disabled via CALL_DISABLE_POST_RUN_PUSH"
+        )
         return
 
     try:
@@ -2538,8 +2535,73 @@ async def post_run_git_push(agent_name: str, user_input: str) -> None:
         await _run_git("push", ["git", "push"])
         logging.info("[git] push completed successfully")
     except Exception as exc:
-        logging.debug("[git] post_run_git_push aborted: %s", exc)
-        return
+        logging.debug("[git] prompt_repo_git_add_commit_and_push aborted: %s", exc)
+        raise
+
+
+@function_tool
+async def prompt_repo_git_pull_rebase_tool(ctx: RunContextWrapper[Any]) -> str:
+    """Update the local prompts repository via `git pull --rebase`.
+
+    Use this tool when you need to fetch the latest prompt changes
+    before running complex operations or generating new prompt files.
+
+    This tool must be invoked only when the active system prompt
+    explicitly requests a git pull for the prompts repository.
+    """
+
+    try:
+        await prompt_repo_git_pull_rebase()
+        payload = {"ok": True, "operation": "prompt_repo_git_pull_rebase"}
+    except Exception as e:
+        logging.exception("[git] prompt_repo_git_pull_rebase_tool failed")
+        payload = {
+            "ok": False,
+            "error_code": 500,
+            "description": f"prompt_repo_git_pull_rebase failed: {type(e).__name__}: {e}",
+            "code": "PROMPT_REPO_GIT_PULL_ERROR",
+        }
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        # Fallback: best-effort string
+        return str(payload)
+
+
+@function_tool
+async def prompt_repo_git_add_commit_and_push_tool(
+    ctx: RunContextWrapper[Any],
+    agent_name: str,
+    user_input: str,
+) -> str:
+    """Run git add/commit/push for the prompts repository.
+
+    - `agent_name`: logical agent/prompt name to include in commit message.
+    - `user_input`: original user input to embed into the commit message.
+
+    This tool must be invoked only when the active system prompt
+    explicitly requests committing and pushing prompt repo changes.
+    """
+
+    try:
+        await prompt_repo_git_add_commit_and_push(agent_name=agent_name, user_input=user_input)
+        payload = {
+            "ok": True,
+            "operation": "prompt_repo_git_add_commit_and_push",
+            "agent_name": agent_name,
+        }
+    except Exception as e:
+        logging.exception("[git] prompt_repo_git_add_commit_and_push_tool failed")
+        payload = {
+            "ok": False,
+            "error_code": 500,
+            "description": f"prompt_repo_git_add_commit_and_push failed: {type(e).__name__}: {e}",
+            "code": "PROMPT_REPO_GIT_PUSH_ERROR",
+        }
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return str(payload)
 
 
 async def telegram_send_message(
@@ -4703,9 +4765,6 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
     debug_dump_cfg_preview(cfg)
 
-    debug_print("[call]", "[GIT] starting git pull...")
-    await _git_pull_prompt_repo()
-    debug_print("[call]", "[GIT] git pull completed")
     tools = await build_tools_for_cfg(cfg)
 
     # Agents-as-Tools: populate helper tools declared in project/agent card.
