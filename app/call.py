@@ -4507,13 +4507,19 @@ async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
         
         if "serverUrl" in spec:
             try:
+                headers = {
+                    k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
+                    for k, v in (spec.get("headers") or {}).items()
+                }
+                # Allow per-server override of SSE read timeout via config.
+                # Fallback default is 1800s (30 minutes) to support long-running sessions.
+                sse_read_timeout = float(spec.get("sseReadTimeoutSeconds", 1800))
+
                 srv = MCPServerSseHook(
                     params={
                         "url": str(spec.get("serverUrl")),
-                        "headers": {
-                            k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
-                            for k, v in (spec.get("headers") or {}).items()
-                        },
+                        "headers": headers,
+                        "sse_read_timeout": sse_read_timeout,
                     },
                     name=name,
                     client_session_timeout_seconds=float(spec.get("timeoutSeconds", 1200)),
@@ -4659,13 +4665,17 @@ async def _build_mcp_servers_from_yaml(
             else:
                 if "serverUrl" in spec:
                     try:
+                        headers = {
+                            k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
+                            for k, v in (spec.get("headers") or {}).items()
+                        }
+                        sse_read_timeout = float(spec.get("sseReadTimeoutSeconds", 1800))
+
                         srv = MCPServerSseHook(
                             params={
                                 "url": str(spec.get("serverUrl")),
-                                "headers": {
-                                    k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
-                                    for k, v in (spec.get("headers") or {}).items()
-                                },
+                                "headers": headers,
+                                "sse_read_timeout": sse_read_timeout,
                             },
                             name=name,
                             client_session_timeout_seconds=float(spec.get("timeoutSeconds", 1200)),
