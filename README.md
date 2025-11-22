@@ -560,6 +560,13 @@ python -m call.mcp.server
 
 The runtime automatically loads external MCP servers when agents specify tools. MCP hook logging captures all tool invocations with YAML-formatted arguments and results.
 
+**MCP lifecycle and agent cache**
+
+- MCP servers are initialized once and reused between runs according to the lifecycle documented in `call/app/call.py` and `docs/mcp_sse_timeouts.md`.
+- Agents (including agents-as-tools) are cached by name in a small in-memory `AGENT_CACHE` so they do not need to be re-instantiated on every call.
+- On reuse, each cached agent receives a fresh `mcp_servers` list built for the current run. This ensures that agents never hold onto MCP server instances whose sessions have already been cleaned up (for example, after SSE timeouts or MCP auto-reinitialization for remote servers like Google Sheets `gsh`).
+- This design prevents follow-up calls from failing with `UserError("Server not initialized. Make sure you call connect() first.")` after an MCP reconnection, while still keeping agent construction overhead low.
+
 > **See [`docs/mcp_config.md`](docs/mcp_config.md) for detailed MCP configuration guide.**
 
 ### Event Log

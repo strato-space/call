@@ -398,11 +398,29 @@ def find_prompts(
         if agent_param:
             params.append(agent_param)
 
-        prompt_clause, prompt_param = _add_filter("prompt", prompt)
-        if prompt_clause:
-            filters.append(prompt_clause)
-        if prompt_param:
-            params.append(prompt_param)
+        # Prompt filter: match both prompt and target so callers can use
+        # prompt ids the same way they use card ids (target). This mirrors
+        # select_card() behavior where prompt names can also live in target.
+        if prompt is not None:
+            raw_prompt = str(prompt)
+            has_wildcard = "*" in raw_prompt
+            if has_wildcard:
+                pattern = _like_pattern(raw_prompt)
+                if pattern:
+                    clause = (
+                        "(prompt LIKE ? ESCAPE '\\' COLLATE NOCASE "
+                        "OR target LIKE ? ESCAPE '\\' COLLATE NOCASE)"
+                    )
+                    filters.append(clause)
+                    params.append(pattern)
+                    params.append(pattern)
+            else:
+                # Exact match: use raw value for '=' comparison to avoid
+                # escaping '_' or '%' as in LIKE patterns.
+                clause = "(prompt = ? COLLATE NOCASE OR target = ? COLLATE NOCASE)"
+                filters.append(clause)
+                params.append(raw_prompt)
+                params.append(raw_prompt)
 
         state_clause, state_param = _add_filter("state", state)
         if state_clause:
@@ -708,8 +726,8 @@ def _add_filter_clause(
     if raw == "":
         where.append(f"{column} = ''")
         return
-    pattern = _like_pattern(raw)
     has_wildcard = "*" in raw
+    pattern = _like_pattern(raw) if has_wildcard else None
 
     if column == "prompt" and (raw == "" or raw is None):
         # Allow fallback to prompt-less rows when empty string is requested explicitly.
@@ -723,19 +741,20 @@ def _add_filter_clause(
             "(prompt = ? COLLATE NOCASE OR target = ? COLLATE NOCASE"
             " OR target = ? COLLATE NOCASE)"
         )
-        if pattern is not None:
-            params.append(pattern)
-        normalized = raw if pattern is None else raw
-        params.append(f"{raw}")
-        params.append(f"{raw}")
+        # Use the raw value for exact '=' comparisons to avoid escaping
+        # '_' and '%' as in LIKE patterns.
+        params.append(raw)
+        params.append(raw)
+        params.append(raw)
         return
 
     if has_wildcard:
         where.append(f"{column} LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        if pattern is not None:
+            params.append(pattern)
     else:
         where.append(f"{column} = ? COLLATE NOCASE")
-    if pattern is not None:
-        params.append(pattern)
+        params.append(raw)
 
 
 def _kind_filters(kind: Optional[str]) -> List[str]:

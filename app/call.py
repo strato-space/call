@@ -57,6 +57,7 @@ import tempfile
 import yaml
 import inspect
 import httpx
+import anyio
 from openai import OpenAI, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
@@ -296,7 +297,8 @@ from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerSse, MCPServerStdio
 from agents.model_settings import ModelSettings
 
-# Simple Agent factory/cache to avoid re-instantiating identical Agents within a run
+# Simple Agent factory/cache to avoid re-instantiating identical Agents within a run.
+# Cached agents always receive a fresh ``mcp_servers`` list on reuse to avoid stale MCP connections.
 AGENT_CACHE: dict[str, Agent] = {}
 
 # MCP servers singleton cache: (name → server instance)
@@ -565,12 +567,29 @@ def get_or_create_agent(
     tools: list,
     mcp_servers: list,
 ) -> Agent:
+    """Return cached Agent by name, refreshing its mcp_servers on reuse.
+
+    This keeps the Agent cache lightweight while ensuring that agents-as-tools
+    never hold onto MCP server instances whose sessions have been cleaned up
+    (for example, after MCP auto-reinitialization or remote timeout).
+    """
+    cached: Agent | None = None
     try:
-        if name in AGENT_CACHE:
-            return AGENT_CACHE[name]
+        cached = AGENT_CACHE.get(name)
     except Exception as e:
         # Cache read is best-effort; log and continue with fresh Agent
         logging.debug("[agent-cache] Failed to read AGENT_CACHE for %s: %s", name, e)
+
+    if cached is not None:
+        # Always refresh MCP servers on reuse so agents don't hold stale connections
+        try:
+            cached.mcp_servers = mcp_servers
+        except Exception as e:
+            logging.debug(
+                "[agent-cache] Failed to update mcp_servers for %s: %s", name, e
+            )
+        return cached
+
     agent = Agent(
         name=name,
         instructions=instructions,
@@ -963,24 +982,51 @@ async def _validate_and_cache_mcp_config() -> dict | None:
             raise MCPInitializationError("No enabled MCP servers in config")
 
         enabled_names = [
-            name for name, spec in cfg_yaml.get("mcpServers", {}).items()
+            name
+            for name, spec in cfg_yaml.get("mcpServers", {}).items()
             if isinstance(spec, dict) and spec.get("enabled", False)
         ]
         logging.info("[mcp] Config validated - %d enabled servers: %s", enabled_count, enabled_names)
         debug_print("[mcp]", f"✅ Config valid - {enabled_count} enabled servers: {enabled_names}")
 
-        # Create servers once with provided exit stack (singleton pattern)
-        debug_print("[mcp]", "Creating MCP server instances (singleton - will be reused)...")
-        
         # Use provided exit stack or fail
         if _MCP_EXIT_STACK is None:
             raise MCPInitializationError("MCP initialization requires exit stack to be set")
-        
-        servers = await _build_mcp_servers_from_yaml(cfg_yaml, _MCP_EXIT_STACK)
+
+        # Filter config: keep enabled servers that are not plain serverUrl-only (remote HTTP/SSE).
+        local_cfg_yaml: dict | None = None
+        try:
+            servers_map = cfg_yaml.get("mcpServers") or {}
+            if isinstance(servers_map, dict):
+                local_servers: dict[str, Any] = {}
+                for name, spec in servers_map.items():
+                    if not isinstance(spec, dict):
+                        continue
+                    if not spec.get("enabled", False):
+                        continue
+                    has_command = "command" in spec
+                    has_bridge = isinstance(spec.get("bridge"), dict)
+                    has_server_url = "serverUrl" in spec
+                    # Plain remote HTTP/SSE: serverUrl present, but no command/bridge.
+                    if has_server_url and not has_command and not has_bridge:
+                        continue
+                    local_servers[name] = spec
+                if local_servers:
+                    local_cfg_yaml = {"mcpServers": local_servers}
+        except Exception as e:
+            logging.getLogger("call.mcp").exception(
+                "[mcp] Failed to split local/remote MCP servers: %s", e
+            )
+            local_cfg_yaml = cfg_yaml
+
+        servers = await _build_mcp_servers_from_yaml(local_cfg_yaml, _MCP_EXIT_STACK)
         _MCP_SERVERS_CACHE = {srv.name: srv for srv in servers} if servers else {}
         _MCP_CONFIG_CACHE = cfg_yaml
         logging.info("[mcp] Created %d MCP server instances (cached for reuse)", len(_MCP_SERVERS_CACHE))
-        debug_print("[mcp]", f"✅ {len(_MCP_SERVERS_CACHE)} servers created and cached: {list(_MCP_SERVERS_CACHE.keys())}")
+        debug_print(
+            "[mcp]",
+            f"{len(_MCP_SERVERS_CACHE)} servers created and cached: {list(_MCP_SERVERS_CACHE.keys())}",
+        )
         
         _MCP_INIT_STATE = _MCPInitState.READY
         event.set()
@@ -2262,6 +2308,7 @@ async def send_digest_notification(
     - text: Optional main body text to send. If it is a non-empty string shorter than
       Telegram limits, it will be sent as-is (sanitized by downstream helpers).
       If it is empty/whitespace, we treat it as absent and send a minimal banner
+      If it's 4000+ chars, it will be split into chunks and sent sequentially.
       with the original input echoed. If it's 4000+ chars, we publish it to Telegraph
       and send a short banner with the resulting link.
     - chat_id: Explicit chat id to target. If None, falls back to the module-level
@@ -2300,6 +2347,25 @@ async def send_digest_notification(
         f"image_path={image_path}",
     )
 
+    def _looks_like_html(s: str) -> bool:
+        """Heuristic: detect HTML-ish content.
+
+        Если есть явные теги (<b>, <i>, <a href=, <code>, <pre> и т.п.), считаем,
+        что это HTML и позволяем использовать Telegra.ph при превышении лимита.
+        Для простого текста без тегов — HTML не считается.
+        """
+        try:
+            t = (s or "").strip().lower()
+            if not t:
+                return False
+            if "<b" in t or "<i" in t or "<a " in t or "<code" in t or "<pre" in t:
+                return True
+            if re.search(r"</?[a-z][a-z0-9]*\b[^>]*>", t):
+                return True
+            return False
+        except Exception:
+            return False
+
     # Auto-format JSON arrays/objects as YAML for readability
     # Check if text looks like JSON (starts/ends with {}[])
     try:
@@ -2310,7 +2376,7 @@ async def send_digest_notification(
                 (stripped[0] == '{' and stripped[-1] == '}')
             ):
                 try:
-                    # Parse JSON and convert to YAML
+                    # Parse JSON and convert to YAML; это уже HTML
                     parsed = json.loads(stripped)
                     yaml_text = _dump_yaml_literal(parsed)
                     if yaml_text:
@@ -2322,10 +2388,14 @@ async def send_digest_notification(
     except Exception as e:
         logging.debug("[format] Failed to check/format JSON: %s", e)
 
-    # If content is too long for Telegram, publish and use resulting URL
+    # Decide whether this is HTML content (eligible for Telegra.ph) or plain text
+    is_html = bool(text and isinstance(text, str) and _looks_like_html(text))
+
+    # If content is HTML and too long for Telegram, publish and use resulting URL.
+    # Для простого текста больше не используем Telegra.ph; режем и шлём батчом.
     local_url: str | None = None
     try:
-        if (text is not None) and isinstance(text, str) and len(text) >= 4000:
+        if is_html and (text is not None) and isinstance(text, str) and len(text) >= 4000:
             pub_title = agent_name or "Agent"
             # Support both async and sync publish_results in tests/runtime
             if inspect.iscoroutinefunction(publish_results):
@@ -2346,7 +2416,7 @@ async def send_digest_notification(
         # Best-effort only; if anything goes wrong, proceed with existing value
         pass
 
-    # Prepare final text
+    # If we ended up with no text (e.g., HTML published to Telegraph), build banner.
     if text is None:
         text = f"📰 {local_url}" if local_url else "📰"
         if input_text:
@@ -2413,15 +2483,14 @@ async def send_digest_notification(
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
     try:
-        # If an image is provided, send it as a photo with optional caption
         # Determine effective chat/thread once to avoid races with globals
         eff_chat_id = chat_id if chat_id is not None else selected_chat_id
         eff_thread_id = (
             message_thread_id if message_thread_id is not None else selected_thread_id
         )
 
+        # If an image is provided, keep existing behavior (single message with caption)
         if image_path:
-            # Use the legacy function that tests monkeypatch; thread fallback is not needed in unit tests
             message_obj = await telegram_send_photo(
                 image_path=image_path,
                 caption=text,
@@ -2429,14 +2498,37 @@ async def send_digest_notification(
                 message_thread_id=eff_thread_id,
                 reply_markup=reply_markup,
             )
-        else:
-            # Use the legacy function that tests monkeypatch; include inline buttons when available
-            message_obj = await telegram_send_message(
-                text=text,
-                chat_id=eff_chat_id,
-                message_thread_id=eff_thread_id,
-                reply_markup=reply_markup,
-            )
+            debug_print(f"send_digest_notification result=true publish_url={local_url}")
+            return message_obj
+
+        # Plain-text batching: если это не HTML и длина > 4000, режем и шлём батчом.
+        if (not is_html) and isinstance(text, str) and len(text) > 4000:
+            full = text
+            # Длина чуть меньше лимита, чтобы оставался запас на обёртку/санитайзер
+            chunk_size = 3800
+            first_message: Optional[Message] = None
+            for idx in range(0, len(full), chunk_size):
+                chunk = full[idx : idx + chunk_size]
+                # Для простого текста даём Telegram самому выбрать parse_mode через
+                # telegram_prepare_html (внутри telegram_send_message)
+                message_obj = await telegram_send_message(
+                    text=chunk,
+                    chat_id=eff_chat_id,
+                    message_thread_id=eff_thread_id,
+                    reply_markup=reply_markup if idx == 0 else None,
+                )
+                if first_message is None:
+                    first_message = message_obj
+            debug_print("send_digest_notification result=true (batched plain text)")
+            return first_message
+
+        # Обычный случай: единичное сообщение (HTML или короткий текст)
+        message_obj = await telegram_send_message(
+            text=text,
+            chat_id=eff_chat_id,
+            message_thread_id=eff_thread_id,
+            reply_markup=reply_markup,
+        )
         debug_print(f"send_digest_notification result=true publish_url={local_url}")
         return message_obj
     except Exception as e:
@@ -3921,6 +4013,69 @@ class MCPServerHookMixin:
             # Catch-all for any unexpected errors in cleanup logic itself
             log.error("[%s] Unexpected error in cleanup_service_messages: %s", 
                      self.name, e, exc_info=True)
+    async def list_tools(self, run_context=None, agent=None):
+        """Wrap base list_tools with extra logging for initialization errors."""
+        try:
+            return await super().list_tools(run_context=run_context, agent=agent)
+        except Exception as e:
+            logging.error(
+                "[mcp][%s] list_tools failed: %s: %s",
+                self._mcp_title,
+                type(e).__name__,
+                str(e),
+                exc_info=True,
+            )
+            try:
+                debug_print(
+                    "[mcp]",
+                    f"[{self._mcp_title}] list_tools failed: {type(e).__name__}: {e}",
+                )
+            except Exception:
+                pass
+            raise
+
+    async def list_prompts(self):
+        """Wrap base list_prompts with extra logging for initialization errors."""
+        try:
+            return await super().list_prompts()
+        except Exception as e:
+            logging.error(
+                "[mcp][%s] list_prompts failed: %s: %s",
+                self._mcp_title,
+                type(e).__name__,
+                str(e),
+                exc_info=True,
+            )
+            try:
+                debug_print(
+                    "[mcp]",
+                    f"[{self._mcp_title}] list_prompts failed: {type(e).__name__}: {e}",
+                )
+            except Exception:
+                pass
+            raise
+
+    async def get_prompt(self, name: str, arguments: dict | None = None):
+        """Wrap base get_prompt with extra logging for initialization errors."""
+        try:
+            return await super().get_prompt(name, arguments)
+        except Exception as e:
+            logging.error(
+                "[mcp][%s] get_prompt(%s) failed: %s: %s",
+                self._mcp_title,
+                name,
+                type(e).__name__,
+                str(e),
+                exc_info=True,
+            )
+            try:
+                debug_print(
+                    "[mcp]",
+                    f"[{self._mcp_title}] get_prompt({name}) failed: {type(e).__name__}: {e}",
+                )
+            except Exception:
+                pass
+            raise
 
 
 class MCPServerStdioHook(MCPServerHookMixin, MCPServerStdio):
@@ -4766,10 +4921,51 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     Returns:
       tuple: (agent, cfg, session) - Agent instance, config, and session object
     """
-    # Use singleton MCP servers from global cache (no per-call AsyncExitStack)
-    debug_print("[call]", "[MCP] Getting MCP servers from singleton cache...")
-    mcp_servers, _cfg_yaml = await _prepare_mcp_servers(astack=None)
-    debug_print("[call]", f"[MCP] ✅ MCP servers ready: {len(mcp_servers)} servers")
+    # Use singleton MCP servers from global cache for local/stdio servers.
+    # Remote HTTP/SSE servers (serverUrl-only) are created per request.
+    debug_print("[call]", "[MCP] Getting MCP servers from singleton cache (local-only)...")
+    local_mcp_servers, cfg_yaml = await _prepare_mcp_servers(astack=None)
+    debug_print("[call]", f"[MCP] ✅ Local MCP servers ready: {len(local_mcp_servers)} servers")
+
+    req_mcp_exit_stack: AsyncExitStack | None = None
+    remote_mcp_servers: list[Any] = []
+    if cfg_yaml and isinstance(cfg_yaml.get("mcpServers"), dict):
+        try:
+            servers_map = cfg_yaml.get("mcpServers") or {}
+            remote_servers: dict[str, Any] = {}
+            for name, spec in servers_map.items():
+                if not isinstance(spec, dict):
+                    continue
+                if not spec.get("enabled", False):
+                    continue
+                has_command = "command" in spec
+                has_bridge = isinstance(spec.get("bridge"), dict)
+                has_server_url = "serverUrl" in spec
+                # Plain remote HTTP/SSE: serverUrl present, but no command/bridge.
+                if has_server_url and not has_command and not has_bridge:
+                    remote_servers[name] = spec
+            if remote_servers:
+                remote_cfg_yaml = {"mcpServers": remote_servers}
+                req_mcp_exit_stack = AsyncExitStack()
+                await req_mcp_exit_stack.__aenter__()
+                remote_mcp_servers = await _build_mcp_servers_from_yaml(
+                    remote_cfg_yaml, req_mcp_exit_stack
+                )
+                debug_print(
+                    "[mcp]",
+                    f"✅ Per-request remote MCP servers created: {list(remote_servers.keys())}",
+                )
+        except Exception as e:
+            logging.getLogger("call.mcp").exception(
+                "[mcp] Failed to create per-request remote MCP servers: %s", e
+            )
+            remote_mcp_servers = []
+
+    mcp_servers = list(local_mcp_servers) + list(remote_mcp_servers)
+    debug_print(
+        "[call]",
+        f"[MCP] ✅ Total MCP servers for this request: {len(mcp_servers)}",
+    )
 
     debug_print("[call]", "user_input (raw): |-\n" + user_input)
     debug_print("[call]", "cfg.instructions: |-\n" + cfg.instructions)
@@ -4839,51 +5035,83 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
     # Run the main agent once with normalized input string (session-enabled)
 
     step1_output = ""
-    try:
-        result1 = await Runner.run(
+
+    async def _run_agent_once() -> str:
+        """Run Runner.run once and return final_output (or empty string)."""
+        result_local = await Runner.run(
             agent,
             embedded_input,
             max_turns=(getattr(_agents_run, "DEFAULT_MAX_TURNS", 150)),
             session=session,
             context=context,
         )
-        step1_output += getattr(result1, "final_output", None)
-        debug_print("[call]", "step1_output: |-\n", step1_output)
-    except Exception as e:
-        # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
+        return getattr(result_local, "final_output", "") or ""
+
+    mcp_retried = False
+    while True:
         try:
-            err_text = format_exception_text(e)
-        except Exception:
-            err_text = str(e)
-        fatal_tokens = (
-            "unsupported_country_region_territory",
-            "request_forbidden",
-            "Tracing client error 403",
-        )
-        if any(tok in (err_text or "") for tok in fatal_tokens):
-            raise RuntimeError(
-                'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
+            step1_output = await _run_agent_once()
+            debug_print("[call]", "step1_output: |-\n", step1_output)
+            break
+        except Exception as e:
+            # Detect fatal tracing 403 and abort immediately (no stacks, no continuation)
+            try:
+                err_text = format_exception_text(e)
+            except Exception:
+                err_text = str(e)
+            fatal_tokens = (
+                "unsupported_country_region_territory",
+                "request_forbidden",
+                "Tracing client error 403",
             )
-        # Non-fatal errors: log full exception and surface a short error
-        logging.exception("[app] Agent run failed")
-        short_msg = str(e) or "Error"
-        debug_print("[app]", f"Error during main agent run: {short_msg}")
-        step1_output = f"Error: {short_msg}"
-        # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
-        parsed_error = getattr(e, "error", None)
-        message_for_tg = None
-        if isinstance(parsed_error, dict):
-            msg_val = parsed_error.get("message")
-            if isinstance(msg_val, str) and msg_val.strip():
-                message_for_tg = msg_val.strip()
-        if not message_for_tg:
-            message_for_tg = short_msg
-        await _send_error_notification(
-            cfg=cfg,
-            selected_chat_id=selected_chat_id,
-            selected_thread_id=selected_thread_id,
-            message=message_for_tg,
-        )
+            if any(tok in (err_text or "") for tok in fatal_tokens):
+                raise RuntimeError(
+                    'Tracing client error 403: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}'
+                )
+
+            # MCP-related stream closure / timeout: ClosedResourceError, ReadTimeout, McpError
+            is_closed_resource = isinstance(e, anyio.ClosedResourceError)
+            is_http_timeout = isinstance(e, (httpx.ReadTimeout, httpx.ConnectTimeout))
+            is_mcp_error = isinstance(e, McpError)
+
+            if (is_closed_resource or is_http_timeout or is_mcp_error) and not mcp_retried:
+                mcp_retried = True
+                logging.warning("[app] MCP transport error detected (%s); reinitializing MCP servers and retrying once", type(e).__name__)
+                try:
+                    await cleanup_mcp_servers()
+                except Exception:
+                    logging.exception("[app] MCP cleanup after transport error failed")
+                try:
+                    # Wait for MCP owner task to bring servers back up
+                    await wait_for_mcp_init(timeout=120.0)
+                except Exception:
+                    logging.exception("[app] MCP reinit after transport error failed; aborting retry")
+                    # fall through to generic error handling below
+                else:
+                    # Retry agent run once after successful MCP reinit
+                    continue
+
+            # Non-fatal errors: log full exception and surface a short error
+            logging.exception("[app] Agent run failed")
+            short_msg = str(e) or "Error"
+            debug_print("[app]", f"Error during main agent run: {short_msg}")
+            step1_output = f"Error: {short_msg}"
+            # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
+            parsed_error = getattr(e, "error", None)
+            message_for_tg = None
+            if isinstance(parsed_error, dict):
+                msg_val = parsed_error.get("message")
+                if isinstance(msg_val, str) and msg_val.strip():
+                    message_for_tg = msg_val.strip()
+            if not message_for_tg:
+                message_for_tg = short_msg
+            await _send_error_notification(
+                cfg=cfg,
+                selected_chat_id=selected_chat_id,
+                selected_thread_id=selected_thread_id,
+                message=message_for_tg,
+            )
+            break
 
     # Notify digest (no image) and push
     await _notify_digest_if_applicable(
@@ -4907,6 +5135,15 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         if isinstance(srv, MCPServerHookMixin):
             asyncio.create_task(srv.cleanup_service_messages())
     logging.debug("[call] MCP cleanup started for %d servers", len(mcp_servers))
-    
+
+    # Close per-request MCP exit stack (remote servers) if used
+    if req_mcp_exit_stack is not None:
+        try:
+            await req_mcp_exit_stack.__aexit__(None, None, None)
+        except Exception as e:
+            logging.getLogger("call.mcp").exception(
+                "[mcp] Failed to close per-request MCP exit stack: %s", e
+            )
+
     # Return directly instead of yield (no context manager cleanup needed after)
     return agent, cfg, session

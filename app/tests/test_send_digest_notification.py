@@ -49,19 +49,19 @@ def test_send_digest_notification_empty_text_fallback(monkeypatch):
     assert sent["reply_markup"] is None
 
 
-def test_send_digest_notification_publishes_on_long_text(monkeypatch):
-    published = {"url": None}
-    sent = {}
+def test_send_digest_notification_chunks_long_plain_text(monkeypatch):
+    published = {"called": False}
+    sent_chunks: list[str] = []
 
     def fake_publish_results(title, content):
-        published["url"] = "https://example.com/digest"
-        return published["url"]
+        # Для простого текста publish_results больше не должен вызываться
+        published["called"] = True
+        return "https://example.com/digest"
 
     async def fake_send_message(
         *, chat_id, text, reply_markup=None, message_thread_id=None
     ):
-        sent["text"] = text
-        sent["reply_markup"] = reply_markup
+        sent_chunks.append(text)
         return DummyMsg()
 
     monkeypatch.setattr("call.app.call.publish_results", fake_publish_results)
@@ -79,8 +79,14 @@ def test_send_digest_notification_publishes_on_long_text(monkeypatch):
 
     _ = asyncio.run(_run())
 
-    assert published["url"] is not None
-    assert "https://example.com/digest" in sent["text"]
+    # publish_results не должен быть вызван для plain text
+    assert published["called"] is False
+    # Ожидаем несколько сообщений (батчинг)
+    assert len(sent_chunks) >= 2
+    # Суммарная длина не меньше исходной (с учётом возможных переводов строк)
+    assert sum(len(c) for c in sent_chunks) >= len(long_text)
+    # Каждый кусок не превышает телеграмный лимит
+    assert all(len(c) <= 4000 for c in sent_chunks)
 
 
 def test_send_digest_notification_buttons_macro(monkeypatch):

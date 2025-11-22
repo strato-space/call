@@ -34,8 +34,8 @@ mcpServers:
 
 ## Usage policy
 
-- The Call runtime (`call/lib/api.py`, CLI, and Telegram bot) does not load or interpret `mcp_config.yaml`.
-- External tools (e.g., Claude Desktop) can copy enabled entries to their own config.
+- The Call runtime (CLI, Actions, Telegram bot, and MCP server) now **does** load and interpret `call/mcp_config.yaml` via `call/app/call.py` to initialize both local stdio MCP servers (filesystem, sequential thinking, Telegram routing, voice, time, etc.) and remote HTTP/SSE servers (for example, Google Sheets `gsh`).
+- External tools (e.g., Claude Desktop) can still copy enabled entries to their own config; treat `call/mcp_config.yaml` as the single source of truth for which MCP servers should be active.
 - Tests include a basic check to ensure the file exists and is parseable to keep the artifact stable.
 
 ## Environment
