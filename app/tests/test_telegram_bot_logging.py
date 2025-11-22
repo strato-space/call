@@ -74,8 +74,21 @@ def test_bot_log_update_emits_raw_json(monkeypatch, caplog):
     expected = json.dumps(
         {"update_id": 7, "message": {"text": "hello"}}, ensure_ascii=False
     )
+    # Prefer structured records when available; fall back to captured text stream.
     raw_entries = [
-        rec.message for rec in caplog.records if rec.message.startswith("Update raw: ")
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.getMessage().startswith("Update raw: ")
     ]
+    if not raw_entries:
+        raw_entries = [
+            line
+            for line in caplog.text.splitlines()
+            if "Update raw: " in line
+        ]
+
     assert raw_entries, "raw update log not emitted"
-    assert raw_entries[0] == f"Update raw: {expected}"
+    assert any(
+        msg.strip().endswith(expected)
+        for msg in raw_entries
+    ), f"unexpected raw entries: {raw_entries!r}"

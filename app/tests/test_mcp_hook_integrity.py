@@ -43,7 +43,8 @@ async def test_mcp_hook_preserves_large_data():
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
-            with patch.object(hook, '_MCPServerStdioHook__edit_message_text', AsyncMock()):
+            # Patch mixin-level private method instead of subclass-mangled name
+            with patch.object(hook, '_MCPServerHookMixin__edit_message_text', AsyncMock()):
                 # Call the hook
                 result = await hook.call_tool("test_tool", {})
     
@@ -93,7 +94,8 @@ async def test_mcp_hook_display_truncation_doesnt_affect_pipeline():
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
-            with patch.object(hook, '_MCPServerStdioHook__edit_message_text', mock_edit_message):
+            # Patch mixin-level private edit helper so display text is captured
+            with patch.object(hook, '_MCPServerHookMixin__edit_message_text', mock_edit_message):
                 with patch.dict('os.environ', {}, clear=True):  # Clear CALL_DEBUG to enable truncation
                     result = await hook.call_tool("test_tool", {})
     
@@ -147,7 +149,8 @@ async def test_mcp_hook_json_array_integrity():
             return mock_result
         
         with patch.object(hook.__class__.__bases__[0], 'call_tool', mock_parent_call_tool):
-            with patch.object(hook, '_MCPServerStdioHook__edit_message_text', AsyncMock()):
+            # Patch mixin-level private method to avoid real Telegram edits
+            with patch.object(hook, '_MCPServerHookMixin__edit_message_text', AsyncMock()):
                 result = await hook.call_tool("read_text_file", {"path": "/test.json"})
     
     # Parse result to verify all 21 elements

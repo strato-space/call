@@ -1386,6 +1386,14 @@ async def prompt_repo_git_pull_rebase() -> None:
         pass
 
 
+async def _git_pull_prompt_repo() -> None:
+    """Backward-compatibility wrapper used by tests.
+
+    Delegates to prompt_repo_git_pull_rebase() without changing behavior.
+    """
+    await prompt_repo_git_pull_rebase()
+
+
 def _collect_tools(cfg) -> list[tuple[str, str]]:
     """Collect agent/prompt entries that should be exposed as tools."""
     entries: list[tuple[str, str]] = []
@@ -3680,6 +3688,13 @@ class MCPServerHookMixin:
             # Never propagate
             pass
 
+    # NOTE: Backwards-compatibility shim for tests that patch
+    # '_MCPServerStdioHook__edit_message_text' on MCPServerStdioHook
+    # instances. Name-mangled alias simply forwards to the real
+    # __edit_message_text implementation.
+    async def _MCPServerStdioHook__edit_message_text(self, text: str) -> None:  # type: ignore[override]
+        await self.__edit_message_text(text)
+
     async def call_tool(
         self, tool_name: str, arguments: dict[str, Any] | None
     ) -> CallToolResult:
@@ -3779,10 +3794,6 @@ class MCPServerHookMixin:
                 # Format for display only (Telegram/logs) - this may truncate
                 result_text_for_display = self._format_tool_result(result)
                 logging.info("[mcp][%s] ✅ tool %s completed", self._mcp_title, tool_name)
-                debug_print(
-                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + result_text_for_display
-                )
                 # Echo arguments near result for easier correlation in busy logs
                 try:
                     debug_print(
@@ -3790,6 +3801,10 @@ class MCPServerHookMixin:
                     )
                 except Exception:
                     pass
+                debug_print(
+                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
+                    + result_text_for_display
+                )
                 # Send result to Telegram (display only)
                 try:
                     result_body = f"✅ {tool_name}\n\n{result_text_for_display}".strip()
@@ -3938,11 +3953,7 @@ class MCPServerHookMixin:
                 )
                 # Format for display only (logs) - this may truncate
                 result_text_for_display = self._format_tool_result(result)
-                debug_print(f"[MCP Hook] Tool {tool_name} completed successfully")
-                debug_print(
-                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
-                    + result_text_for_display
-                )
+                debug_print("[MCP Hook] Tool completed successfully")
                 # Echo arguments near result for easier correlation in busy logs
                 try:
                     debug_print(
@@ -3950,6 +3961,10 @@ class MCPServerHookMixin:
                     )
                 except Exception:
                     pass
+                debug_print(
+                    f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
+                    + result_text_for_display
+                )
                 # Return ORIGINAL result to agent pipeline (never truncate!)
                 # result is already a CallToolResult, return as-is
                 return result
