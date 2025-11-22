@@ -577,7 +577,18 @@ def reload(
     Delegates to repo_fs.reload() (or scan()) and returns its dict result.
     """
     try:
-        return repo_fs.reload(repos, full_form=full_form)
+        res = repo_fs.reload(repos, full_form=full_form)
+        # After a successful filesystem reload, clear cached Agents so that
+        # sub-agents/tools pick up updated prompt instructions on next use.
+        try:
+            if isinstance(res, dict) and res.get("ok"):
+                from call.app import call as app_call
+
+                app_call.AGENT_CACHE.clear()
+                debug_print("[api.reload]", "agent_cache_cleared")
+        except Exception as hook_exc:
+            logging.debug("[api] reload post-hook failed: %s", hook_exc)
+        return res
     except Exception as e:
         return {
             "ok": False,
@@ -1356,6 +1367,17 @@ async def call_async(
                         details = json.loads(msg[brace:])
                 except Exception:
                     details = None
+            if isinstance(e, app_call.MCPInitializationError):
+                status = 503
+                err_code = "MCP_INIT_FAILED"
+                cause = getattr(e, "cause", None)
+                cause_msg = str(cause) if cause else ""
+                if "voice.stratospace.fun" in cause_msg:
+                    msg = "Voice service is unavailable (voice.stratospace.fun timeout). Please try again later."
+                else:
+                    msg = "MCP tools initialization failed. One of external MCP servers is unavailable. Please try again later."
+                if cause_msg:
+                    details = {"cause": cause_msg}
             if status == 403:
                 return _error_payload(
                     agent=(cfg.id or ""),
@@ -1372,7 +1394,7 @@ async def call_async(
             return _error_payload(
                 agent=(cfg.id or ""),
                 input=(input or ""),
-                exc=e,
+                exc=msg,
                 status=status,
                 echo=echo,
                 debug=debug,

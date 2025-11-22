@@ -351,7 +351,7 @@ CREATE TABLE repo (
 
 **Operations:**
 
-- `reload()` — rescans `agent/` and `prompt/` repos, rebuilds index
+- `reload()` — rescans `agent/` and `prompt/` repos, rebuilds index, and clears the in-memory `AGENT_CACHE` so cached agents/sub-agents pick up updated instructions on the next run
 - `read(card_id)` — returns raw card text from DB
 - `write(card_id, text)` — updates DB and filesystem atomically
 - `list()` — hierarchical listing (projects → agents → prompts)
@@ -539,7 +539,7 @@ Call implements a Model Context Protocol server using the FastMCP SDK.
 - `models()` — list available models
 - `read(card_id)` — read raw card text
 - `write(card_id, card_text)` — write card text
-- `reload()` — rebuild repository index
+- `reload()` — rebuild repository index and clear the runtime `AGENT_CACHE` after a successful rescan
 - `notify(event, payload?)` — send event notification
 
 **Configuration:**
@@ -629,7 +629,7 @@ Call provides a production Telegram bot with intelligent message parsing and con
 - `/prompts [filters]` — list prompts with filters
 - `/prompts_ready`, `/prompts_draft` — state-specific listings
 - `/call [@Target] <input>` — execute agent/prompt
-- `/reload` — rebuild repository index
+- `/reload` — rebuild repository index and clear cached agents (forces sub-agents to use updated prompts)
 - `/clear` — clear conversation session
 
 **Message Parsing:**

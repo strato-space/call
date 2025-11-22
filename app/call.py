@@ -3783,6 +3783,13 @@ class MCPServerHookMixin:
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
                     + result_text_for_display
                 )
+                # Echo arguments near result for easier correlation in busy logs
+                try:
+                    debug_print(
+                        "[MCP Hook] Arguments (YAML, echoed near result):\n" + yaml_args
+                    )
+                except Exception:
+                    pass
                 # Send result to Telegram (display only)
                 try:
                     result_body = f"✅ {tool_name}\n\n{result_text_for_display}".strip()
@@ -3805,6 +3812,13 @@ class MCPServerHookMixin:
                     err_text = format_exception_text(e)
                     await self.__edit_message_text(
                         f"❌ Error in {tool_name}\n\n" + err_text
+                    )
+                except Exception:
+                    pass
+                # Echo arguments near error to simplify debugging of failed calls
+                try:
+                    debug_print(
+                        "[MCP Hook] Arguments (YAML, echoed near error):\n" + yaml_args
                     )
                 except Exception:
                     pass
@@ -3929,6 +3943,13 @@ class MCPServerHookMixin:
                     f"[MCP Hook][{self._mcp_title}] Tool {tool_name} returned:\n"
                     + result_text_for_display
                 )
+                # Echo arguments near result for easier correlation in busy logs
+                try:
+                    debug_print(
+                        "[MCP Hook] Arguments (YAML, echoed near result):\n" + yaml_args
+                    )
+                except Exception:
+                    pass
                 # Return ORIGINAL result to agent pipeline (never truncate!)
                 # result is already a CallToolResult, return as-is
                 return result
@@ -3945,6 +3966,13 @@ class MCPServerHookMixin:
                 try:
                     await self.__edit_message_text(
                         f"❌ Error in {tool_name}\n\n" + err_text
+                    )
+                except Exception:
+                    pass
+                # Echo arguments near error to simplify debugging of failed calls
+                try:
+                    debug_print(
+                        "[MCP Hook] Arguments (YAML, echoed near error):\n" + yaml_args
                     )
                 except Exception:
                     pass
