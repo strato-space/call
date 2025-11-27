@@ -4,7 +4,7 @@ import logging
 import time, uuid
 from typing import Any, Optional, Literal
 from pydantic import BaseModel
-from fastapi import FastAPI, Depends, Query, Request, Body
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Body, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -12,6 +12,7 @@ from .deps import bearer_guard
 
 # Library imports (API-only)
 from call.lib.api import call as api_call
+from call.lib.api import call_async as api_call_async
 from call.lib.api import list as api_list
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import models as api_models
@@ -207,7 +208,6 @@ class ExecPayload(BaseModel):
 
 class NotifyPayload(BaseModel):
     event: str
-    context: Optional[Any] = None
     echo: Optional[bool] = False
     session_id: Optional[str] = None
 
@@ -218,13 +218,13 @@ class NotifyPayload(BaseModel):
     operation_id="exec_post",
     summary="Execute with a JSON payload (project|agent|prompt|target + optional context)",
 )
-def exec_action_post(payload: ExecPayload = Body(...)):
+async def exec_action_post(payload: ExecPayload = Body(...)):
     # Normalize via library helper
     payload_dict = payload.model_dump(exclude_unset=True)
     kwargs, err = api_interpret_exec_payload(payload_dict)
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
-    res = api_call(**kwargs)
+    res = await api_call_async(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(
@@ -242,12 +242,14 @@ def exec_action_post(payload: ExecPayload = Body(...)):
     summary="Acknowledge an event with a JSON payload (event required)",
     description="Notify payloads must include an 'event' field and may not specify project/agent/prompt/target selectors.",
 )
-def notify_action_post(payload: NotifyPayload = Body(...)):
+async def notify_action_post(request: Request, payload: NotifyPayload = Body(...)):
+    raw_body = (await request.body()).decode("utf-8", "replace")
     payload_dict = payload.model_dump(exclude_unset=True)
     kwargs, err = api_interpret_exec_payload(payload_dict)
     if err:
         return JSONResponse(content=err, status_code=int(err.get("error_code", 400)))
-    res = api_call(**kwargs)
+    kwargs["input"] = raw_body
+    res = await api_call_async(**kwargs)
     try:
         if isinstance(res, dict) and res.get("ok") is False:
             return JSONResponse(

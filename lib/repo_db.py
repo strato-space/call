@@ -113,10 +113,18 @@ def _ensure_events_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS events (
             id      INTEGER PRIMARY KEY AUTOINCREMENT,
             event   TEXT NOT NULL,
-            payload TEXT
+            input   TEXT
         )
         """
     )
+    cur.execute("PRAGMA table_info(events)")
+    existing_columns = {row[1] for row in cur.fetchall()}
+    if "input" not in existing_columns:
+        cur.execute("ALTER TABLE events ADD COLUMN input TEXT")
+    if "payload" in existing_columns:
+        cur.execute(
+            "UPDATE events SET input = COALESCE(input, payload) WHERE payload IS NOT NULL"
+        )
     conn.commit()
     return conn
 
@@ -125,29 +133,28 @@ def _ensure_events_db() -> sqlite3.Connection:
 class EventRow:
     id: int
     event: str
-    payload: Any
+    input: Optional[str]
 
 
-def push_event(event: str, payload: Any = None) -> int:
+def push_event(event: str, input_text: Any = None) -> int:
     """Persist an event payload into call.db.
 
     Returns the inserted row ID to align with future queue offsets.
     """
     conn = _ensure_events_db()
-    payload_to_store: Optional[str]
-    if payload is None:
-        payload_to_store = None
-    elif isinstance(payload, str):
-        payload_to_store = payload
+    cur = conn.cursor()
+    if input_text is None:
+        input_value: Optional[str] = None
+    elif isinstance(input_text, str):
+        input_value = input_text
     else:
         try:
-            payload_to_store = json.dumps(payload, ensure_ascii=False)
+            input_value = json.dumps(input_text, ensure_ascii=False)
         except Exception:
-            payload_to_store = str(payload)
-    cur = conn.cursor()
+            input_value = str(input_text)
     cur.execute(
-        "INSERT INTO events (event, payload) VALUES (?, ?)",
-        (str(event), payload_to_store),
+        "INSERT INTO events (event, input) VALUES (?, ?)",
+        (str(event), input_value),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -165,7 +172,7 @@ def iter_events(
     """
     conn = _ensure_events_db()
     cur = conn.cursor()
-    sql = "SELECT id, event, payload FROM events WHERE 1=1"
+    sql = "SELECT id, event, input FROM events WHERE 1=1"
     params: List[Any] = []
     if isinstance(after_id, int):
         sql += " AND id > ?"
@@ -180,16 +187,12 @@ def iter_events(
     conn.close()
 
     event_rows: List[EventRow] = []
-    for row_id, event_name, payload_text in rows:
-        parsed_payload: Any = payload_text
-        if isinstance(payload_text, str):
-            try:
-                parsed_payload = json.loads(payload_text)
-            except Exception:
-                parsed_payload = payload_text
+    for row_id, event_name, input_text in rows:
         event_rows.append(
             EventRow(
-                id=int(row_id), event=str(event_name or ""), payload=parsed_payload
+                id=int(row_id),
+                event=str(event_name or ""),
+                input=str(input_text) if isinstance(input_text, str) else None,
             )
         )
     return event_rows
