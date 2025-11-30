@@ -13,7 +13,7 @@ beautifulsoup4
 setuptools
 wheel
 
-mcp==1.21.0
+mcp>=1.22.0
 pydantic>=2.12.3,<3
 pydantic-settings[dotenv]>=2.5.2,<3
 

@@ -137,6 +137,57 @@ def _read_agent_name(path: Path, *, default: str) -> str:
     return name
 
 
+def _extract_prompt_dirs(meta_paths, base_dir: Path) -> tuple[list[Path], bool]:
+    """Resolve optional prompt directories declared on a project card."""
+
+    declared = False
+    resolved: list[Path] = []
+
+    if isinstance(meta_paths, (str, Path)):
+        entries = [meta_paths]
+    elif isinstance(meta_paths, (list, tuple, set)):
+        entries = list(meta_paths)
+    else:
+        entries = []
+
+    for raw in entries:
+        try:
+            value = Path(raw)
+        except Exception:
+            continue
+        rel = str(value).strip()
+        if not rel:
+            continue
+        declared = True
+        try:
+            candidate = (base_dir / rel).resolve()
+        except Exception as exc:
+            debug_print(
+                "[repo.scan] project paths resolve failed",
+                f"base={base_dir}",
+                f"path={rel}",
+                str(exc),
+            )
+            continue
+        if not candidate.exists():
+            debug_print(
+                "[repo.scan] project paths entry missing",
+                f"path={candidate}",
+                "skipping",
+            )
+            continue
+        if not candidate.is_dir():
+            debug_print(
+                "[repo.scan] project paths entry not dir",
+                f"path={candidate}",
+                "skipping",
+            )
+            continue
+        resolved.append(candidate)
+
+    return resolved, declared
+
+
 def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
     scanned = 0
     directories: list[dict] = []
@@ -360,6 +411,7 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                 continue
             proj_name = child.name
             proj_md = child / "project.md"
+            meta: dict = {}
             if proj_md.exists():
                 try:
                     meta = _read_prompt_metadata(proj_md) or {}
@@ -392,51 +444,80 @@ def _scan_prompt_repo(cur) -> tuple[int, list[dict]]:
                     per_project_has_project_card.add(proj_name)
                 except Exception:
                     pass
-            
-            # Phase 1A-flat: scan flat .md prompts in the same project directory
+            base_dir = proj_md.parent if proj_md.exists() else child
+            prompt_dirs_override, paths_declared = _extract_prompt_dirs(
+                (meta or {}).get("paths"), base_dir
+            )
+            if paths_declared and not prompt_dirs_override:
+                debug_print(
+                    "[repo.scan] project paths declared but missing directories",
+                    f"project={proj_name}",
+                )
+            prompt_roots = prompt_dirs_override or [child]
+            seen_prompt_files: set[Path] = set()
+
+            # Phase 1A-flat: scan .md prompts in the configured directories
             try:
-                for md_file in child.glob("*.md"):
-                    # Skip project.md (already handled above)
-                    if md_file.name == "project.md":
-                        continue
+                for prompt_root in prompt_roots:
                     try:
-                        meta = _read_prompt_metadata(md_file) or {}
-                        # Skip files with type: project (they should only be project.md)
-                        if meta.get("type") == "project":
-                            continue
-                        # Default type is prompt if not specified
-                        pr_id = str(meta.get("id") or md_file.stem)
-                        eng = str(meta.get("engine") or "")
-                        orch = str(meta.get("orchestration") or "")
-                        goal = str(meta.get("goal") or meta.get("purpose") or "")
-                        relp, url = _rel_url(md_file)
-                        card_text = _read_card_text(md_file)
-                        # Insert as prompt (flat structure)
-                        _upsert_row(
-                            cur,
-                            target=pr_id,
-                            project=proj_name,
-                            agent="",
-                            prompt=pr_id,
-                            abs_path=str(md_file),
-                            state="ready",
-                            engine=eng,
-                            orchestration=orch,
-                            type="prompt",
-                            rel_path=relp,
-                            url=url,
-                            goal=goal,
-                            card=card_text,
-                        )
-                        scanned += 1
-                        # Update per-project prompt count
-                        try:
-                            d = per_project.setdefault(proj_name, {"ready": 0, "draft": 0})
-                            d["ready"] = int(d.get("ready", 0)) + 1
-                        except Exception:
-                            pass
+                        files = list(prompt_root.glob("*.md"))
                     except Exception:
                         continue
+                    for md_file in files:
+                        try:
+                            resolved_md = md_file.resolve()
+                        except Exception:
+                            resolved_md = md_file
+                        if proj_md.exists():
+                            try:
+                                if resolved_md == proj_md.resolve():
+                                    continue
+                            except Exception:
+                                pass
+                        if resolved_md in seen_prompt_files:
+                            continue
+                        seen_prompt_files.add(resolved_md)
+                        # Skip project.md (already handled above)
+                        if md_file.name == "project.md":
+                            continue
+                        try:
+                            meta = _read_prompt_metadata(md_file) or {}
+                            # Skip files with type: project (they should only be project.md)
+                            if meta.get("type") == "project":
+                                continue
+                            # Default type is prompt if not specified
+                            pr_id = str(meta.get("id") or md_file.stem)
+                            eng = str(meta.get("engine") or "")
+                            orch = str(meta.get("orchestration") or "")
+                            goal = str(meta.get("goal") or meta.get("purpose") or "")
+                            relp, url = _rel_url(md_file)
+                            card_text = _read_card_text(md_file)
+                            # Insert as prompt (flat structure)
+                            _upsert_row(
+                                cur,
+                                target=pr_id,
+                                project=proj_name,
+                                agent="",
+                                prompt=pr_id,
+                                abs_path=str(md_file),
+                                state="ready",
+                                engine=eng,
+                                orchestration=orch,
+                                type="prompt",
+                                rel_path=relp,
+                                url=url,
+                                goal=goal,
+                                card=card_text,
+                            )
+                            scanned += 1
+                            # Update per-project prompt count
+                            try:
+                                d = per_project.setdefault(proj_name, {"ready": 0, "draft": 0})
+                                d["ready"] = int(d.get("ready", 0)) + 1
+                            except Exception:
+                                pass
+                        except Exception:
+                            continue
             except Exception:
                 pass
     except Exception:

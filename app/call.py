@@ -2157,14 +2157,14 @@ bot: Bot
 
 
 def get_project_token(project_name: str) -> str:
-    """Return TELEGRAM_TOKEN.<project_name> from environment.
+    """Return TELEGRAM_TOKEN__<project_name> from environment.
 
     KISS: no suffix guessing, no default fallback. Raise if missing.
     The provided name should already be normalized by the caller (e.g., stripped of 'Bot').
     """
     if not project_name or not str(project_name).strip():
         raise ValueError("project_name is required")
-    key = f"TELEGRAM_TOKEN.{project_name}"
+    key = f"TELEGRAM_TOKEN__{project_name}"
     token = os.environ.get(key, "").strip()
     if not token:
         raise KeyError(f"Missing {key} in environment/.env")
@@ -2175,7 +2175,7 @@ async def init_bot(*, project_name: str | None = None):
     """Initialize (or re-initialize) the global Telegram bot.
 
     Behavior:
-      - If project_name is provided, use TELEGRAM_TOKEN.<project_name>
+      - If project_name is provided, use TELEGRAM_TOKEN__<project_name>
       - Otherwise, fall back to TELEGRAM_TOKEN
       - If already initialized with the same token, reuse existing instance
     """
@@ -2188,7 +2188,7 @@ async def init_bot(*, project_name: str | None = None):
 
     # Resolve token based on preference order:
     # 1) CALL_TELEGRAM_TOKEN (passed by telegram_bot at runtime)
-    # 2) TELEGRAM_TOKEN.<ProjectName> when project_name is provided
+    # 2) TELEGRAM_TOKEN__<ProjectName> when project_name is provided
     # 3) TELEGRAM_TOKEN (default from environment)
     token: str | None = None
     try:

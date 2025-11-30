@@ -727,7 +727,7 @@ Commands:
 - /reload  (rescan repositories and rebuild repo index)
 
 Startup options:
-- --bot-name Name  (token lookup: TELEGRAM_TOKEN.Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
+- --bot-name Name  (token lookup: TELEGRAM_TOKEN__Name in env/.env; if --bot-name is not provided, falls back to TELEGRAM_TOKEN)
 
 Plain text (no slash):
 - In private chat: 
