@@ -117,6 +117,18 @@ if _CALL_ENV.exists():
 load_dotenv(override=True)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+INCLUDE_TELEGRAM_MESSAGE_CONTEXT = _env_flag(
+    "CALL_INCLUDE_TELEGRAM_MESSAGE", "0"
+)
+INCLUDE_TELEGRAM_BOT_CONTEXT = _env_flag(
+    "CALL_INCLUDE_TELEGRAM_BOT", "0"
+)
+TELEGRAM_PHOTO_VARIANT = (
+    os.environ.get("TELEGRAM_PHOTO_VARIANT", "largest").strip().lower()
+    or "largest"
+)
+if TELEGRAM_PHOTO_VARIANT not in {"smallest", "min", "largest", "max", "first", "last"}:
+    TELEGRAM_PHOTO_VARIANT = "largest"
 # Optional selected bot name from CLI (set later in main) or env
 SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
 # Derived project name is computed in main after parsing args
@@ -1106,6 +1118,216 @@ async def _call_task(
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
 
 
+_BOT_INFO_CACHE: dict | None = None
+
+
+def _build_telegram_file_url(path: str) -> str | None:
+    try:
+        url = (path or "").strip()
+        if not url:
+            return None
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+        token = (
+            os.environ.get("CALL_TELEGRAM_TOKEN")
+            or os.environ.get("TELEGRAM_TOKEN")
+            or ""
+        )
+        if not token:
+            return None
+        return f"https://api.telegram.org/file/bot{token}/{url}"
+    except Exception:
+        log.debug("Failed to build Telegram file URL", exc_info=True)
+        return None
+
+
+async def _build_resource_link_item(
+    *,
+    context: ContextTypes.DEFAULT_TYPE,
+    file_id: str,
+    name: str | None,
+    mime_type: str | None,
+    description: str,
+    chat_id: int | None,
+    message_id: int | None,
+    direction: str,
+) -> dict | None:
+    try:
+        debug_print(
+            "[bot]",
+            "[GET_FILE]",
+            f"request file_id={file_id!r} chat_id={chat_id} message_id={message_id} direction={direction!r}",
+        )
+        f = await context.bot.get_file(file_id)
+        file_path = getattr(f, "file_path", "") or ""
+        uri = _build_telegram_file_url(file_path)
+        debug_print(
+            "[bot]",
+            "[GET_FILE]",
+            f"resolved file_id={file_id!r} file_path={file_path!r} uri={(uri or '')!r}",
+        )
+        if not uri:
+            return None
+        item: dict = {
+            "type": "resource_link",
+            "uri": uri,
+            "name": (name or "attachment"),
+            "description": description,
+            "source": {
+                "type": "telegram",
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "direction": direction,
+            },
+        }
+        if mime_type:
+            item["mimeType"] = mime_type
+        return item
+    except Exception:
+        log.debug("Failed to resolve Telegram file to resource_link", exc_info=True)
+        return None
+
+
+async def _collect_telegram_attachments(
+    message,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    direction: str,
+) -> list[dict]:
+    items: list[dict] = []
+    if not message:
+        return items
+    try:
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        message_id = getattr(message, "message_id", None)
+        photos = getattr(message, "photo", None) or []
+        if photos:
+            best = photos[0]
+            try:
+                # Select photo variant according to TELEGRAM_PHOTO_VARIANT.
+                # Default (largest) prefers maximum area; "smallest"/"min" prefer minimum area.
+                if TELEGRAM_PHOTO_VARIANT in {"smallest", "min"}:
+                    best = min(
+                        photos,
+                        key=lambda p: (getattr(p, "width", 0) or 0)
+                        * (getattr(p, "height", 0) or 0),
+                    )
+                elif TELEGRAM_PHOTO_VARIANT in {"largest", "max"}:
+                    best = max(
+                        photos,
+                        key=lambda p: (getattr(p, "width", 0) or 0)
+                        * (getattr(p, "height", 0) or 0),
+                    )
+                elif TELEGRAM_PHOTO_VARIANT == "last":
+                    best = photos[-1]
+                else:  # "first" or fallback
+                    best = photos[0]
+            except Exception:
+                best = photos[0]
+            name = f"photo_{getattr(best, 'file_id', 'unknown')}.jpg"
+            photo_item = await _build_resource_link_item(
+                context=context,
+                file_id=getattr(best, "file_id", ""),
+                name=name,
+                mime_type="image/jpeg",
+                description="Telegram attachment (photo/document/video/voice)",
+                chat_id=chat_id,
+                message_id=message_id,
+                direction=direction,
+            )
+            if photo_item:
+                items.append(photo_item)
+        doc = getattr(message, "document", None)
+        if doc and getattr(doc, "file_id", None):
+            doc_name = getattr(doc, "file_name", None)
+            doc_mime = getattr(doc, "mime_type", None)
+            doc_item = await _build_resource_link_item(
+                context=context,
+                file_id=getattr(doc, "file_id", ""),
+                name=str(doc_name) if doc_name else None,
+                mime_type=str(doc_mime) if doc_mime else None,
+                description="Telegram attachment (photo/document/video/voice)",
+                chat_id=chat_id,
+                message_id=message_id,
+                direction=direction,
+            )
+            if doc_item:
+                items.append(doc_item)
+        video = getattr(message, "video", None)
+        if video and getattr(video, "file_id", None):
+            vid_name = getattr(video, "file_name", None)
+            vid_mime = getattr(video, "mime_type", None)
+            video_item = await _build_resource_link_item(
+                context=context,
+                file_id=getattr(video, "file_id", ""),
+                name=str(vid_name) if vid_name else None,
+                mime_type=str(vid_mime) if vid_mime else None,
+                description="Telegram attachment (photo/document/video/voice)",
+                chat_id=chat_id,
+                message_id=message_id,
+                direction=direction,
+            )
+            if video_item:
+                items.append(video_item)
+        voice = getattr(message, "voice", None)
+        if voice and getattr(voice, "file_id", None):
+            voice_mime = getattr(voice, "mime_type", None)
+            voice_item = await _build_resource_link_item(
+                context=context,
+                file_id=getattr(voice, "file_id", ""),
+                name="voice_message",
+                mime_type=str(voice_mime) if voice_mime else None,
+                description="Telegram attachment (photo/document/video/voice)",
+                chat_id=chat_id,
+                message_id=message_id,
+                direction=direction,
+            )
+            if voice_item:
+                items.append(voice_item)
+        audio = getattr(message, "audio", None)
+        if audio and getattr(audio, "file_id", None):
+            aud_name = getattr(audio, "file_name", None)
+            aud_mime = getattr(audio, "mime_type", None)
+            audio_item = await _build_resource_link_item(
+                context=context,
+                file_id=getattr(audio, "file_id", ""),
+                name=str(aud_name) if aud_name else None,
+                mime_type=str(aud_mime) if aud_mime else None,
+                description="Telegram attachment (photo/document/video/voice)",
+                chat_id=chat_id,
+                message_id=message_id,
+                direction=direction,
+            )
+            if audio_item:
+                items.append(audio_item)
+    except Exception:
+        log.debug("Failed to collect Telegram attachments", exc_info=True)
+    return items
+
+
+async def _get_bot_info(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    global _BOT_INFO_CACHE
+    if isinstance(_BOT_INFO_CACHE, dict) and _BOT_INFO_CACHE:
+        return _BOT_INFO_CACHE
+    try:
+        me = await context.bot.get_me()
+        if hasattr(me, "to_dict"):
+            data = me.to_dict()
+        else:
+            data = {
+                "id": getattr(me, "id", None),
+                "is_bot": getattr(me, "is_bot", None),
+                "first_name": getattr(me, "first_name", None),
+                "username": getattr(me, "username", None),
+            }
+        _BOT_INFO_CACHE = data
+        return data
+    except Exception:
+        log.debug("Failed to fetch Telegram bot info via getMe", exc_info=True)
+        return None
+
+
 async def build_input_payload_from_reply(
     name: str | None, main_text: str, update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> tuple[str, dict | None]:
@@ -1120,39 +1342,91 @@ async def build_input_payload_from_reply(
     # Collect reply-derived context (files) and reply text; delegate JSON build to call_api
     ctx_items: list = []
     reply_text: str = ""
+    attachments: list[dict] = []
     try:
-        if update.message and update.message.reply_to_message:
-            r = update.message.reply_to_message
-            r_text = (r.text or r.caption or "").strip()
+        msg = getattr(update, "message", None)
+        r = getattr(msg, "reply_to_message", None) if msg is not None else None
+        if r is not None:
+            r_text = (
+                (getattr(r, "text", None) or getattr(r, "caption", None) or "")
+                .strip()
+            )
             if r_text:
                 reply_text = r_text
-            # Document URL
             try:
-                if getattr(r, "document", None):
-                    doc = r.document
-                    file = await context.bot.get_file(doc.file_id)
-                    url = getattr(file, "file_path", "")
-                    if url and not url.startswith("http"):
-                        token = (
-                            os.environ.get("CALL_TELEGRAM_TOKEN")
-                            or os.environ.get("TELEGRAM_TOKEN")
-                            or ""
-                        )
-                        if token:
-                            url = f"https://api.telegram.org/file/bot{token}/{url}"
-                    if url:
-                        item = {"type": "file", "url": url}
-                        try:
-                            fname = getattr(doc, "file_name", None)
-                            if fname:
-                                item["name"] = str(fname)
-                        except Exception:
-                            pass
-                        ctx_items.append(item)
+                attachments.extend(
+                    await _collect_telegram_attachments(
+                        r,
+                        context,
+                        direction="replay",
+                    )
+                )
             except Exception:
-                pass
+                log.debug(
+                    "Failed to collect Telegram attachments from reply_to_message",
+                    exc_info=True,
+                )
+        if msg is not None:
+            try:
+                attachments.extend(
+                    await _collect_telegram_attachments(
+                        msg,
+                        context,
+                        direction="input",
+                    )
+                )
+            except Exception:
+                log.debug(
+                    "Failed to collect Telegram attachments from current message",
+                    exc_info=True,
+                )
     except Exception:
-        pass
+        log.debug(
+            "Failed to inspect Telegram message while building input payload",
+            exc_info=True,
+        )
+    try:
+        if attachments:
+            seen_keys: set[tuple[str, str]] = set()
+            for it in attachments:
+                if not isinstance(it, dict):
+                    continue
+                uri = str(it.get("uri") or "")
+                name = str(it.get("name") or "")
+                key = (uri, name)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                ctx_items.append(it)
+    except Exception:
+        log.debug("Failed to deduplicate Telegram attachments", exc_info=True)
+    if INCLUDE_TELEGRAM_MESSAGE_CONTEXT:
+        try:
+            msg = getattr(update, "message", None)
+            if msg is not None and hasattr(msg, "to_dict"):
+                ctx_items.append(
+                    {
+                        "type": "telegram_message",
+                        "message": msg.to_dict(),
+                    }
+                )
+            r = getattr(msg, "reply_to_message", None) if msg is not None else None
+            if r is not None and hasattr(r, "to_dict"):
+                ctx_items.append(
+                    {
+                        "type": "telegram_message",
+                        "message": r.to_dict(),
+                    }
+                )
+        except Exception:
+            log.debug("Failed to append telegram_message context items", exc_info=True)
+    if INCLUDE_TELEGRAM_BOT_CONTEXT:
+        try:
+            bot_info = await _get_bot_info(context)
+            if isinstance(bot_info, dict) and bot_info:
+                ctx_items.append({"type": "telegram_bot", "bot": bot_info})
+        except Exception:
+            log.debug("Failed to append telegram_bot context item", exc_info=True)
     # Delegate to library for predictable, shared behavior (no FS fallback; ordered keys)
     input_arg, payload = _services.call_api.build_input_payload(
         target=(name or None),
@@ -1363,14 +1637,19 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @_require_allowed_users
 async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle plain text messages (non-command).
-    
+    """Handle plain text or caption messages (non-command).
+
     Behavior:
     - Private chats: "@Name <input>" treated as /call @Name <input>, "text" as /call text
     - Group chats: Only "@Name <input>" handled (ignore other messages to avoid noise)
+    - Supports both text messages and media messages with a caption.
     - Target resolution delegated to call_api.call_async() without pre-validation
     """
-    text = (update.message.text or "").strip() if update.message else ""
+    text = (
+        (update.message.text or update.message.caption or "").strip()
+        if update.message
+        else ""
+    )
     log.debug("handle_plain_text: text=%r", text)
     if not text:
         return
@@ -1513,7 +1792,10 @@ def main() -> None:
     app.add_handler(CommandHandler("clear", handle_clear))
 
     app.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND), handle_plain_text)
+        MessageHandler(
+            (filters.TEXT | filters.CAPTION) & (~filters.COMMAND),
+            handle_plain_text,
+        )
     )
     # Log all incoming updates at the end so it doesn't interfere with other handlers
     app.add_handler(TypeHandler(Update, _log_update), group=100)

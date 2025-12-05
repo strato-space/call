@@ -763,6 +763,21 @@ TELEGRAM_CHAT_ID=-100123456789
 TELEGRAM_THREAD_ID=10  # Optional
 ```
 
+Additional Telegram context flags (optional):
+
+- `CALL_INCLUDE_TELEGRAM_MESSAGE` — when set to `1`, the bot appends raw Telegram
+  `telegram_message` items to the `context` array for the current message and its
+  reply (when available). Default: `0` (do not include these items).
+- `CALL_INCLUDE_TELEGRAM_BOT` — when set to `1`, the bot appends a
+  `{"type": "telegram_bot", "bot": { ... }}` item (Telegram `getMe()` payload)
+  to the `context` array on each request. Default: `0` (do not include this item).
+- `TELEGRAM_PHOTO_VARIANT` — controls which Telegram photo size is turned into a
+  `resource_link` for messages with `photo` arrays. Supported values:
+  - `smallest` or `min` — pick the smallest image by area,
+  - `largest` or `max` — pick the largest image by area (**default**),
+  - `first` — pick the first element in the `photo` array,
+  - `last` — pick the last element in the `photo` array.
+
 **Running:**
 
 ```bash

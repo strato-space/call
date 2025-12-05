@@ -72,6 +72,59 @@ class FakeCallApi:
         return {"ok": True, "cleared": []}
 
 
+class RecordingCallApi:
+    """Minimal stub to capture arguments passed to build_input_payload.
+
+    Used to test Telegram-specific context enrichment in build_input_payload_from_reply
+    without depending on the real call.lib.api implementation.
+    """
+
+    def __init__(self):
+        self.last_payload = None
+
+    def build_input_payload(
+        self,
+        *,
+        target,
+        main_text,
+        extra_context=None,
+        reply_text=None,
+        download=False,
+    ):
+        payload = {}
+        if target:
+            payload["target"] = target
+        if isinstance(reply_text, str) and reply_text.strip():
+            payload["replay"] = reply_text.strip()
+        if isinstance(main_text, str) and main_text.strip():
+            payload["input"] = main_text
+        if isinstance(extra_context, list) and extra_context:
+            payload["context"] = extra_context
+        s = json.dumps(payload, ensure_ascii=False)
+        self.last_payload = payload
+        return s, payload
+
+    async def call_async(
+        self, *, project, agent, prompt, target, input, echo, chat_id, thread_id
+    ):
+        return {"ok": False, "error_code": 404, "code": "NO_DATA_FOUND"}
+
+    def list(self, **kwargs):
+        return []
+
+    def resolve_agent(self, **kwargs):
+        return {"ok": False, "error_code": 404, "description": "not found"}
+
+    def list_prompts(self, **kwargs):
+        return []
+
+    def reload(self, **kwargs):
+        return {"ok": True, "scanned": 0}
+
+    async def clear_session(self, *args, **kwargs):
+        return {"ok": True, "cleared": []}
+
+
 class DummyMessage:
     def __init__(self, text):
         self.text = text
@@ -318,3 +371,203 @@ def test_handle_call_preserves_newlines_in_input(monkeypatch):
     assert "line3" in input_text
     # Verify newlines are preserved in the dict
     assert "\n" in input_text
+
+
+@pytest.mark.asyncio
+async def test_build_input_payload_from_reply_with_attachments(monkeypatch):
+    """build_input_payload_from_reply should add attachments, raw messages and bot info.
+
+    - Reply message provides text for `replay`.
+    - Attachments from reply and current message are converted to resource_link items.
+    - Raw telegram_message objects and telegram_bot info are appended to context.
+    """
+
+    services = RecordingCallApi()
+    tg_bot.set_services(call_api_module=services)
+
+    # Ensure ALLOWED_USERS does not block anything and token is deterministic
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setenv("CALL_TELEGRAM_TOKEN", "TEST_TOKEN")
+    # Force inclusion of telegram_message and telegram_bot context for this test
+    monkeypatch.setattr(tg_bot, "INCLUDE_TELEGRAM_MESSAGE_CONTEXT", True, raising=False)
+    monkeypatch.setattr(tg_bot, "INCLUDE_TELEGRAM_BOT_CONTEXT", True, raising=False)
+
+    class DummyPhoto:
+        def __init__(self, file_id, width, height):
+            self.file_id = file_id
+            self.width = width
+            self.height = height
+
+    class DummyDocument:
+        def __init__(self, file_id, file_name=None, mime_type=None):
+            self.file_id = file_id
+            self.file_name = file_name
+            self.mime_type = mime_type
+
+    class DummyFile:
+        def __init__(self, file_path):
+            self.file_path = file_path
+
+    class DummyBot:
+        async def get_file(self, file_id):
+            # Map file_id to a simple deterministic path
+            return DummyFile(file_path=f"files/{file_id}")
+
+        async def get_me(self):
+            class DummyMe:
+                def to_dict(self_inner):
+                    return {
+                        "id": 1,
+                        "is_bot": True,
+                        "first_name": "Test",
+                        "username": "TestBot",
+                    }
+
+            return DummyMe()
+
+    # Reply message with text and a photo
+    reply_msg = types.SimpleNamespace(
+        text="reply text",
+        caption=None,
+        chat=types.SimpleNamespace(id=42),
+        message_id=10,
+        photo=[
+            DummyPhoto("p_small", 100, 100),
+            DummyPhoto("p_big", 200, 200),
+        ],
+        document=None,
+        video=None,
+        voice=None,
+        audio=None,
+        to_dict=lambda: {"message_id": 10, "text": "reply text"},
+    )
+
+    # Current message with main text and a document
+    current_msg = types.SimpleNamespace(
+        text="current text",
+        caption=None,
+        chat=types.SimpleNamespace(id=42),
+        message_id=11,
+        reply_to_message=reply_msg,
+        photo=[],
+        document=DummyDocument("d1", file_name="doc.txt", mime_type="text/plain"),
+        video=None,
+        voice=None,
+        audio=None,
+        to_dict=lambda: {"message_id": 11, "text": "current text"},
+    )
+
+    update = types.SimpleNamespace(message=current_msg)
+
+    ctx = DummyContext()
+    ctx.bot = DummyBot()
+
+    input_arg, payload = await tg_bot.build_input_payload_from_reply(
+        None, "main text", update, ctx
+    )
+
+    # We delegate payload construction to RecordingCallApi
+    assert isinstance(payload, dict)
+    assert payload.get("input") == "main text"
+    assert payload.get("replay") is None or payload.get("replay") == "reply text"
+
+    context_items = payload.get("context") or []
+    # There should be at least one resource_link, one telegram_message and one telegram_bot
+    types_seen = {item.get("type") for item in context_items if isinstance(item, dict)}
+    assert "resource_link" in types_seen
+    assert "telegram_message" in types_seen
+    assert "telegram_bot" in types_seen
+
+    # Verify that at least one resource_link uses the expected Telegram file URL prefix
+    rl_items = [i for i in context_items if i.get("type") == "resource_link"]
+    assert rl_items, "Expected at least one resource_link item"
+    assert any(
+        str(it.get("uri", "")).startswith(
+            "https://api.telegram.org/file/botTEST_TOKEN/"
+        )
+        for it in rl_items
+    )
+
+    # Verify that telegram_bot info contains our dummy username
+    bot_items = [i for i in context_items if i.get("type") == "telegram_bot"]
+    assert bot_items, "Expected at least one telegram_bot item"
+    assert any(
+        isinstance(it.get("bot"), dict) and it["bot"].get("username") == "TestBot"
+        for it in bot_items
+    )
+
+@pytest.mark.asyncio
+async def test_build_input_payload_from_reply_without_telegram_bot_when_flag_disabled(
+    monkeypatch,
+):
+    """When INCLUDE_TELEGRAM_BOT_CONTEXT is False, no telegram_bot items are added."""
+
+    services = RecordingCallApi()
+    tg_bot.set_services(call_api_module=services)
+
+    # Ensure ALLOWED_USERS does not block anything and token is deterministic
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setenv("CALL_TELEGRAM_TOKEN", "TEST_TOKEN")
+    # Explicitly disable telegram_bot context; allow telegram_message for this check
+    monkeypatch.setattr(tg_bot, "INCLUDE_TELEGRAM_MESSAGE_CONTEXT", True, raising=False)
+    monkeypatch.setattr(tg_bot, "INCLUDE_TELEGRAM_BOT_CONTEXT", False, raising=False)
+
+    class DummyFile:
+        def __init__(self, file_path):
+            self.file_path = file_path
+
+    class DummyBot:
+        async def get_file(self, file_id):
+            return DummyFile(file_path=f"files/{file_id}")
+
+        async def get_me(self):
+            class DummyMe:
+                def to_dict(self_inner):
+                    return {
+                        "id": 1,
+                        "is_bot": True,
+                        "first_name": "Test",
+                        "username": "TestBot",
+                    }
+
+            return DummyMe()
+
+    reply_msg = types.SimpleNamespace(
+        text="reply text",
+        caption=None,
+        chat=types.SimpleNamespace(id=42),
+        message_id=10,
+        photo=[],
+        document=None,
+        video=None,
+        voice=None,
+        audio=None,
+        to_dict=lambda: {"message_id": 10, "text": "reply text"},
+    )
+
+    current_msg = types.SimpleNamespace(
+        text="current text",
+        caption=None,
+        chat=types.SimpleNamespace(id=42),
+        message_id=11,
+        reply_to_message=reply_msg,
+        photo=[],
+        document=None,
+        video=None,
+        voice=None,
+        audio=None,
+        to_dict=lambda: {"message_id": 11, "text": "current text"},
+    )
+
+    update = types.SimpleNamespace(message=current_msg)
+
+    ctx = DummyContext()
+    ctx.bot = DummyBot()
+
+    _input_arg, payload = await tg_bot.build_input_payload_from_reply(
+        None, "main text", update, ctx
+    )
+
+    context_items = payload.get("context") or []
+    types_seen = {item.get("type") for item in context_items if isinstance(item, dict)}
+    assert "telegram_bot" not in types_seen
