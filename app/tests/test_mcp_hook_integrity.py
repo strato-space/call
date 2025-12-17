@@ -160,3 +160,29 @@ async def test_mcp_hook_json_array_integrity():
     assert len(parsed) == 21, "All 21 templates must be preserved"
     assert parsed[0]["topic"] == "Topic 0", "First element correct"
     assert parsed[20]["topic"] == "Topic 20", "Last element correct"
+
+
+@pytest.mark.asyncio
+async def test_mcp_hook_logging_includes_content_and_structured_content():
+    """Tool result logs should include both content and structuredContent when present."""
+    from call.app.call import MCPServerStdioHook
+
+    mock_result = CallToolResult(
+        content=[TextContent(type="text", text="hello")],
+        structuredContent={"a": 1},
+    )
+
+    with patch("call.app.call.MCPServerStdio.__init__", return_value=None):
+        hook = MCPServerStdioHook(
+            params={"command": "test", "args": []},
+            name="test",
+            client_session_timeout_seconds=120,
+        )
+        hook._mcp_title = "test"
+
+        rendered = hook._format_tool_result(mock_result)
+
+    assert "content:" in rendered
+    assert "structuredContent:" in rendered
+    assert "hello" in rendered
+    assert "a:" in rendered

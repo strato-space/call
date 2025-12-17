@@ -3810,26 +3810,34 @@ class MCPServerHookMixin:
             """
             return self._sanitize_image_like_fields(obj)
 
-        def _redact_structured_content(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                structured_value = obj.get("structuredContent")
-                redact_content = structured_value not in (None, [], {}, "")
-                sanitized: dict[Any, Any] = {}
-                for key, val in obj.items():
-                    if redact_content and key == "content":
-                        continue
-                    sanitized[key] = _redact_structured_content(val)
-                return sanitized
-            if isinstance(obj, list):
-                return [_redact_structured_content(v) for v in obj]
-            if isinstance(obj, tuple):
-                return tuple(_redact_structured_content(v) for v in obj)
-            if isinstance(obj, set):
-                return {_redact_structured_content(v) for v in obj}
-            return obj
-
         value = _truncate_image_like_fields(value)
-        value = _redact_structured_content(value)
+        force_structured_output = False
+        try:
+            if isinstance(value, dict):
+                structured_value = value.get("structuredContent")
+                if structured_value not in (None, [], {}, ""):
+                    force_structured_output = True
+                else:
+                    content_value = value.get("content")
+                    if isinstance(content_value, list):
+                        for item in content_value:
+                            if isinstance(item, dict):
+                                item_type = str(item.get("type") or "")
+                                if item_type and item_type != "text":
+                                    force_structured_output = True
+                                    break
+                            else:
+                                # Unknown item shape; keep structured view for safety.
+                                force_structured_output = True
+                                break
+        except Exception:
+            logging.getLogger("call.mcp").debug(
+                "[mcp] Failed to inspect tool result shape; falling back to structured output",
+                exc_info=True,
+            )
+            # On any inspection failure, default to structured output so we don't
+            # accidentally drop context from logs.
+            force_structured_output = True
 
         try:
             # If result is a simple text item or list of text items, unwrap to plain text
@@ -3854,7 +3862,7 @@ class MCPServerHookMixin:
                         out.extend(_gather_texts(v))
                 return out
 
-            gathered = _gather_texts(value)
+            gathered = [] if force_structured_output else _gather_texts(value)
             if gathered:
                 text = "\n\n".join(t for t in gathered if t)
             elif _is_text_item(value):
