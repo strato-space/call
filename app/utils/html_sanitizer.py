@@ -139,6 +139,18 @@ def sanitize_telegram_html(html_content: str) -> str:
             html_content = _py_html.unescape(html_content)
     except Exception:
         pass
+    
+    # Normalize common LLM/templating mistakes in attribute syntax that Telegram rejects.
+    # Example: `<a "href"="https://...">` should be `<a href="https://...">`.
+    try:
+        html_content = re.sub(
+            r'(<a\b[^>]*?)\s+(["\'])href\2\s*=',
+            r"\1 href=",
+            html_content,
+            flags=re.IGNORECASE,
+        )
+    except Exception:
+        pass
 
     soup = BeautifulSoup(html_content, "html.parser")
 

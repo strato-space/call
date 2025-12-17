@@ -54,3 +54,9 @@ def test_minify_html_func_strips_comments_and_collapses_whitespace():
     # Ensure no inter-tag whitespace like ">   <"
     assert "> <" not in out
     assert out.strip().startswith("<p>")
+
+
+def test_sanitize_telegram_html_normalizes_quoted_href_attribute():
+    html = '<a "href"="https://example.com/x">file.png</a>'
+    out = sanitize_telegram_html(html)
+    assert '<a href="https://example.com/x">' in out
