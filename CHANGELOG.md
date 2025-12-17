@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-12-17
+
+- **Telegram Attachments:** Convert Telegram media (photos, documents, video, voice, audio) into `context` `resource_link` items with Telegram file URLs resolved via `get_file()` and Telegram `source` metadata. Support media groups/albums by aggregating attachments by `media_group_id`. (`telegram_bot/bot.py`, `README.md`, `tg-user-guide*.md`)
+- **Telegram Routing Defaults:** Prefer `TELEGRAM_DEBUG_CHAT_ID`/`TELEGRAM_DEBUG_THREAD_ID` as the default routing fallback and MCP hook debug destination (with backward-compatible fallback to `TELEGRAM_CHAT_ID`/`TELEGRAM_THREAD_ID`). (`app/call.py`, `lib/api.py`, `.env.example`, `docs/mcp-hook-routing.md`)
+- **Reply Threading Hardening:** Make reply-to behavior task-local and support `TG_ALLOW_SENDING_WITHOUT_REPLY` so retries and fallbacks preserve threading. (`app/call.py`)
+- **MCP Hook Debug Log Sanitization:** Truncate base64/image-like fields in debug output (display-only; payloads remain intact) via `CALL_LOG_SANITIZE_IMAGES`, `CALL_LOG_SANITIZE_KEYS`, and `CALL_LOG_TRUNCATE_DATA_MAX`. (`app/call.py`, `docs/mcp-hook-routing.md`)
+- **MCP Init Behavior:** Treat MCP as disabled when `MCP_CONFIG_PATH` is unset or when there are no enabled servers (no-op; returns `None`), and update tests accordingly. (`app/call.py`, `app/tests/test_mcp_config_yaml.py`)
+- **Test/Runtime Guards:** Disable Actions API lifespan during pytest runs and guard the Neo4j smoke test to only run when executed as a script. (`actions/main.py`, `smoke_test.py`)
+- **MCP Config:** Add `media-gen-meme` stdio server entry. (`mcp_config.yaml`)
 
 ## 2025-11-02
 
