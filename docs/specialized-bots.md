@@ -61,6 +61,7 @@ Universal bots (like `StratoSpaceAiBot`) continue to show full command reference
 | `@ProjectNameBot статус` | Invokes `project.md` with input |
 | `@ProjectNameBot @Target задачи` | Invokes specified `@Target` |
 | `@Target задачи` | Invokes specified target (target name must include `@`) |
+| Voice/media without caption/mention | Ignored (to avoid noise) |
 | Regular text | Ignored (no bot mention) |
 
 ## Setup

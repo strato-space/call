@@ -263,6 +263,39 @@ def test_plain_group_plain_text_is_ignored(monkeypatch):
     assert services.last_call is None
 
 
+def test_plain_group_media_without_caption_is_ignored_for_specialized_bot(monkeypatch):
+    """Specialized bots should ignore media-only updates in group chats unless mentioned."""
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "MediaGenBlenderBot", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "MediaGenBlender", raising=False)
+
+    class DummyVoice:
+        file_id = "voice1"
+
+    class DummyVoiceMessage(DummyMessage):
+        def __init__(self):
+            super().__init__("")
+            self.caption = None
+            self.voice = DummyVoice()
+            self.photo = None
+            self.document = None
+            self.video = None
+            self.audio = None
+
+    upd = DummyUpdate("")
+    upd.message = DummyVoiceMessage()
+    ctx = DummyContext()
+
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.02)
+
+    asyncio.run(_runner())
+    assert services.last_call is None
+
+
 def test_plain_group_single_at_means_input_only(monkeypatch):
     services = FakeCallApi()
     tg_bot.set_services(call_api_module=services)

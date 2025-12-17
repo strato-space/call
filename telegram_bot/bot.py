@@ -1902,11 +1902,13 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         base = _get_bot_project(update)
     except Exception:
         base = ""
-    # If message has media but no text/caption, still handle it by invoking the default project.
+    # If message has media but no text/caption:
+    # - Private chats: handle it (invoke default project / target) so voice/photos "just work".
+    # - Group chats: ignore it to avoid noise; require an explicit mention/target in text/caption.
     if has_media and not text:
         name = base or PROJECT_NAME or ""
         main_text = ""
-        should_handle = bool(name or is_private)
+        should_handle = bool(is_private)
     else:
         try:
             name, main_text, should_handle = _resolve_agent_and_input(
