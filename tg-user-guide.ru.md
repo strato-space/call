@@ -169,6 +169,35 @@
 - Ровно один из `project|agent|prompt|target` должен быть указан.
 - В Telegram чаще всего используется `target`; остальное формируется парсером.
 
+### Вложения и контекст (Telegram)
+
+- В личном чате отправьте **фото с подписью** `@Target сделай коллаж` — бот
+  вызовет `get_file()`, добавит в `context` элемент `type: resource_link` с
+  ссылкой вида `https://api.telegram.org/file/bot<token>/...`, описанием
+  вложения (тип, размеры, размер файла, mime) и метаданными Telegram в
+  `source.chat_id/message_id/direction`.
+- Ответьте на сообщение с **PDF-документом** текстом
+  `@Target сделай краткое summary` — в payload появится `resource_link` для
+  этого документа, который агент может использовать как внешний источник.
+
+Пример (укороченный YAML):
+
+```yaml
+target: Target
+input: сделай коллаж
+context:
+  - type: resource_link
+    uri: https://api.telegram.org/file/bot<token>/photos/file_0.jpg
+    name: photo_<file_id>.jpg
+    description: Telegram photo (1024x768; size=123456 bytes; mime=image/jpeg)
+    source:
+      type: telegram
+      chat_id: -100123456789
+      message_id: 30
+      direction: input
+    mimeType: image/jpeg
+```
+
 ## ToDo примеры curl команд
 
 - todo

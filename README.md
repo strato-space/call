@@ -749,7 +749,7 @@ Sessions use format `chat:thread` (no agent name prefix). Routing precedence:
 1. Explicit `session_id` parameter
 2. Message chat/thread ids
 3. Agent YAML `output.tg.chat_id/thread_id`
-4. Environment defaults (`TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`)
+4. Environment defaults (`TELEGRAM_DEBUG_CHAT_ID`, `TELEGRAM_DEBUG_THREAD_ID`)
 
 **Configuration:**
 
@@ -759,8 +759,8 @@ TELEGRAM_TOKEN.StratoSpaceAi=111111:AAAAAA
 TELEGRAM_TOKEN.AgentFab=222222:BBBBBB
 
 # Default routing
-TELEGRAM_CHAT_ID=-100123456789
-TELEGRAM_THREAD_ID=10  # Optional
+TELEGRAM_DEBUG_CHAT_ID=-100123456789
+TELEGRAM_DEBUG_THREAD_ID=10  # Optional
 ```
 
 Additional Telegram context flags (optional):
@@ -803,6 +803,17 @@ When replying to messages, the bot builds a structured payload with context:
   inline file content
 - `{"type": "session", "_id": "..."}` — session references for conversation
   threading
+ - `{"type": "resource_link", "uri": "https://api.telegram.org/file/bot<token>/<path>", "name": "...", "description": "Telegram photo/document/video/voice/audio", "source": {"type": "telegram", "chat_id": 123456, "message_id": 30, "direction": "input|replay"}, "mimeType": "image/jpeg"}` —
+   Telegram attachments (photos, documents, video, voice/audio) exposed as
+   `context` entries with Telegram file URLs and Telegram-specific metadata.
+
+When you send or reply to a Telegram message that contains media, the bot:
+
+- resolves Telegram files via `get_file()` and `CALL_TELEGRAM_TOKEN`,
+- creates one `resource_link` per attachment (including all photos in a media
+  group/album),
+- keeps the overall `{target, replay, input, context}` envelope unchanged for
+  downstream agents.
 
 **Replay field:**
 
@@ -1069,8 +1080,8 @@ TELEGRAM_TOKEN.AgentFab=222222:BBBBBB
 TELEGRAM_TOKEN.FanFab=333333:CCCCCC
 
 # Default routing (used when not specified in agent YAML or session_id)
-TELEGRAM_CHAT_ID=-100123456789
-TELEGRAM_THREAD_ID=10           # Optional, omit or set to 0 for no thread
+TELEGRAM_DEBUG_CHAT_ID=-100123456789
+TELEGRAM_DEBUG_THREAD_ID=10           # Optional, omit or set to 0 for no thread
 
 # Telegraph integration
 TELEGRAPH_TOKEN=your_telegraph_token
@@ -1146,8 +1157,8 @@ repos=agent,prompt
 
 # Telegram
 TELEGRAM_TOKEN.StratoSpaceAi=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
-TELEGRAM_CHAT_ID=-1001234567890
-TELEGRAM_THREAD_ID=42
+TELEGRAM_DEBUG_CHAT_ID=-1001234567890
+TELEGRAM_DEBUG_THREAD_ID=42
 TELEGRAPH_TOKEN=your_token
 
 # Runtime
@@ -1208,7 +1219,7 @@ pytest --cov=call --cov-report=html
 # Skip live Telegram tests in CI
 TELEGRAM_LIVE_KIND=skip
 TELEGRAM_BOT_TOKEN=""
-TELEGRAM_CHAT_ID=""
+TELEGRAM_DEBUG_CHAT_ID=""
 
 # For local testing with real Telegram
 TELEGRAM_LIVE=1
@@ -1224,7 +1235,7 @@ TELEGRAM_LIVE=1
 **Platform-specific testing:**
 
 - **Windows**: Activate virtualenv and run `pytest` directly
-- **Linux/CI**: Use `TELEGRAM_LIVE_KIND=skip TELEGRAM_BOT_TOKEN="" TELEGRAM_CHAT_ID="" pytest` to skip live Telegram tests
+- **Linux/CI**: Use `TELEGRAM_LIVE_KIND=skip TELEGRAM_BOT_TOKEN="" TELEGRAM_DEBUG_CHAT_ID="" pytest` to skip live Telegram tests
 
 ### Running with Local Virtual Environment
 

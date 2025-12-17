@@ -103,6 +103,35 @@ Examples:
 - Ровно один из `project|agent|prompt|target` должен быть указан.
 - В Telegram чаще всего используется `target`; остальное формируется парсером.
 
+## Attachments and context (Telegram)
+
+- When you send a **photo with a caption** like `@Target make a collage` in a
+  private chat, the bot resolves the Telegram file via `get_file()` and adds a
+  `type: resource_link` item to `context` pointing at the
+  `https://api.telegram.org/file/bot<token>/...` URL.
+- When you **reply to a message with a PDF** and write
+  `@Target summarize this`, the payload will contain a `resource_link` for that
+  document (including `uri`, `mimeType` and Telegram `source` metadata with
+  `chat_id`, `message_id`, and `direction`).
+
+Example (simplified YAML excerpt):
+
+```yaml
+target: Target
+input: make a collage
+context:
+  - type: resource_link
+    uri: https://api.telegram.org/file/bot<token>/photos/file_0.jpg
+    name: photo_<file_id>.jpg
+    description: Telegram photo (1024x768; size=123456 bytes; mime=image/jpeg)
+    source:
+      type: telegram
+      chat_id: -100123456789
+      message_id: 30
+      direction: input
+    mimeType: image/jpeg
+```
+
 ## Sessions & routing
 - `session_id` формат: `chat` или `chat:thread` (например, `AgentName:-100123:10`).
 - Если `session_id` передан, он приоритетный; библиотека разберёт `chat_id/thread_id` автоматически.

@@ -269,11 +269,11 @@ Planned behavior:
 
 ## 6. Documentation Updates
 
-- [ ] **README.md** – section *Telegram Bot / Context Extraction*:
+- [x] **README.md** – section *Telegram Bot / Context Extraction*:
   - Add that attachments (images, documents, video, voice) are converted into `context` entries with Telegram file URLs.
-- [ ] **tg-user-guide.md / tg-user-guide.ru.md**:
+- [x] **tg-user-guide.md / tg-user-guide.ru.md**:
   - Short examples showing how sending a document or photo enriches the agent context.
-- [ ] Cross-reference `docs/formatting.md` where `{input, context, replay}` contract is already explained, noting that `context` may contain Telegram attachment descriptors.
+- [x] Cross-reference `docs/formatting.md` where `{input, context, replay}` contract is already explained, noting that `context` may contain Telegram attachment descriptors.
 
 ---
 

@@ -47,23 +47,27 @@ async def test_send_welcome_banner_sends_message(monkeypatch):
     )
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 
+    monkeypatch.setenv("CALL_DEBUG_TELEGRAM", "1")
+    monkeypatch.setattr(app_call, "debug_chat_id", 777, raising=False)
+    monkeypatch.setattr(app_call, "debug_thread_id", 888, raising=False)
+
     result = await app_call._send_welcome_banner(
         cfg=cfg,
         user_input="hello",
         mcp_servers=["srv-A"],
-        selected_chat_id=123,
+        selected_chat_id=123,  # should NOT be used for the welcome banner
         selected_thread_id=456,
     )
 
     assert result == "<b>HTML</b>"
-    assert sent_payload == {"text": "<b>HTML</b>", "chat_id": 123, "thread_id": 456}
+    assert sent_payload == {"text": "<b>HTML</b>", "chat_id": 777, "thread_id": 888}
     assert captured_compose["mcp_servers_started"] == ["srv-A"]
     assert captured_compose["user_input"] == "hello"
     assert captured_compose["source_path"] == "prompt/ready/FooAgent.md"
 
 
 @pytest.mark.asyncio
-async def test_send_welcome_banner_skips_without_chat(monkeypatch):
+async def test_send_welcome_banner_skips_when_debug_disabled(monkeypatch):
     calls = []
 
     def fake_compose_welcome_html(**kwargs):  # pragma: no cover - should not be called
@@ -90,12 +94,60 @@ async def test_send_welcome_banner_skips_without_chat(monkeypatch):
     )
     monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
 
+    monkeypatch.setenv("CALL_DEBUG_TELEGRAM", "0")
+    monkeypatch.setattr(app_call, "debug_chat_id", 777, raising=False)
+    monkeypatch.setattr(app_call, "debug_thread_id", 888, raising=False)
+
     result = await app_call._send_welcome_banner(
         cfg=cfg,
         user_input="ignored",
         mcp_servers=[],
-        selected_chat_id=None,
-        selected_thread_id=None,
+        selected_chat_id=123,
+        selected_thread_id=456,
+    )
+
+    assert result is None
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_welcome_banner_skips_without_debug_chat(monkeypatch):
+    calls = []
+
+    def fake_compose_welcome_html(**kwargs):  # pragma: no cover - should not be called
+        calls.append("compose")
+        return "HTML"
+
+    async def fake_send(**kwargs):  # pragma: no cover - should not be called
+        calls.append("send")
+
+    cfg = SimpleNamespace(
+        id="Foo",
+        path=None,
+        attributes={},
+        model=None,
+        model_settings=ModelSettings(),
+        tools=[],
+    )
+
+    monkeypatch.setattr(
+        app_call, "compose_welcome_html", fake_compose_welcome_html, raising=False
+    )
+    monkeypatch.setattr(
+        app_call, "send_telegram_welcome_message", fake_send, raising=False
+    )
+    monkeypatch.setattr(app_call, "debug_print", lambda *a, **k: None, raising=False)
+
+    monkeypatch.setenv("CALL_DEBUG_TELEGRAM", "1")
+    monkeypatch.setattr(app_call, "debug_chat_id", None, raising=False)
+    monkeypatch.setattr(app_call, "debug_thread_id", None, raising=False)
+
+    result = await app_call._send_welcome_banner(
+        cfg=cfg,
+        user_input="ignored",
+        mcp_servers=[],
+        selected_chat_id=123,
+        selected_thread_id=456,
     )
 
     assert result is None

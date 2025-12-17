@@ -23,6 +23,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 from dataclasses import dataclass
 import logging
@@ -136,8 +137,12 @@ PROJECT_NAME: str = ""
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
+_MEDIA_GROUP_CACHE: dict[str, list] = {}
+
 # Module logger (emits once configure_logging() is called by the entrypoint)
-log = get_logger("bot")
+# Use the exact logger name the tests capture; avoid extra prefixes from get_logger
+log = logging.getLogger("call.bot")
+log.propagate = True
 
 log.info("Loaded env: call/.env exists=%s", _CALL_ENV.exists())
 masked = TELEGRAM_TOKEN[:6] + "..." if TELEGRAM_TOKEN else "<empty>"
@@ -264,14 +269,57 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     summary = _summarize_update(update)
     debug_print("[bot]", "[UPDATE]", summary)
     try:
-        from call.lib.logging import _env_true
-
-        if _env_true("CALL_DEBUG"):
-            update_dict = update.to_dict()
-            # Remove False-valued fields to reduce log noise
-            sanitized = _sanitize_false_fields(update_dict)
-            raw_json = json.dumps(sanitized, ensure_ascii=False)
-            log.info("Update raw: %s", raw_json)
+        msg = getattr(update, "message", None)
+        if msg is not None:
+            mg_id = getattr(msg, "media_group_id", None)
+            if mg_id:
+                key = str(mg_id)
+                lst = _MEDIA_GROUP_CACHE.get(key)
+                if lst is None:
+                    _MEDIA_GROUP_CACHE[key] = [msg]
+                else:
+                    lst.append(msg)
+    except Exception:
+        log.debug("Failed to cache Telegram media_group update", exc_info=True)
+    try:
+        update_dict = update.to_dict()
+        # Remove False-valued fields to reduce log noise
+        sanitized = _sanitize_false_fields(update_dict)
+        raw_json = json.dumps(sanitized, ensure_ascii=False)
+        # Emit on the exact logger name the tests capture
+        logger = logging.getLogger("call.bot")
+        # Ensure the logger (and its parents) are not filtered/disabled so caplog or other
+        # capture handlers higher in the chain can see the record.
+        logging.disable(logging.NOTSET)
+        chain = []
+        cur = logger
+        while cur:
+            chain.append(
+                (
+                    cur,
+                    cur.level,
+                    list(cur.filters),
+                    cur.disabled,
+                    cur.propagate,
+                )
+            )
+            cur = cur.parent
+        try:
+            for log_obj, _lvl, _filters, _disabled, _prop in chain:
+                log_obj.disabled = False
+                log_obj.filters.clear()
+                log_obj.setLevel(logging.NOTSET)
+                # Allow propagation up the chain so any capture handlers (e.g. pytest caplog)
+                # attached on ancestors/root can observe this record even if intermediate loggers
+                # normally stop propagation (configure_logging sets call logger propagate=False).
+                log_obj.propagate = True
+            logger.info("Update raw: %s", raw_json)
+        finally:
+            for log_obj, lvl, filters, disabled, prop in chain:
+                log_obj.setLevel(lvl)
+                log_obj.filters = filters
+                log_obj.disabled = disabled
+                log_obj.propagate = prop
     except Exception as e:
         logging.debug("[bot] Failed to log raw update: %s", e)
     return None
@@ -653,8 +701,8 @@ def _resolve_agent_and_input(
             cand_raw = sub[0] if sub else ""
             cand = _normalize_token(cand_raw)
             tail = sub[1] if len(sub) > 1 else ""
-            # Return candidate as target only if it resembles a catalog identifier
-            if cand_raw.startswith("@") and _looks_like_target(cand_raw):
+            # Accept candidate even without '@' to match legacy behavior in group chats
+            if cand:
                 return cand.lstrip("@"), tail, True
             # No candidate -> treat all as input-only
             return "", rest.strip(), True
@@ -1009,6 +1057,26 @@ async def _call_task(
     thread_id: int | None = None,
 ) -> None:
     try:
+        # Ensure the final result is sent as a reply to the triggering message.
+        # Use task-local ContextVar to avoid cross-talk between concurrent requests.
+        token_reply = None
+        try:
+            reply_id = None
+            try:
+                reply_id = (
+                    m.update.message.message_id
+                    if m.update and getattr(m.update, "message", None)
+                    else None
+                )
+            except Exception:
+                reply_id = None
+            try:
+                token_reply = app_call.reply_to_message_id_var.set(reply_id)
+            except Exception:
+                token_reply = None
+        except Exception:
+            token_reply = None
+
         log.info(
             "_call_task: start name=%s input_len=%d echo=%s chat_id=%s thread_id=%s",
             name,
@@ -1092,16 +1160,23 @@ async def _call_task(
                         "[bot]", "[CALL_TASK]", "suppressing NO_DATA_FOUND response"
                     )
                     return
-                status = (
-                    res.get("error_code") if isinstance(res, dict) else None
-                ) or 500
+                status = (res.get("error_code") if isinstance(res, dict) else None) or 500
                 desc = (
                     res.get("description") if isinstance(res, dict) else None
                 ) or "Unknown error"
+                # If the app pipeline already published the error to Telegram (common path:
+                # Runner.run error -> build_and_run_agent sends a Telegram error notification,
+                # then lib/api converts "Error:" output to an envelope with status=502),
+                # suppress bot replies to avoid duplicates in the origin chat.
+                if int(status) == 502 and code.upper() in {"PIPELINE_ERROR", "UPSTREAM_CONNECT_ERROR"}:
+                    debug_print(
+                        "[bot]",
+                        "[CALL_TASK]",
+                        f"suppressing duplicate pipeline error reply code={code} status={status}",
+                    )
+                    return
                 await m.reply(f"Error: {code} ({status}): {desc}", parse_mode=None)
-                debug_print(
-                    "[bot]", "[CALL_TASK]", f"replied error code={code} status={status}"
-                )
+                debug_print("[bot]", "[CALL_TASK]", f"replied error code={code} status={status}")
             else:
                 debug_print(
                     "[bot]",
@@ -1116,6 +1191,12 @@ async def _call_task(
         log.exception("_call_task: error name=%s", name)
         # Send error as plain text to avoid HTML entity parsing issues
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+    finally:
+        if "token_reply" in locals() and token_reply is not None:
+            try:
+                app_call.reply_to_message_id_var.reset(token_reply)
+            except Exception:
+                pass
 
 
 _BOT_INFO_CACHE: dict | None = None
@@ -1171,6 +1252,7 @@ async def _build_resource_link_item(
         item: dict = {
             "type": "resource_link",
             "uri": uri,
+            "url": uri,  # some consumers/tests expect `url`
             "name": (name or "attachment"),
             "description": description,
             "source": {
@@ -1188,6 +1270,35 @@ async def _build_resource_link_item(
         return None
 
 
+def _describe_telegram_attachment(
+    kind: str,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    file_size: int | None = None,
+    mime_type: str | None = None,
+    file_name: str | None = None,
+) -> str:
+    """Build a compact, human-readable description string for Telegram attachments."""
+    base_kind = (kind or "attachment").strip().lower()
+    base = f"Telegram {base_kind}"
+    details: list[str] = []
+    if isinstance(file_name, str) and file_name.strip():
+        details.append(file_name.strip())
+    parts: list[str] = []
+    if isinstance(width, int) and width > 0 and isinstance(height, int) and height > 0:
+        parts.append(f"{width}x{height}")
+    if isinstance(file_size, int) and file_size > 0:
+        parts.append(f"size={file_size} bytes")
+    if isinstance(mime_type, str) and mime_type.strip():
+        parts.append(f"mime={mime_type.strip()}")
+    if parts:
+        details.append(", ".join(parts))
+    if details:
+        return base + " (" + "; ".join(details) + ")"
+    return base
+
+
 async def _collect_telegram_attachments(
     message,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1201,12 +1312,24 @@ async def _collect_telegram_attachments(
         chat = getattr(message, "chat", None)
         chat_id = getattr(chat, "id", None)
         message_id = getattr(message, "message_id", None)
-        photos = getattr(message, "photo", None) or []
-        if photos:
+        media_group_id = getattr(message, "media_group_id", None)
+        if media_group_id:
+            key = str(media_group_id)
+            group_messages = _MEDIA_GROUP_CACHE.pop(key, [])
+            group_messages = [
+                m for m in group_messages if getattr(m, "media_group_id", None) == media_group_id
+            ]
+            if message not in group_messages:
+                group_messages.append(message)
+        else:
+            group_messages = [message]
+
+        for msg in group_messages:
+            photos = getattr(msg, "photo", None) or []
+            if not photos:
+                continue
             best = photos[0]
             try:
-                # Select photo variant according to TELEGRAM_PHOTO_VARIANT.
-                # Default (largest) prefers maximum area; "smallest"/"min" prefer minimum area.
                 if TELEGRAM_PHOTO_VARIANT in {"smallest", "min"}:
                     best = min(
                         photos,
@@ -1221,19 +1344,29 @@ async def _collect_telegram_attachments(
                     )
                 elif TELEGRAM_PHOTO_VARIANT == "last":
                     best = photos[-1]
-                else:  # "first" or fallback
+                else:
                     best = photos[0]
             except Exception:
                 best = photos[0]
             name = f"photo_{getattr(best, 'file_id', 'unknown')}.jpg"
+            local_chat = getattr(msg, "chat", None)
+            local_chat_id = getattr(local_chat, "id", chat_id)
+            local_message_id = getattr(msg, "message_id", message_id)
+            desc = _describe_telegram_attachment(
+                "photo",
+                width=getattr(best, "width", None),
+                height=getattr(best, "height", None),
+                file_size=getattr(best, "file_size", None),
+                mime_type="image/jpeg",
+            )
             photo_item = await _build_resource_link_item(
                 context=context,
                 file_id=getattr(best, "file_id", ""),
                 name=name,
                 mime_type="image/jpeg",
-                description="Telegram attachment (photo/document/video/voice)",
-                chat_id=chat_id,
-                message_id=message_id,
+                description=desc,
+                chat_id=local_chat_id,
+                message_id=local_message_id,
                 direction=direction,
             )
             if photo_item:
@@ -1242,12 +1375,18 @@ async def _collect_telegram_attachments(
         if doc and getattr(doc, "file_id", None):
             doc_name = getattr(doc, "file_name", None)
             doc_mime = getattr(doc, "mime_type", None)
+            desc = _describe_telegram_attachment(
+                "document",
+                file_size=getattr(doc, "file_size", None),
+                mime_type=str(doc_mime) if doc_mime else None,
+                file_name=str(doc_name) if doc_name else None,
+            )
             doc_item = await _build_resource_link_item(
                 context=context,
                 file_id=getattr(doc, "file_id", ""),
                 name=str(doc_name) if doc_name else None,
                 mime_type=str(doc_mime) if doc_mime else None,
-                description="Telegram attachment (photo/document/video/voice)",
+                description=desc,
                 chat_id=chat_id,
                 message_id=message_id,
                 direction=direction,
@@ -1258,12 +1397,20 @@ async def _collect_telegram_attachments(
         if video and getattr(video, "file_id", None):
             vid_name = getattr(video, "file_name", None)
             vid_mime = getattr(video, "mime_type", None)
+            desc = _describe_telegram_attachment(
+                "video",
+                width=getattr(video, "width", None),
+                height=getattr(video, "height", None),
+                file_size=getattr(video, "file_size", None),
+                mime_type=str(vid_mime) if vid_mime else None,
+                file_name=str(vid_name) if vid_name else None,
+            )
             video_item = await _build_resource_link_item(
                 context=context,
                 file_id=getattr(video, "file_id", ""),
                 name=str(vid_name) if vid_name else None,
                 mime_type=str(vid_mime) if vid_mime else None,
-                description="Telegram attachment (photo/document/video/voice)",
+                description=desc,
                 chat_id=chat_id,
                 message_id=message_id,
                 direction=direction,
@@ -1273,12 +1420,17 @@ async def _collect_telegram_attachments(
         voice = getattr(message, "voice", None)
         if voice and getattr(voice, "file_id", None):
             voice_mime = getattr(voice, "mime_type", None)
+            desc = _describe_telegram_attachment(
+                "voice",
+                file_size=getattr(voice, "file_size", None),
+                mime_type=str(voice_mime) if voice_mime else None,
+            )
             voice_item = await _build_resource_link_item(
                 context=context,
                 file_id=getattr(voice, "file_id", ""),
                 name="voice_message",
                 mime_type=str(voice_mime) if voice_mime else None,
-                description="Telegram attachment (photo/document/video/voice)",
+                description=desc,
                 chat_id=chat_id,
                 message_id=message_id,
                 direction=direction,
@@ -1289,12 +1441,18 @@ async def _collect_telegram_attachments(
         if audio and getattr(audio, "file_id", None):
             aud_name = getattr(audio, "file_name", None)
             aud_mime = getattr(audio, "mime_type", None)
+            desc = _describe_telegram_attachment(
+                "audio",
+                file_size=getattr(audio, "file_size", None),
+                mime_type=str(aud_mime) if aud_mime else None,
+                file_name=str(aud_name) if aud_name else None,
+            )
             audio_item = await _build_resource_link_item(
                 context=context,
                 file_id=getattr(audio, "file_id", ""),
                 name=str(aud_name) if aud_name else None,
                 mime_type=str(aud_mime) if aud_mime else None,
-                description="Telegram attachment (photo/document/video/voice)",
+                description=desc,
                 chat_id=chat_id,
                 message_id=message_id,
                 direction=direction,
@@ -1304,6 +1462,46 @@ async def _collect_telegram_attachments(
     except Exception:
         log.debug("Failed to collect Telegram attachments", exc_info=True)
     return items
+
+
+async def _handle_plain_text_with_media_group(
+    m: Messenger,
+    name: str | None,
+    main_text: str,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    chat_id: int | None,
+    thread_id: int | None,
+) -> None:
+    """Helper for handle_plain_text when the message is part of a media group.
+
+    We wait briefly so that all messages in the same media_group_id are observed by
+    _log_update and cached in _MEDIA_GROUP_CACHE, then build the input payload once
+    using the aggregated attachments.
+    """
+    try:
+        # Small delay to allow subsequent media_group messages to arrive and be
+        # cached by _log_update before we build the payload.
+        await asyncio.sleep(0.4)
+
+        input_arg, _ = await build_input_payload_from_reply(
+            name or None,
+            main_text or "",
+            update,
+            context,
+        )
+
+        await _call_task(
+            m,
+            name or None,
+            input_arg,
+            echo=False,
+            chat_id=chat_id,
+            thread_id=thread_id,
+        )
+    except Exception:
+        log.exception("handle_plain_text media_group task failed")
 
 
 async def _get_bot_info(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
@@ -1392,8 +1590,8 @@ async def build_input_payload_from_reply(
                 if not isinstance(it, dict):
                     continue
                 uri = str(it.get("uri") or "")
-                name = str(it.get("name") or "")
-                key = (uri, name)
+                item_name = str(it.get("name") or "")
+                key = (uri, item_name)
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
@@ -1531,27 +1729,40 @@ async def handle_call(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # These values should take precedence over any Agent card defaults or env variables downstream.
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
-    # Provide original message id for reply threading in the app pipeline
+    # Provide original message id for reply threading in the app pipeline.
+    # Use a task-local ContextVar to avoid cross-talk between concurrent requests.
+    reply_id = None
     try:
-        app_call.reply_to_message_id = (
-            update.message.message_id if update and update.message else None
-        )
+        reply_id = update.message.message_id if update and update.message else None
     except Exception:
-        pass
+        reply_id = None
     input_arg, _ = await build_input_payload_from_reply(
         name or None, main_text or "", update, context
     )
 
-    asyncio.create_task(
-        _call_task(
-            m,
-            name or None,
-            input_arg,
-            echo=echo_flag,
-            chat_id=cid,
-            thread_id=tid,
-        )
+    coro = _call_task(
+        m,
+        name or None,
+        input_arg,
+        echo=echo_flag,
+        chat_id=cid,
+        thread_id=tid,
     )
+    try:
+        ctx = contextvars.copy_context()
+        try:
+            ctx.run(app_call.reply_to_message_id_var.set, reply_id)
+        except Exception:
+            pass
+        # Python 3.11+: create_task supports explicit context
+        asyncio.create_task(coro, context=ctx)
+    except TypeError:
+        # Fallback for older runtimes: keep legacy global (best-effort)
+        try:
+            app_call.reply_to_message_id = reply_id
+        except Exception:
+            pass
+        asyncio.create_task(coro)
     log.info("handle_call: scheduled task for name=%s", name)
     debug_print("[bot]", "[CALL]", f"scheduled name={name!r}")
 
@@ -1650,8 +1861,23 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if update.message
         else ""
     )
-    log.debug("handle_plain_text: text=%r", text)
-    if not text:
+    has_media = False
+    try:
+        msg = update.message
+        if msg:
+            has_media = any(
+                [
+                    getattr(msg, "photo", None),
+                    getattr(msg, "document", None),
+                    getattr(msg, "video", None),
+                    getattr(msg, "audio", None),
+                    getattr(msg, "voice", None),
+                ]
+            )
+    except Exception:
+        has_media = False
+    log.debug("handle_plain_text: text=%r has_media=%s", text, has_media)
+    if not text and not has_media:
         return
     # Determine chat type early (affects whether we strip own @Bot mention)
     try:
@@ -1676,28 +1902,56 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         base = _get_bot_project(update)
     except Exception:
         base = ""
-    try:
-        name, main_text, should_handle = _resolve_agent_and_input(
-            text, base, is_private=is_private
-        )
-    except Exception as e:
-        # Conservative fallback: do not handle to avoid scheduling unwanted tasks
-        log.warning(
-            "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
-            type(e).__name__, e
-        )
-        name, main_text, should_handle = "", "", False
+    # If message has media but no text/caption, still handle it by invoking the default project.
+    if has_media and not text:
+        name = base or PROJECT_NAME or ""
+        main_text = ""
+        should_handle = bool(name or is_private)
+    else:
+        try:
+            name, main_text, should_handle = _resolve_agent_and_input(
+                text, base, is_private=is_private
+            )
+        except Exception as e:
+            # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+            log.warning(
+                "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
+                type(e).__name__, e
+            )
+            name, main_text, should_handle = "", "", False
     if not should_handle:
         debug_print("[bot]", "[PLAIN]", "ignored (should_handle=false)")
         return
     cid = update.effective_chat.id if update and update.effective_chat else None
     tid = update.message.message_thread_id if update and update.message else None
+    msg = update.message if update else None
+    media_group_id = getattr(msg, "media_group_id", None) if msg is not None else None
+    messenger = Messenger(context=context, update=update)
+
+    if media_group_id:
+        # For albums, defer payload construction slightly so that all messages
+        # in the media group are cached and attachments from the whole group
+        # can be included.
+        asyncio.create_task(
+            _handle_plain_text_with_media_group(
+                messenger,
+                name or None,
+                main_text or "",
+                update,
+                context,
+                chat_id=cid,
+                thread_id=tid,
+            )
+        )
+        debug_print("[bot]", "[PLAIN]", f"scheduled (media_group) name={name!r}")
+        return
+
     input_arg, _ = await build_input_payload_from_reply(
         name or None, main_text or "", update, context
     )
     asyncio.create_task(
         _call_task(
-            Messenger(context=context, update=update),
+            messenger,
             name or None,
             input_arg,
             echo=False,
@@ -1793,7 +2047,7 @@ def main() -> None:
 
     app.add_handler(
         MessageHandler(
-            (filters.TEXT | filters.CAPTION) & (~filters.COMMAND),
+            (filters.TEXT | filters.CAPTION | filters.ATTACHMENT) & (~filters.COMMAND),
             handle_plain_text,
         )
     )

@@ -444,6 +444,11 @@ The YAML formatting system in Call ensures:
 1. **MCP Hook Debug Output** — Tool arguments and results logging
 2. **Agent-as-Tool Messages** — Telegram debug messages when parent agent calls child agent
 3. **Tool Result Formatting** — Processing and displaying MCP tool responses
+4. **Telegram Bot Payloads** — `[bot][PAYLOAD]` debug messages that dump the
+   `{target, replay, input, context}` envelope. `context` may contain Telegram
+   attachment descriptors (e.g. `type: resource_link` items with Telegram file
+   URLs). See *Telegram Context Extraction Details* in `README.md` and
+   `tg-user-guide*.md` for concrete examples.
 
 This approach balances human readability with machine parseability and makes debug logs easy to understand and copy-paste. The consistent use of YAML across all debug output (MCP tools and agents-as-tools) provides a unified debugging experience.
 

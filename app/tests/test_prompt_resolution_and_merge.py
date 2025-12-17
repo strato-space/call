@@ -91,7 +91,7 @@ def test_build_agent_config_prompt_md(monkeypatch):
     # Prepare required env for imports
     monkeypatch.setenv("TELEGRAM_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAPH_TOKEN", "dummy")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "2820582847")
+    monkeypatch.setenv("TELEGRAM_DEBUG_CHAT_ID", "2820582847")
     monkeypatch.setenv("TELEGRAM_SECOND_CHAT_ID", "2820582847")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
 

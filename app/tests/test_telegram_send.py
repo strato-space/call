@@ -70,10 +70,10 @@ def _load_env_from_dotenv() -> None:
         if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
             os.environ["TELEGRAM_BOT_TOKEN"] = os.environ["TELEGRAM_TOKEN"]
         # Normalize chat id fallbacks
-        if not os.getenv("TELEGRAM_CHAT_ID"):
+        if not os.getenv("TELEGRAM_DEBUG_CHAT_ID"):
             for alt in ("TELEGRAM_CHAT", "TG_CHAT_ID", "CHAT_ID"):
                 if os.getenv(alt):
-                    os.environ["TELEGRAM_CHAT_ID"] = os.environ[alt]
+                    os.environ["TELEGRAM_DEBUG_CHAT_ID"] = os.environ[alt]
                     break
     except Exception:
         # best-effort; ignore errors
@@ -89,9 +89,9 @@ if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
 # Integration tests that actually send messages to Telegram.
 # These tests are skipped unless the following environment variables are set:
 #   TELEGRAM_BOT_TOKEN   - bot token
-#   TELEGRAM_CHAT_ID     - chat id to send messages to (int or str)
+#   TELEGRAM_DEBUG_CHAT_ID     - chat id to send messages to (int or str)
 # Optional:
-#   TELEGRAM_THREAD_ID   - topic thread id in supergroup (int)
+#   TELEGRAM_DEBUG_THREAD_ID   - topic thread id in supergroup (int)
 #
 # Run with: pytest -q call/app/tests/test_telegram_send.py -k send --maxfail=1
 # Ensure your venv is used: .venv\Scripts\python.exe -m pytest ...
@@ -99,8 +99,8 @@ if not os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_TOKEN"):
 
 def _env_token_chat_thread() -> tuple[str, str, Optional[int]]:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    thread = os.getenv("TELEGRAM_THREAD_ID")
+    chat_id = os.getenv("TELEGRAM_DEBUG_CHAT_ID")
+    thread = os.getenv("TELEGRAM_DEBUG_THREAD_ID")
     thread_id = int(thread) if thread and thread.strip() else None
     return token or "", chat_id or "", thread_id
 
@@ -128,8 +128,8 @@ pytestmark = [
         reason="TELEGRAM_LIVE_KIND=skip disables Telegram integration tests",
     ),
     pytest.mark.skipif(
-        not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"),
-        reason="Integration test requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env or environment",
+        not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_DEBUG_CHAT_ID"),
+        reason="Integration test requires TELEGRAM_BOT_TOKEN and TELEGRAM_DEBUG_CHAT_ID in .env or environment",
     ),
 ]
 

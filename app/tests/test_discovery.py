@@ -6,9 +6,9 @@ import importlib
 def _ensure_test_env():
     # Minimal env required by call.app.call on import
     os.environ.setdefault("TELEGRAM_TOKEN", "test-token")
-    os.environ.setdefault("TELEGRAM_CHAT_ID", "-2710557620")
+    os.environ.setdefault("TELEGRAM_DEBUG_CHAT_ID", "-2710557620")
     os.environ.setdefault("TELEGRAM_SECOND_CHAT_ID", "-2710557620")
-    os.environ.setdefault("TELEGRAM_THREAD_ID", "10")
+    os.environ.setdefault("TELEGRAM_DEBUG_THREAD_ID", "10")
     os.environ.setdefault("TELEGRAPH_TOKEN", "test-telegraph")
     os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
     # Ensure discovery uses the workspace prompt repo regardless of cwd

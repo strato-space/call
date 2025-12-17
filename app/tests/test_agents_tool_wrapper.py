@@ -13,8 +13,8 @@ async def test_agents_as_tools_wrapper_assigns_logging(monkeypatch):
     from call.app import call as app_call
 
     # Avoid Telegram/session side effects
-    monkeypatch.setattr(app_call, "TELEGRAM_CHAT_ID", None, raising=False)
-    monkeypatch.setattr(app_call, "TELEGRAM_THREAD_ID", None, raising=False)
+    monkeypatch.setattr(app_call, "TELEGRAM_DEBUG_CHAT_ID", None, raising=False)
+    monkeypatch.setattr(app_call, "TELEGRAM_DEBUG_THREAD_ID", None, raising=False)
     app_call.selected_chat_id = None
     app_call.selected_thread_id = None
     app_call.force_no_session = True

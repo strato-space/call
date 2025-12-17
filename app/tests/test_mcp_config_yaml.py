@@ -73,14 +73,12 @@ async def test_initialize_requires_enable_flag(monkeypatch, tmp_path):
     config_path = tmp_path / "mcp.yaml"
     config_path.write_text("mcpServers:\n  fake: {}\n", encoding="utf-8")
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("ENABLE_MCP", "0")
 
     async def run_init():
         return await _validate_and_cache_mcp_config()
 
-    with pytest.raises(MCPInitializationError) as exc:
-        await _with_exit_stack(run_init)
-    assert "ENABLE_MCP" in str(exc.value)
+    cfg = await _with_exit_stack(run_init)
+    assert cfg is None
 
 
 async def _with_exit_stack(func):
@@ -100,7 +98,6 @@ async def test_initialize_success_and_prepare_reuse(monkeypatch, tmp_path):
     # Make server enabled so config validation passes
     config_path.write_text("mcpServers:\n  fake: {enabled: true}\n", encoding="utf-8")
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("ENABLE_MCP", "1")
 
     async def run_init():
         return await _validate_and_cache_mcp_config()
@@ -122,11 +119,9 @@ async def test_initialize_fails_on_no_enabled_servers(monkeypatch, tmp_path):
     # Server exists but not enabled
     config_path.write_text("mcpServers:\n  fake: {enabled: false}\n", encoding="utf-8")
     monkeypatch.setenv("MCP_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("ENABLE_MCP", "1")
 
-    with pytest.raises(MCPInitializationError) as exc:
-        await _validate_and_cache_mcp_config()
-    assert "No enabled MCP servers" in str(exc.value)
+    cfg = await _validate_and_cache_mcp_config()
+    assert cfg is None
 
 
 @pytest.mark.anyio

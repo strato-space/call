@@ -13,21 +13,21 @@ The MCP Hook system implements **dual-channel message routing** for Telegram not
 │                   Agent Execution                       │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
-│  User Request      MCP Hook Debug         Agent Result │
-│  (any chat)        Messages               & Status     │
+│  User Request      MCP Hook Debug         Agent Result  │
+│  (any chat)        Messages               & Status      │
 │       │                 │                      │        │
 │       ▼                 ▼                      ▼        │
-│  ┌─────────┐      ┌──────────┐         ┌─────────┐     │
-│  │ Welcome │      │ Tool Args│         │ Result  │     │
-│  │ Message │      │ Tool Exec│         │ Message │     │
-│  └────┬────┘      │ Progress │         └────┬────┘     │
-│       │           └────┬─────┘              │          │
-│       │                │                    │          │
-│       ▼                ▼                    ▼          │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐   │
-│  │selected_chat│  │ debug_chat_id│  │selected_chat│   │
-│  │   (origin)  │  │   (from .env)│  │   (origin)  │   │
-│  └─────────────┘  └──────────────┘  └─────────────┘   │
+│  ┌─────────┐      ┌──────────┐         ┌─────────┐      │
+│  │ Welcome │      │ Tool Args│         │ Result  │      │
+│  │ Message │      │ Tool Exec│         │ Message │      │
+│  └────┬────┘      │ Progress │         └────┬────┘      │
+│       │           └────┬─────┘              │           │
+│       │                │                    │           │
+│       ▼                ▼                    ▼           │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐     │
+│  │selected_chat│  │ debug_chat_id│  │selected_chat│     │
+│  │   (origin)  │  │   (from .env)│  │   (origin)  │     │
+│  └─────────────┘  └──────────────┘  └─────────────┘     │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -44,6 +44,7 @@ The MCP Hook system implements **dual-channel message routing** for Telegram not
 | **Typing Status** | Origin chat | `selected_chat_id` | User feedback during execution |
 | **Final Result** | Origin chat | `selected_chat_id` | Agent output delivery |
 | **Error Notifications** | Origin chat | `selected_chat_id` | Failure alerts |
+| **Reply Threading** | Origin chat | `TG_ALLOW_SENDING_WITHOUT_REPLY` | Reply to the triggering message when possible |
 
 ## Implementation
 
@@ -63,16 +64,16 @@ debug_thread_id: Optional[int] = None
 
 ```python
 # Load from environment at module import
-TELEGRAM_CHAT_ID = get_telegram_chat_id("TELEGRAM_CHAT_ID")
-TELEGRAM_THREAD_ID = get_telegram_chat_id("TELEGRAM_THREAD_ID", "")
+TELEGRAM_DEBUG_CHAT_ID = get_telegram_chat_id("TELEGRAM_DEBUG_CHAT_ID")
+TELEGRAM_DEBUG_THREAD_ID = get_telegram_chat_id("TELEGRAM_DEBUG_THREAD_ID", "")
 
 # Initialize debug routing (immutable throughout execution)
-debug_chat_id = TELEGRAM_CHAT_ID
-debug_thread_id = TELEGRAM_THREAD_ID or None
+debug_chat_id = TELEGRAM_DEBUG_CHAT_ID
+debug_thread_id = TELEGRAM_DEBUG_THREAD_ID or None
 
 # Initialize request routing (overridden by bot/API)
-selected_chat_id = TELEGRAM_CHAT_ID
-selected_thread_id = TELEGRAM_THREAD_ID or None
+selected_chat_id = TELEGRAM_DEBUG_CHAT_ID
+selected_thread_id = TELEGRAM_DEBUG_THREAD_ID or None
 ```
 
 ### MCPServerStdioHook Class
@@ -83,7 +84,7 @@ The `MCPServerStdioHook` wrapper intercepts MCP tool calls and sends formatted m
 class MCPServerStdioHook(MCPServerStdio):
     """Wrapper for MCPServerStdio that writes per-instance logs to Telegram.
     
-    Debug messages are sent to debug_chat_id (from TELEGRAM_CHAT_ID in .env),
+    Debug messages are sent to debug_chat_id (from TELEGRAM_DEBUG_CHAT_ID in .env),
     while typing status is sent to selected_chat_id (original request chat).
     """
     
@@ -127,20 +128,27 @@ class MCPServerStdioHook(MCPServerStdio):
 
 ```env
 # Debug message destination (centralized monitoring)
-TELEGRAM_CHAT_ID=-1002710557620
+TELEGRAM_DEBUG_CHAT_ID=-1002710557620
 
 # Optional thread for debug messages
-TELEGRAM_THREAD_ID=0
+TELEGRAM_DEBUG_THREAD_ID=0
 
 # Enable/disable MCP message cleanup after agent completion
 TG_CLEANUP_MCP_MESSAGES=1
+
+# Reply behavior: when replying to the triggering message id, allow sending even if the original message is missing.
+TG_ALLOW_SENDING_WITHOUT_REPLY=1
 ```
 
 ### Behavior
 
-- **Multi-user scenario**: User A triggers agent from Chat X → debug messages go to `TELEGRAM_CHAT_ID` (monitoring chat), result goes to Chat X
-- **Multi-chat scenario**: Agent runs in Chat A, B, C → all debug messages centralized in `TELEGRAM_CHAT_ID`, results delivered to respective origin chats
+- **Multi-user scenario**: User A triggers agent from Chat X → debug messages go to `TELEGRAM_DEBUG_CHAT_ID` (monitoring chat), result goes to Chat X
+- **Multi-chat scenario**: Agent runs in Chat A, B, C → all debug messages centralized in `TELEGRAM_DEBUG_CHAT_ID`, results delivered to respective origin chats
 - **Cleanup**: When `TG_CLEANUP_MCP_MESSAGES=1`, intermediate MCP messages in `debug_chat_id` are deleted after agent completion
+- **Log sanitization**: MCP hook debug logs truncate base64/image-like fields for readability (display-only). Control via:
+  - `CALL_LOG_SANITIZE_IMAGES` (default `1`) — enable/disable sanitization
+  - `CALL_LOG_SANITIZE_KEYS` — comma-separated keys (default: `image_url,b64_json,base64,data`)
+  - `CALL_LOG_TRUNCATE_DATA_MAX` — max characters per field (default: `64`)
 
 ## Use Cases
 

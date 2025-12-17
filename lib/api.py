@@ -1280,7 +1280,7 @@ async def call_async(
     # Priority:
     #   1) If session_id override provided: parse chat/thread from it
     #   2) Else if chat_id/thread_id args provided: use them (fallback to env for missing)
-    #   3) Else: use TELEGRAM_CHAT_ID/TELEGRAM_THREAD_ID from .env as fallback
+    #   3) Else: use TELEGRAM_DEBUG_CHAT_ID/TELEGRAM_DEBUG_THREAD_ID from .env as fallback
     sel_chat: Optional[int] = None
     sel_thread: Optional[int] = None
     sid_override = (session_id or "").strip()
@@ -1289,16 +1289,18 @@ async def call_async(
         sel_chat, sel_thread = c, t
     else:
         if (chat_id is not None) or (thread_id is not None):
-            sel_chat = chat_id if chat_id is not None else app_call.TELEGRAM_CHAT_ID
+            sel_chat = (
+                chat_id if chat_id is not None else app_call.TELEGRAM_DEBUG_CHAT_ID
+            )
             sel_thread = (
                 thread_id
                 if thread_id is not None
-                else (app_call.TELEGRAM_THREAD_ID or None)
+                else (app_call.TELEGRAM_DEBUG_THREAD_ID or None)
             )
         else:
             # Fallback to .env values when running from CLI without explicit session
-            sel_chat = app_call.TELEGRAM_CHAT_ID
-            sel_thread = app_call.TELEGRAM_THREAD_ID or None
+            sel_chat = app_call.TELEGRAM_DEBUG_CHAT_ID
+            sel_thread = app_call.TELEGRAM_DEBUG_THREAD_ID or None
 
     selected_chat_id = sel_chat
     selected_thread_id = sel_thread

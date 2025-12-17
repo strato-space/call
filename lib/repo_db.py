@@ -133,7 +133,19 @@ def _ensure_events_db() -> sqlite3.Connection:
 class EventRow:
     id: int
     event: str
-    input: Optional[str]
+    payload: Optional[Any]
+
+    def __init__(self, id: int, event: str, payload: Optional[Any]):
+        # Explicit init to tolerate keyword construction in tests and ensure
+        # consistent types when reloaded under different envs.
+        object.__setattr__(self, "id", int(id))
+        object.__setattr__(self, "event", str(event))
+        object.__setattr__(self, "payload", payload)
+
+    @property
+    def input(self) -> Optional[Any]:
+        # Backward compatibility for older callers/tests
+        return self.payload
 
 
 def push_event(event: str, input_text: Any = None) -> int:
@@ -143,8 +155,9 @@ def push_event(event: str, input_text: Any = None) -> int:
     """
     conn = _ensure_events_db()
     cur = conn.cursor()
+    input_value: Optional[str]
     if input_text is None:
-        input_value: Optional[str] = None
+        input_value = None
     elif isinstance(input_text, str):
         input_value = input_text
     else:
@@ -186,16 +199,22 @@ def iter_events(
     cur.close()
     conn.close()
 
-    event_rows: List[EventRow] = []
-    for row_id, event_name, input_text in rows:
-        event_rows.append(
-            EventRow(
-                id=int(row_id),
-                event=str(event_name or ""),
-                input=str(input_text) if isinstance(input_text, str) else None,
-            )
+    def _parse_input(raw: Optional[str]) -> Optional[Any]:
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
+
+    return [
+        EventRow(
+            id=int(row_id),
+            event=str(event_name or ""),
+            payload=_parse_input(input_text if isinstance(input_text, str) else None),
         )
-    return event_rows
+        for row_id, event_name, input_text in rows
+    ]
 
 
 def _build_where_and_params(
