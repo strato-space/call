@@ -320,7 +320,7 @@ def test_plain_group_atbot_target_valid(monkeypatch):
     # Pretend the bot name derived project is AgentFab
     tg_bot.SELECTED_BOT_NAME = "AgentFabBot"
     tg_bot.PROJECT_NAME = "AgentFab"
-    upd = DummyUpdate("@AgentFabBot Vasil3 run this")
+    upd = DummyUpdate("@AgentFabBot @Vasil3 run this")
     ctx = DummyContext()
 
     async def _runner():
@@ -339,7 +339,7 @@ def test_plain_group_at_target_delegates_to_library(monkeypatch):
     monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
     # Set bot name so group messages work
     tg_bot.SELECTED_BOT_NAME = "TestBot"
-    upd = DummyUpdate("@TestBot UnknownAgent run")
+    upd = DummyUpdate("@TestBot @UnknownAgent run")
     ctx = DummyContext()
 
     async def _runner():

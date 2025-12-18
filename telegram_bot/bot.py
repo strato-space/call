@@ -653,7 +653,7 @@ def _resolve_agent_and_input(
 
     - Group chats: require an explicit @-mention; support:
         @Target <input>            -> extract Target and rest (no validation)
-        @BotName Target <input>    -> extract Target and rest (no validation)
+ло        @BotName @Target <input>   -> extract Target and rest (no validation)
         @ <input>                  -> input-only (no target)
     - Private chats: plain text behaves like '/call <input>' (no implicit target).
         @Target <input>            -> extract Target and rest (no validation)
@@ -699,12 +699,13 @@ def _resolve_agent_and_input(
                 return "", "", False
             sub = rest.strip().split(None, 1)
             cand_raw = sub[0] if sub else ""
-            cand = _normalize_token(cand_raw)
             tail = sub[1] if len(sub) > 1 else ""
-            # Accept candidate even without '@' to match legacy behavior in group chats
-            if cand:
-                return cand.lstrip("@"), tail, True
-            # No candidate -> treat all as input-only
+            # For natural language in groups, treat the rest as input-only by default.
+            # An explicit target must be marked with '@' (e.g. '@BotName @Target ...').
+            if cand_raw.startswith("@") and _looks_like_target(cand_raw):
+                cand = _normalize_token(cand_raw)
+                if cand:
+                    return cand.lstrip("@"), tail, True
             return "", rest.strip(), True
         # '@Target ...' -> return target without validation
         # Library will resolve it as prompt > agent > project
@@ -1856,14 +1857,10 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     - Supports both text messages and media messages with a caption.
     - Target resolution delegated to call_api.call_async() without pre-validation
     """
-    text = (
-        (update.message.text or update.message.caption or "").strip()
-        if update.message
-        else ""
-    )
+    msg = update.effective_message
+    text = ((msg.text or msg.caption or "").strip()) if msg else ""
     has_media = False
     try:
-        msg = update.message
         if msg:
             has_media = any(
                 [
@@ -1925,8 +1922,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         debug_print("[bot]", "[PLAIN]", "ignored (should_handle=false)")
         return
     cid = update.effective_chat.id if update and update.effective_chat else None
-    tid = update.message.message_thread_id if update and update.message else None
-    msg = update.message if update else None
+    tid = msg.message_thread_id if msg else None
     media_group_id = getattr(msg, "media_group_id", None) if msg is not None else None
     messenger = Messenger(context=context, update=update)
 
@@ -2050,6 +2046,14 @@ def main() -> None:
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.CAPTION | filters.ATTACHMENT) & (~filters.COMMAND),
+            handle_plain_text,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            (filters.TEXT | filters.CAPTION | filters.ATTACHMENT)
+            & filters.UpdateType.EDITED_MESSAGE
+            & (~filters.COMMAND),
             handle_plain_text,
         )
     )

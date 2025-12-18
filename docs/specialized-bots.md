@@ -63,6 +63,7 @@ Universal bots (like `StratoSpaceAiBot`) continue to show full command reference
 | `@Target задачи` | Invokes specified target (target name must include `@`) |
 | Voice/media without caption/mention | Ignored (to avoid noise) |
 | Regular text | Ignored (no bot mention) |
+| Edited message with mention/DM | Treated the same as a new message; retriggers call |
 
 ## Setup
 
