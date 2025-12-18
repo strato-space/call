@@ -1162,7 +1162,13 @@ async def _call_task(
                 # Runner.run error -> build_and_run_agent sends a Telegram error notification,
                 # then lib/api converts "Error:" output to an envelope with status=502),
                 # suppress bot replies to avoid duplicates in the origin chat.
-                if int(status) == 502 and code.upper() in {"PIPELINE_ERROR", "UPSTREAM_CONNECT_ERROR"}:
+                should_suppress = int(status) == 502 and code.upper() in {"PIPELINE_ERROR", "UPSTREAM_CONNECT_ERROR"}
+                # Never suppress moderation/errors that the user needs to see
+                if should_suppress:
+                    desc_lower = desc.lower()
+                    if "moderation" in desc_lower or "blocked" in desc_lower:
+                        should_suppress = False
+                if should_suppress:
                     debug_print(
                         "[bot]",
                         "[CALL_TASK]",
