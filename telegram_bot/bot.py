@@ -1062,15 +1062,7 @@ async def _call_task(
         # Use task-local ContextVar to avoid cross-talk between concurrent requests.
         token_reply = None
         try:
-            reply_id = None
-            try:
-                reply_id = (
-                    m.update.message.message_id
-                    if m.update and getattr(m.update, "message", None)
-                    else None
-                )
-            except Exception:
-                reply_id = None
+            reply_id = getattr(getattr(m.update, "effective_message", None), "message_id", None)
             try:
                 token_reply = app_call.reply_to_message_id_var.set(reply_id)
             except Exception:
@@ -1098,8 +1090,9 @@ async def _call_task(
             typing_thread_id = thread_id
             if typing_chat_id is None and m.update and m.update.effective_chat:
                 typing_chat_id = m.update.effective_chat.id
-            if typing_thread_id is None and getattr(m.update, "message", None):
-                typing_thread_id = m.update.message.message_thread_id
+            msg_effective = getattr(m.update, "effective_message", None)
+            if typing_thread_id is None and msg_effective is not None:
+                typing_thread_id = getattr(msg_effective, "message_thread_id", None)
             if typing_chat_id is not None:
                 await m.context.bot.send_chat_action(
                     chat_id=typing_chat_id,
