@@ -147,54 +147,6 @@ def _normalize_command_name(value: str) -> str:
     return token.strip().lower()
 
 
-def _coerce_command_specs(commands: object) -> list[_CommandSpec]:
-    specs: list[_CommandSpec] = []
-
-    def add(name: object, desc: object | None = None) -> None:
-        normalized = _normalize_command_name(str(name))
-        if not normalized:
-            return
-        description = None
-        if desc is not None:
-            desc_text = str(desc).strip()
-            if desc_text:
-                description = desc_text
-        specs.append(_CommandSpec(name=normalized, description=description))
-
-    def parse_item(item: object) -> None:
-        if isinstance(item, dict):
-            for key, value in item.items():
-                add(key, value)
-            return
-        if isinstance(item, str):
-            text = item.strip()
-            if not text:
-                return
-            if "," in text and ":" not in text:
-                for token in [chunk.strip() for chunk in text.split(",")]:
-                    if token:
-                        add(token)
-                return
-            if ":" in text:
-                head, tail = text.split(":", 1)
-                if head.strip():
-                    add(head, tail)
-                    return
-            add(text)
-            return
-
-    if isinstance(commands, dict):
-        for key, value in commands.items():
-            add(key, value)
-    elif isinstance(commands, list):
-        for item in commands:
-            parse_item(item)
-    elif isinstance(commands, str):
-        parse_item(commands)
-
-    return specs
-
-
 def _dedupe_command_specs(specs: list[_CommandSpec]) -> list[_CommandSpec]:
     out: list[_CommandSpec] = []
     index: dict[str, int] = {}
@@ -209,6 +161,30 @@ def _dedupe_command_specs(specs: list[_CommandSpec]) -> list[_CommandSpec]:
     return out
 
 
+def _parse_command_block(commands: object) -> list[_CommandSpec]:
+    if not isinstance(commands, str):
+        return []
+    specs: list[_CommandSpec] = []
+    for raw_line in commands.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("-"):
+            line = line[1:].strip()
+            if not line:
+                continue
+        if " - " in line:
+            name, desc = line.split(" - ", 1)
+        else:
+            name, desc = line, ""
+        normalized = _normalize_command_name(name)
+        if not normalized:
+            continue
+        description = desc.strip() or None
+        specs.append(_CommandSpec(name=normalized, description=description))
+    return _dedupe_command_specs(specs)
+
+
 def _get_project_command_specs(project_name: str) -> list[_CommandSpec]:
     try:
         if not project_name:
@@ -216,7 +192,7 @@ def _get_project_command_specs(project_name: str) -> list[_CommandSpec]:
         raw = _services.call_api.read(project_name)
         meta = parse_metadata_and_prompt(raw or "")
         commands = meta.get("commands") if isinstance(meta, dict) else None
-        return _dedupe_command_specs(_coerce_command_specs(commands))
+        return _parse_command_block(commands)
     except Exception:
         return []
 
@@ -253,48 +229,6 @@ def _filter_custom_commands(commands: list[str]) -> list[str]:
         if token not in normalized:
             normalized.append(token)
     return normalized
-
-
-@_require_allowed_users
-async def handle_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    m = Messenger(context=context, update=update)
-    msg = getattr(update, "effective_message", None)
-    text = (msg.text or msg.caption or "").strip() if msg else ""
-    if not text:
-        return
-    # Extract command token and ignore commands addressed to other bots
-    cmd_token = text.split(maxsplit=1)[0]
-    if "@" in cmd_token:
-        cmd_name, mentioned = cmd_token.split("@", 1)
-        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
-        if mentioned and own and mentioned.lower() != own.lower():
-            return
-    else:
-        cmd_name = cmd_token
-    cmd_name = cmd_name.split("@", 1)[0]
-    args = text[len(cmd_token) :].lstrip() if len(text) > len(cmd_token) else ""
-    input_text = f"{cmd_name} {args}".strip()
-
-    try:
-        base = _get_bot_project(update)
-    except Exception:
-        base = ""
-    name = base or PROJECT_NAME or ""
-    cid = update.effective_chat.id if update and update.effective_chat else None
-    tid = msg.message_thread_id if msg else None
-    input_arg, _ = await build_input_payload_from_reply(
-        name or None, input_text, update, context
-    )
-    asyncio.create_task(
-        _call_task(
-            m,
-            name or None,
-            input_arg,
-            echo=False,
-            chat_id=cid,
-            thread_id=tid,
-        )
-    )
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -836,6 +770,50 @@ def _require_allowed_users(
     return wrapper
 
 
+@_require_allowed_users
+async def handle_project_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    m = Messenger(context=context, update=update)
+    msg = getattr(update, "effective_message", None)
+    text = (msg.text or msg.caption or "").strip() if msg else ""
+    if not text:
+        return
+    # Extract command token and ignore commands addressed to other bots
+    cmd_token = text.split(maxsplit=1)[0]
+    if "@" in cmd_token:
+        cmd_name, mentioned = cmd_token.split("@", 1)
+        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+        if mentioned and own and mentioned.lower() != own.lower():
+            return
+    else:
+        cmd_name = cmd_token
+    cmd_name = cmd_name.split("@", 1)[0]
+    args = text[len(cmd_token) :].lstrip() if len(text) > len(cmd_token) else ""
+    input_text = f"{cmd_name} {args}".strip()
+
+    try:
+        base = _get_bot_project(update)
+    except Exception:
+        base = ""
+    name = base or PROJECT_NAME or ""
+    cid = update.effective_chat.id if update and update.effective_chat else None
+    tid = msg.message_thread_id if msg else None
+    input_arg, _ = await build_input_payload_from_reply(
+        name or None, input_text, update, context
+    )
+    asyncio.create_task(
+        _call_task(
+            m,
+            name or None,
+            input_arg,
+            echo=False,
+            chat_id=cid,
+            thread_id=tid,
+        )
+    )
+
+
 # Command parsing helpers
 
 
@@ -1105,8 +1083,6 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         command_specs = _get_project_command_specs(PROJECT_NAME)
         cmd_lines = _format_command_specs(command_specs)
         txt = f"""
-https://github.com/strato-space/prompt/blob/main/MediaGenBlender/tg-user-guide.ru.md
-
 Команды:
 {cmd_lines if cmd_lines else "Команды не указаны в METADATA."}
         """.strip()

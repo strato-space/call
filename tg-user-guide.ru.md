@@ -5,6 +5,7 @@
 ## Специализированные боты
 
 - MediaGenBlender: https://github.com/strato-space/prompt/blob/main/MediaGenBlender/tg-user-guide.ru.md
+- Команды специализированных ботов берутся из `commands` в `project.md` (формат: блок строк `name - описание`).
 
 ## /call — @AgentFab или @Agent
 

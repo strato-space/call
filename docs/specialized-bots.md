@@ -4,7 +4,7 @@
 
 ## Overview
 
-Specialized bots are project-specific Telegram bots that enable natural language communication without slash commands. Users interact naturally, and the bot automatically invokes the project orchestrator (`project.md`) as the default target when no specific target is mentioned.
+Specialized bots are project-specific Telegram bots that enable natural language communication and project-defined slash commands. Users interact naturally, and the bot automatically invokes the project orchestrator (`project.md`) as the default target when no specific target is mentioned.
 
 ## Features
 
@@ -19,7 +19,23 @@ Bot executes: call_async(project="UralRMS", target="UralRMS")
 Result: Runs prompt/UralRMS/project.md
 ```
 
-### 2. Natural Language Help (/start)
+### 2. Project Commands from METADATA
+
+Specialized bots read the `commands` field from the project card (`project.md`) and display it in `/start` and `/help`. Only one format is supported:
+
+```yaml
+commands: |-
+  start - Краткая справка и примеры
+  prompt - Улучшить промпт через prompt_engineer
+  image - Сгенерировать изображение (generate/edit/fetch)
+  video - Сгенерировать видео (create/remix/retrieve/content)
+  fetch - Получить изображения по ссылкам
+  help - Справка
+```
+
+The bot registers these commands automatically. Leading `/` is optional in the metadata, but `/` is always shown in help output.
+
+### 3. Natural Language Help (/start)
 
 Specialized bots display project goal and usage examples instead of command reference:
 
@@ -35,7 +51,7 @@ routing-item массива, определяет нужный PM-агент (1-
 💬 Общайтесь со мной на естественном языке.
 
 В приватном чате просто напишите запрос.
-В группе упомяните меня: @StratoProjectBot
+В группе команды работают без @упоминания.
 
 Примеры:
 - "статус проекта"
@@ -61,6 +77,7 @@ Universal bots (like `StratoSpaceAiBot`) continue to show full command reference
 | `@ProjectNameBot статус` | Invokes `project.md` with input |
 | `@ProjectNameBot @Target задачи` | Invokes specified `@Target` |
 | `@Target задачи` | Invokes specified target (target name must include `@`) |
+| `/image ...` | Invokes project-defined command (from METADATA) |
 | Voice/media without caption/mention | Ignored (to avoid noise) |
 | Regular text | Ignored (no bot mention) |
 | Edited message with mention/DM | Treated the same as a new message; retriggers call |
