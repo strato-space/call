@@ -770,16 +770,14 @@ def _require_allowed_users(
     return wrapper
 
 
-@_require_allowed_users
-async def handle_project_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+async def _dispatch_project_command_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    text: str,
 ) -> None:
     m = Messenger(context=context, update=update)
     msg = getattr(update, "effective_message", None)
-    text = (msg.text or msg.caption or "").strip() if msg else ""
-    if not text:
-        return
-    # Extract command token and ignore commands addressed to other bots
     cmd_token = text.split(maxsplit=1)[0]
     if "@" in cmd_token:
         cmd_name, mentioned = cmd_token.split("@", 1)
@@ -812,6 +810,17 @@ async def handle_project_command(
             thread_id=tid,
         )
     )
+
+
+@_require_allowed_users
+async def handle_project_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    msg = getattr(update, "effective_message", None)
+    text = (msg.text or msg.caption or "").strip() if msg else ""
+    if not text:
+        return
+    await _dispatch_project_command_text(update, context, text=text)
 
 
 # Command parsing helpers
@@ -2165,6 +2174,39 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 text = text[len(own_at) :].lstrip()
         except Exception:
             pass
+    # Fallback: handle project commands in group chats even if Telegram didn't tag them as commands.
+    if PROJECT_NAME and text:
+        try:
+            command_specs = _get_project_command_specs(PROJECT_NAME)
+            command_names = set(
+                _filter_custom_commands([spec.name for spec in command_specs])
+            )
+            if command_names:
+                own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                    PROJECT_NAME
+                )
+                candidate = text
+                if candidate.startswith("@") and own:
+                    parts = candidate.split(maxsplit=1)
+                    head = parts[0]
+                    tail = parts[1] if len(parts) > 1 else ""
+                    if head.lstrip("@").lower() == own.lower() and tail.startswith("/"):
+                        candidate = tail.strip()
+                if candidate.startswith("/"):
+                    cmd_token = candidate.split(maxsplit=1)[0]
+                    cmd_name = cmd_token.split("@", 1)[0].lstrip("/").lower()
+                    mentioned = cmd_token.split("@", 1)[1] if "@" in cmd_token else ""
+                    if mentioned and own and mentioned.lower() != own.lower():
+                        cmd_name = ""
+                    if cmd_name in command_names:
+                        await _dispatch_project_command_text(
+                            update, context, text=candidate
+                        )
+                        return
+        except Exception:
+            log.debug(
+                "handle_plain_text: project command fallback failed", exc_info=True
+            )
     # Resolve agent and input according to chat type using shared helper
     try:
         base = _get_bot_project(update)
