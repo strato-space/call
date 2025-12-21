@@ -2,6 +2,10 @@
 
 Вызов AgentFab и созданных Агентов - Руководство пользователя Telegram
 
+## Специализированные боты
+
+- MediaGenBlender: https://github.com/strato-space/prompt/blob/main/MediaGenBlender/tg-user-guide.ru.md
+
 ## /call — @AgentFab или @Agent
 
 - `/call @AgentFab @31-*` — обработать промпты, совпадающие с шаблоном `31-*`, через AgentFab.
@@ -67,6 +71,7 @@
 
 - Проектные боты: `<ProjectName>Bot` (например, `@StratoProjectBot`) запускают соответствующий проект и при отсутствии `@Target` используют `project.md` как orchestrator.
 - Универсальный бот: [@StratoSpaceAiBot](https://t.me/StratoSpaceAiBot) без `@Target` работает в режиме "void" (только пользовательский ввод, без инструкций), а с `@Target` может выполнить любую карточку из репозитория.
+- Для проектных ботов: при отсутствии `@Target` бот передаёт `target=<ProjectName>`, а библиотека резолвит его по приоритету `prompt > agent > project`, поэтому используется `project.md` из Prompt Repo.
 
 
 ## Команды бота

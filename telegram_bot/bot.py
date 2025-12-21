@@ -23,6 +23,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import os
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ import html as py_html
 import argparse
 import json
 import sys
+import time
 import httpx
 
 
@@ -40,6 +42,28 @@ def _env_flag(name: str, default: str = "0") -> bool:
     """Return True if environment flag is enabled."""
     value = os.environ.get(name, default)
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+async def _typing_loop(
+    bot: object,
+    *,
+    chat_id: int,
+    thread_id: int | None,
+    stop_event: asyncio.Event,
+) -> None:
+    try:
+        while not stop_event.is_set():
+            await bot.send_chat_action(
+                chat_id=chat_id,
+                action=ChatAction.TYPING,
+                message_thread_id=thread_id,
+            )
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                continue
+    except Exception:
+        pass
 
 
 LOG_EMPTY_GETUPDATES = _env_flag("TELEGRAM_LOG_EMPTY_UPDATES", "0")
@@ -78,6 +102,7 @@ from telegram.request import HTTPXRequest
 # Library facade
 from call.lib import api as call_api
 from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
+from call.lib.utils import parse_metadata_and_prompt
 from call.app.call import create_mcp_lifespan_callbacks
 from call.app.utils.telegram_text import (
     telegram_truncate_html_safe,
@@ -109,6 +134,169 @@ def set_services(*, call_api_module: object) -> None:
     _services = _Services(call_api=call_api_module)
 
 
+@dataclass(frozen=True)
+class _CommandSpec:
+    name: str
+    description: str | None = None
+
+
+def _normalize_command_name(value: str) -> str:
+    token = (value or "").strip()
+    if token.startswith("/"):
+        token = token[1:]
+    return token.strip().lower()
+
+
+def _coerce_command_specs(commands: object) -> list[_CommandSpec]:
+    specs: list[_CommandSpec] = []
+
+    def add(name: object, desc: object | None = None) -> None:
+        normalized = _normalize_command_name(str(name))
+        if not normalized:
+            return
+        description = None
+        if desc is not None:
+            desc_text = str(desc).strip()
+            if desc_text:
+                description = desc_text
+        specs.append(_CommandSpec(name=normalized, description=description))
+
+    def parse_item(item: object) -> None:
+        if isinstance(item, dict):
+            for key, value in item.items():
+                add(key, value)
+            return
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                return
+            if "," in text and ":" not in text:
+                for token in [chunk.strip() for chunk in text.split(",")]:
+                    if token:
+                        add(token)
+                return
+            if ":" in text:
+                head, tail = text.split(":", 1)
+                if head.strip():
+                    add(head, tail)
+                    return
+            add(text)
+            return
+
+    if isinstance(commands, dict):
+        for key, value in commands.items():
+            add(key, value)
+    elif isinstance(commands, list):
+        for item in commands:
+            parse_item(item)
+    elif isinstance(commands, str):
+        parse_item(commands)
+
+    return specs
+
+
+def _dedupe_command_specs(specs: list[_CommandSpec]) -> list[_CommandSpec]:
+    out: list[_CommandSpec] = []
+    index: dict[str, int] = {}
+    for spec in specs:
+        if spec.name in index:
+            idx = index[spec.name]
+            if out[idx].description is None and spec.description:
+                out[idx] = spec
+            continue
+        index[spec.name] = len(out)
+        out.append(spec)
+    return out
+
+
+def _get_project_command_specs(project_name: str) -> list[_CommandSpec]:
+    try:
+        if not project_name:
+            return []
+        raw = _services.call_api.read(project_name)
+        meta = parse_metadata_and_prompt(raw or "")
+        commands = meta.get("commands") if isinstance(meta, dict) else None
+        return _dedupe_command_specs(_coerce_command_specs(commands))
+    except Exception:
+        return []
+
+
+def _format_command_specs(specs: list[_CommandSpec]) -> str:
+    lines: list[str] = []
+    for spec in specs:
+        if spec.description:
+            lines.append(f"- /{spec.name} — {spec.description}")
+        else:
+            lines.append(f"- /{spec.name}")
+    return "\n".join(lines)
+
+
+def _filter_custom_commands(commands: list[str]) -> list[str]:
+    builtins = {
+        "start",
+        "help",
+        "call",
+        "reload",
+        "prompts",
+        "prompts_ready",
+        "prompts_draft",
+        "agents",
+        "list",
+        "projects",
+        "clear",
+    }
+    normalized: list[str] = []
+    for cmd in commands:
+        token = _normalize_command_name(cmd)
+        if not token or token in builtins:
+            continue
+        if token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+@_require_allowed_users
+async def handle_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    m = Messenger(context=context, update=update)
+    msg = getattr(update, "effective_message", None)
+    text = (msg.text or msg.caption or "").strip() if msg else ""
+    if not text:
+        return
+    # Extract command token and ignore commands addressed to other bots
+    cmd_token = text.split(maxsplit=1)[0]
+    if "@" in cmd_token:
+        cmd_name, mentioned = cmd_token.split("@", 1)
+        own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(PROJECT_NAME)
+        if mentioned and own and mentioned.lower() != own.lower():
+            return
+    else:
+        cmd_name = cmd_token
+    cmd_name = cmd_name.split("@", 1)[0]
+    args = text[len(cmd_token) :].lstrip() if len(text) > len(cmd_token) else ""
+    input_text = f"{cmd_name} {args}".strip()
+
+    try:
+        base = _get_bot_project(update)
+    except Exception:
+        base = ""
+    name = base or PROJECT_NAME or ""
+    cid = update.effective_chat.id if update and update.effective_chat else None
+    tid = msg.message_thread_id if msg else None
+    input_arg, _ = await build_input_payload_from_reply(
+        name or None, input_text, update, context
+    )
+    asyncio.create_task(
+        _call_task(
+            m,
+            name or None,
+            input_arg,
+            echo=False,
+            chat_id=cid,
+            thread_id=tid,
+        )
+    )
+
+
 # Load environment from call/.env first (module-relative), then allow process env to override
 _CALL_DIR = Path(__file__).resolve().parent.parent  # .../call/
 _CALL_ENV = _CALL_DIR / ".env"
@@ -138,6 +326,97 @@ _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
 
 _MEDIA_GROUP_CACHE: dict[str, list] = {}
+_MEDIA_GROUP_MEMORY: dict[str, dict] = {}
+_MEDIA_GROUP_MEMORY_TTL_SECONDS = 60 * 60
+
+
+def _prune_media_group_memory(now: float | None = None) -> None:
+    if not _MEDIA_GROUP_MEMORY:
+        return
+    if now is None:
+        now = time.time()
+    cutoff = now - _MEDIA_GROUP_MEMORY_TTL_SECONDS
+    stale = [
+        key
+        for key, entry in _MEDIA_GROUP_MEMORY.items()
+        if (entry.get("last_seen") or 0) < cutoff
+    ]
+    for key in stale:
+        _MEDIA_GROUP_MEMORY.pop(key, None)
+
+
+def _store_media_group_message(message) -> None:
+    try:
+        media_group_id = getattr(message, "media_group_id", None)
+        if not media_group_id:
+            return
+        key = str(media_group_id)
+        now = time.time()
+        _MEDIA_GROUP_CACHE.setdefault(key, []).append(message)
+        entry = _MEDIA_GROUP_MEMORY.get(key)
+        if entry is None:
+            entry = {"messages": [], "last_seen": now}
+            _MEDIA_GROUP_MEMORY[key] = entry
+        else:
+            entry["last_seen"] = now
+        messages = entry.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+            entry["messages"] = messages
+        msg_id = getattr(message, "message_id", None)
+        if msg_id is None:
+            messages.append(message)
+            return
+        for idx, existing in enumerate(messages):
+            if getattr(existing, "message_id", None) == msg_id:
+                messages[idx] = message
+                break
+        else:
+            messages.append(message)
+        _prune_media_group_memory(now)
+    except Exception:
+        log.debug("Failed to cache Telegram media_group message", exc_info=True)
+
+
+def _get_media_group_messages(message) -> list:
+    if not message:
+        return []
+    try:
+        media_group_id = getattr(message, "media_group_id", None)
+        if not media_group_id:
+            return [message]
+        key = str(media_group_id)
+        now = time.time()
+        _prune_media_group_memory(now)
+        group_messages: list = []
+        entry = _MEDIA_GROUP_MEMORY.get(key)
+        if entry:
+            memory_messages = entry.get("messages")
+            if isinstance(memory_messages, list):
+                group_messages.extend(memory_messages)
+        cached = _MEDIA_GROUP_CACHE.pop(key, [])
+        if cached:
+            group_messages.extend(cached)
+        if message not in group_messages:
+            group_messages.append(message)
+        by_id: dict[int, object] = {}
+        extras: list = []
+        for msg in group_messages:
+            msg_id = getattr(msg, "message_id", None)
+            if msg_id is None:
+                extras.append(msg)
+                continue
+            by_id[msg_id] = msg
+        merged = list(by_id.values()) + extras
+        if entry is None:
+            _MEDIA_GROUP_MEMORY[key] = {"messages": merged, "last_seen": now}
+        else:
+            entry["messages"] = merged
+            entry["last_seen"] = now
+        return merged
+    except Exception:
+        log.debug("Failed to gather Telegram media_group messages", exc_info=True)
+        return [message]
 
 # Module logger (emits once configure_logging() is called by the entrypoint)
 # Use the exact logger name the tests capture; avoid extra prefixes from get_logger
@@ -269,16 +548,11 @@ async def _log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     summary = _summarize_update(update)
     debug_print("[bot]", "[UPDATE]", summary)
     try:
-        msg = getattr(update, "message", None)
+        msg = getattr(update, "effective_message", None)
+        if msg is None:
+            msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
         if msg is not None:
-            mg_id = getattr(msg, "media_group_id", None)
-            if mg_id:
-                key = str(mg_id)
-                lst = _MEDIA_GROUP_CACHE.get(key)
-                if lst is None:
-                    _MEDIA_GROUP_CACHE[key] = [msg]
-                else:
-                    lst.append(msg)
+            _store_media_group_message(msg)
     except Exception:
         log.debug("Failed to cache Telegram media_group update", exc_info=True)
     try:
@@ -736,45 +1010,52 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"entry chat_id={getattr(update.effective_chat, 'id', None)} user_id={getattr(update.effective_user, 'id', None)}",
     )
     
-    # For specialized bots: show only project goal (natural language interaction)
+    # For specialized bots: show project goal + commands from metadata
     # For universal bot: show full command reference
     if PROJECT_NAME:
+        goal_text = ""
         try:
-            tree = _services.call_api.list(project=PROJECT_NAME)
-            if tree and len(tree) > 0:
-                # Try to read project card to get goal
-                try:
-                    card_text = _services.call_api.read(PROJECT_NAME)
-                    # Extract goal from metadata if available
-                    import re
-                    goal_match = re.search(r'goal:\s*[|>-]\s*\n((?:\s+.+\n?)+)', card_text, re.MULTILINE)
-                    if goal_match:
-                        goal_lines = goal_match.group(1).strip().split('\n')
-                        goal_text = '\n'.join(line.strip() for line in goal_lines)
-                        # Specialized bot: show only goal and natural language usage
-                        specialized_help = f"""🎯 {PROJECT_NAME}
+            card_text = _services.call_api.read(PROJECT_NAME)
+            meta = parse_metadata_and_prompt(card_text or "")
+            goal = meta.get("goal") if isinstance(meta, dict) else None
+            if isinstance(goal, list):
+                goal_text = "\n".join(
+                    str(line).strip() for line in goal if str(line).strip()
+                )
+            elif goal:
+                goal_text = str(goal).strip()
+        except Exception as e:
+            debug_print("[bot]", "[START]", f"Failed to read project goal: {e}")
+
+        if not goal_text:
+            goal_text = "Проектный бот."
+
+        command_specs = _get_project_command_specs(PROJECT_NAME)
+        cmd_lines = _format_command_specs(command_specs)
+        commands_block = cmd_lines or "Команды не указаны в METADATA."
+
+        specialized_help = f"""🎯 {PROJECT_NAME}
 
 {goal_text}
+
+Команды:
+{commands_block}
 
 ---
 
 💬 Общайтесь со мной на естественном языке.
 
 В приватном чате просто напишите запрос.
-В группе упомяните меня: @{SELECTED_BOT_NAME or PROJECT_NAME + 'Bot'}
+В группе команды работают без @упоминания.
 
 Примеры:
 - "статус проекта"
 - "задачи на сегодня"
 - "отчёт за неделю"
 """
-                        await m.reply(specialized_help.strip(), parse_mode=None)
-                        debug_print("[bot]", "[START]", "replied (specialized)")
-                        return
-                except Exception as e:
-                    debug_print("[bot]", "[START]", f"Failed to read project goal: {e}")
-        except Exception as e:
-            debug_print("[bot]", "[START]", f"Failed to load project info: {e}")
+        await m.reply(specialized_help.strip(), parse_mode=None)
+        debug_print("[bot]", "[START]", "replied (specialized)")
+        return
     
     # Universal bot: show full command reference
     base_help = """
@@ -820,7 +1101,17 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     debug_print(
         "[bot]", "[HELP]", f"entry chat_id={getattr(update.effective_chat, 'id', None)}"
     )
-    txt = """
+    if PROJECT_NAME:
+        command_specs = _get_project_command_specs(PROJECT_NAME)
+        cmd_lines = _format_command_specs(command_specs)
+        txt = f"""
+https://github.com/strato-space/prompt/blob/main/MediaGenBlender/tg-user-guide.ru.md
+
+Команды:
+{cmd_lines if cmd_lines else "Команды не указаны в METADATA."}
+        """.strip()
+    else:
+        txt = """
 https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
 
 Быстро:
@@ -1057,6 +1348,8 @@ async def _call_task(
     chat_id: int | None = None,
     thread_id: int | None = None,
 ) -> None:
+    typing_task: asyncio.Task | None = None
+    typing_stop: asyncio.Event | None = None
     try:
         # Ensure the final result is sent as a reply to the triggering message.
         # Use task-local ContextVar to avoid cross-talk between concurrent requests.
@@ -1094,15 +1387,19 @@ async def _call_task(
             if typing_thread_id is None and msg_effective is not None:
                 typing_thread_id = getattr(msg_effective, "message_thread_id", None)
             if typing_chat_id is not None:
-                await m.context.bot.send_chat_action(
-                    chat_id=typing_chat_id,
-                    action=ChatAction.TYPING,
-                    message_thread_id=typing_thread_id,
+                typing_stop = asyncio.Event()
+                typing_task = asyncio.create_task(
+                    _typing_loop(
+                        m.context.bot,
+                        chat_id=typing_chat_id,
+                        thread_id=typing_thread_id,
+                        stop_event=typing_stop,
+                    )
                 )
                 debug_print(
                     "[bot]",
                     "[CALL_TASK]",
-                    f"typing chat_id={typing_chat_id} thread_id={typing_thread_id}",
+                    f"typing loop chat_id={typing_chat_id} thread_id={typing_thread_id}",
                 )
         except Exception:
             pass
@@ -1192,6 +1489,12 @@ async def _call_task(
         # Send error as plain text to avoid HTML entity parsing issues
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
     finally:
+        if typing_stop is not None:
+            typing_stop.set()
+        if typing_task is not None:
+            typing_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await typing_task
         if "token_reply" in locals() and token_reply is not None:
             try:
                 app_call.reply_to_message_id_var.reset(token_reply)
@@ -1312,17 +1615,7 @@ async def _collect_telegram_attachments(
         chat = getattr(message, "chat", None)
         chat_id = getattr(chat, "id", None)
         message_id = getattr(message, "message_id", None)
-        media_group_id = getattr(message, "media_group_id", None)
-        if media_group_id:
-            key = str(media_group_id)
-            group_messages = _MEDIA_GROUP_CACHE.pop(key, [])
-            group_messages = [
-                m for m in group_messages if getattr(m, "media_group_id", None) == media_group_id
-            ]
-            if message not in group_messages:
-                group_messages.append(message)
-        else:
-            group_messages = [message]
+        group_messages = _get_media_group_messages(message)
 
         for msg in group_messages:
             photos = getattr(msg, "photo", None) or []
@@ -1542,7 +1835,9 @@ async def build_input_payload_from_reply(
     reply_text: str = ""
     attachments: list[dict] = []
     try:
-        msg = getattr(update, "message", None)
+        msg = getattr(update, "effective_message", None)
+        if msg is None:
+            msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
         r = getattr(msg, "reply_to_message", None) if msg is not None else None
         if r is not None:
             r_text = (
@@ -1600,7 +1895,6 @@ async def build_input_payload_from_reply(
         log.debug("Failed to deduplicate Telegram attachments", exc_info=True)
     if INCLUDE_TELEGRAM_MESSAGE_CONTEXT:
         try:
-            msg = getattr(update, "message", None)
             if msg is not None and hasattr(msg, "to_dict"):
                 ctx_items.append(
                     {
@@ -1856,7 +2150,9 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     - Supports both text messages and media messages with a caption.
     - Target resolution delegated to call_api.call_async() without pre-validation
     """
-    msg = update.effective_message
+    msg = getattr(update, "effective_message", None)
+    if msg is None:
+        msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
     text = ((msg.text or msg.caption or "").strip()) if msg else ""
     has_media = False
     try:
@@ -2041,6 +2337,18 @@ def main() -> None:
     app.add_handler(CommandHandler("reload", handle_reload))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
+
+    # Project-defined command aliases (from project.md METADATA in repo.db)
+    try:
+        if PROJECT_NAME:
+            project_specs = _get_project_command_specs(PROJECT_NAME)
+        else:
+            project_specs = []
+    except Exception:
+        project_specs = []
+    project_names = [spec.name for spec in project_specs]
+    for cmd in _filter_custom_commands(project_names):
+        app.add_handler(CommandHandler(cmd, handle_project_command))
 
     app.add_handler(
         MessageHandler(

@@ -141,6 +141,20 @@ async def mcp_call(...):
 - **Zero race conditions**: All cancel scopes in same task
 - **Lazy waiting**: First call waits, subsequent calls instant
 
+## MediaGen Runtime Services
+- Systemd service names to use:
+  - `bot@MediaGenBlenderBot`
+  - `mcp@media-gen`
+- Auto-restart is handled by systemd (`Restart=on-failure`); keep services enabled:
+  - `systemctl enable bot@MediaGenBlenderBot mcp@media-gen`
+- After MCP or prompt config changes, restart both:
+  - `systemctl restart bot@MediaGenBlenderBot mcp@media-gen`
+
+## MediaGen Runtime Checklist
+- [ ] MCP config paths updated for renamed apps (see `call/mcp_config.yaml`)
+- [ ] Systemd services restarted after MCP/env changes
+- [ ] Services enabled for auto-restart (`systemctl enable ...`)
+
 ## Contribution Workflow
 
 - Plan changes and update code, docs, and tests together.
@@ -168,4 +182,3 @@ Thanks for keeping the repo tidy and well-documented!
 - Write imperative, scope-prefixed subjects (for example, `mcp: tighten tool auth`) with bodies describing motivation and follow-up work.
 - Link tickets, include screenshots or sample payloads when behavior shifts, and record manual verification steps.
 - Update `CHANGELOG.md` and relevant docs whenever user-facing behavior or configuration toggles.
-

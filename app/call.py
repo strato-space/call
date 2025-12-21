@@ -2024,7 +2024,24 @@ async def _notify_digest_if_applicable(
     is_error_output = isinstance(
         step1_output, str
     ) and step1_output.strip().lower().startswith("error:")
-    if is_error_output or selected_chat_id is None:
+    if selected_chat_id is None:
+        return
+    if is_error_output:
+        message_for_tg = None
+        if isinstance(step1_output, str):
+            for line in step1_output.splitlines():
+                line_stripped = line.strip()
+                if line_stripped.lower().startswith("message:"):
+                    message_for_tg = (
+                        line_stripped.split(":", 1)[1].strip().strip('"')
+                    )
+                    break
+        await _send_error_notification(
+            cfg=cfg,
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+            message=message_for_tg or (step1_output or "Unknown error"),
+        )
         return
 
     use_chat_id = selected_chat_id

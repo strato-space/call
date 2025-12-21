@@ -19,12 +19,12 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 - Repo: prompt
 - Plan: images-edit accepts 1..16 images; video accepts exactly one image.
 
-5) [ ] /prompt command handled by prompt text
+5) [x] /prompt command handled by prompt text
 - Repo: prompt
 - Files: prompt/MediaGenBlender/prompts/prompt.md, prompt/MediaGenBlender/project.md
 - Plan: treat `/prompt` and similar keywords as plain text; prompt routes to prompt_engineer without bot code changes.
 
-6) [ ] Require explicit generation intent (/image, /video, [image], [video])
+6) [x] Require explicit generation intent (/image, /video, [image], [video])
 - Repo: prompt
 - Plan: treat `/image` and `/video` as plain-text commands; default to text reply unless /image, /video, or [image]/[video] keyword is present.
 
@@ -37,7 +37,7 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 
 ## Code changes (call)
 
-8) [ ] Continuous typing while generating
+8) [x] Continuous typing while generating
 - Repo: call
 - Files: call/telegram_bot/bot.py
 - Functions: typing_loop(...), start/stop in request handler
