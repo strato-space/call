@@ -38,10 +38,20 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 ## Code changes (call)
 
 8) [x] Continuous typing while generating
-- Repo: call
+- Repo: call (bot-level only)
 - Files: call/telegram_bot/bot.py
 - Functions: typing_loop(...), start/stop in request handler
 - Plan: send ChatAction.TYPING every 5s until the call completes.
+
+## Prompt-only updates (done)
+
+- [x] Allow `file://` URLs as media refs in the prompt instructions.
+- [x] Strip `Model:`, `Cost:`, `Quality:`, `Size:` lines from tool prompts before calling tools.
+- [x] Map `horizontal`/`vertical` to tool sizes and remove those words from the prompt; include `Quality` and `Size` in output only when non-default.
+
+## Code changes (call) — additional (done)
+
+- [x] Include URLs from reply text and current message text as `resource_link` context items (dedupe by URI).
 
 ## Advanced / multi-repo (complex)
 
@@ -73,15 +83,15 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
   - Columns: total_cost_all_time REAL, total_cost_today REAL, last_updated_date TEXT (YYYY-MM-DD)
 - Plan: parse pricing from call result; on success update totals; when BOT_SHOW_COST_TOTALS=1, append a line with total_all_time, total_today, last_updated_date.
 
-12) [ ] Chat-scoped settings: /scene, /clear-scene, /template, /clear-template, /brand
+12) [x] Chat-scoped instructions (single command)
 - Repo: call
-- Files: call/telegram_bot/bot.py, call/lib/api.py
+- Files: call/telegram_bot/bot.py (plus a helper module if needed; no api wiring)
 - Functions: set_chat_setting(...), get_chat_setting(...), clear_chat_setting(...)
-- Data: reuse call SQLite, add table
-  - Table: chat_settings
-  - Columns: chat_id, scene, template, brand, updated_at
-- Plan: store per chat; /template (no args) returns current template; /clear-template resets.
-  Inject scene/template/brand into JSON payload after response/input fields (append if set).
+- Plan:
+  - Provide one command: `/instructions` (read/write/clear). For specialized bots with a project, resolve project root from call_db metadata and use `<project_root>/instructions/`; for the main bot without a project, use `./instructions/` under the working directory. Ensure the folder exists, write `instructions_{chat_id}.md` via `set_chat_setting`, and support reading/clearing that file.
+  - Behavior: when called with text, take `replay` (if present) + the command text (trim `/instructions` or `/instructions@BotNameBot`) + current message `input`, join with newlines, and persist to the file. When called with no arguments, output the current instructions file content. Ignore if no file exists.
+  - `clear_chat_setting` removes the instructions file for the chat.
+  - For every outgoing call, add an `instructions` attribute from the file content placed before `replay` and `input`—omit the attribute entirely if no instructions file exists.
 
 13) [ ] Model selection keywords + /models + prompt METADATA commands (deduped)
 - Repo: prompt, call, fast-agent (if metadata parsing lives there)

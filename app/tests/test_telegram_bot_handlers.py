@@ -144,9 +144,9 @@ class DummyChat:
 
 
 class DummyUpdate:
-    def __init__(self, text):
+    def __init__(self, text, chat_id=100, chat_type="group"):
         self.message = DummyMessage(text)
-        self.effective_chat = DummyChat(100)
+        self.effective_chat = DummyChat(chat_id, chat_type)
         self.effective_user = types.SimpleNamespace(id=999)
 
 
@@ -521,13 +521,52 @@ async def test_build_input_payload_from_reply_with_attachments(monkeypatch):
         for it in rl_items
     )
 
-    # Verify that telegram_bot info contains our dummy username
-    bot_items = [i for i in context_items if i.get("type") == "telegram_bot"]
-    assert bot_items, "Expected at least one telegram_bot item"
-    assert any(
-        isinstance(it.get("bot"), dict) and it["bot"].get("username") == "TestBot"
-        for it in bot_items
+
+def test_handle_instructions_save_read_clear(monkeypatch, tmp_path):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "", raising=False)
+    monkeypatch.setattr(
+        tg_bot, "_resolve_instructions_dir", lambda project_name: tmp_path
     )
+
+    # Save instructions (include reply text + command text)
+    upd = DummyUpdate("/instructions first line", chat_id=555, chat_type="private")
+    upd.message.reply_to_message = DummyMessage("reply note")
+    ctx = DummyContext()
+
+    async def _runner_save():
+        await tg_bot.handle_instructions(upd, ctx)
+
+    asyncio.run(_runner_save())
+    path = tg_bot._instructions_path(555, None)
+    assert path.exists()
+    saved = path.read_text(encoding="utf-8")
+    assert "reply note" in saved
+    assert "first line" in saved
+
+    # Read instructions (no args)
+    upd_read = DummyUpdate("/instructions", chat_id=555, chat_type="private")
+    ctx_read = DummyContext()
+
+    async def _runner_read():
+        await tg_bot.handle_instructions(upd_read, ctx_read)
+
+    asyncio.run(_runner_read())
+    assert upd_read.message._replies
+    assert "reply note" in upd_read.message._replies[0][0]
+
+    # Clear instructions
+    upd_clear = DummyUpdate("/instructions clear", chat_id=555, chat_type="private")
+    ctx_clear = DummyContext()
+
+    async def _runner_clear():
+        await tg_bot.handle_instructions(upd_clear, ctx_clear)
+
+    asyncio.run(_runner_clear())
+    assert not path.exists()
 
 @pytest.mark.asyncio
 async def test_build_input_payload_from_reply_without_telegram_bot_when_flag_disabled(

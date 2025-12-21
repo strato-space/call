@@ -36,6 +36,7 @@ import json
 import sys
 import time
 import httpx
+from pathlib import Path
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -53,11 +54,19 @@ async def _typing_loop(
 ) -> None:
     try:
         while not stop_event.is_set():
-            await bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=thread_id,
-            )
+            try:
+                await bot.send_chat_action(
+                    chat_id=chat_id,
+                    action=ChatAction.TYPING,
+                    message_thread_id=thread_id,
+                )
+            except Exception:
+                pass
+            if thread_id is not None:
+                try:
+                    await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except Exception:
+                    pass
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=5.0)
             except asyncio.TimeoutError:
@@ -229,6 +238,73 @@ def _filter_custom_commands(commands: list[str]) -> list[str]:
         if token not in normalized:
             normalized.append(token)
     return normalized
+
+
+def _resolve_instructions_dir(project_name: str | None) -> Path:
+    """Best-effort resolution of instructions folder based on project."""
+    try:
+        if project_name:
+            rows = _services.call_api.list(project=project_name)
+            for proj in rows or []:
+                agents = proj.get("agents") or []
+                for agent in agents:
+                    p = agent.get("path")
+                    if p:
+                        try:
+                            return Path(p).resolve().parent / "instructions"
+                        except Exception:
+                            continue
+    except Exception:
+        log.debug("Failed to resolve instructions dir via call_api.list", exc_info=True)
+    # Fallback: local instructions folder
+    return Path("instructions")
+
+
+def _instructions_path(chat_id: int | None, project_name: str | None) -> Path | None:
+    if chat_id is None:
+        return None
+    base = _resolve_instructions_dir(project_name)
+    return base / f"instructions_{chat_id}.md"
+
+
+def _read_instructions(chat_id: int | None, project_name: str | None) -> tuple[str | None, Path | None]:
+    path = _instructions_path(chat_id, project_name)
+    if not path:
+        return None, None
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return content, path
+    except Exception:
+        log.debug("Failed to read instructions file %s", path, exc_info=True)
+    return None, path
+
+
+def _write_instructions(chat_id: int, project_name: str | None, content: str) -> Path | None:
+    path = _instructions_path(chat_id, project_name)
+    if not path:
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+    except Exception:
+        log.debug("Failed to write instructions file %s", path, exc_info=True)
+        return None
+
+
+def _clear_instructions(chat_id: int | None, project_name: str | None) -> bool:
+    path = _instructions_path(chat_id, project_name)
+    if not path:
+        return False
+    try:
+        if path.exists():
+            path.unlink()
+            return True
+    except Exception:
+        log.debug("Failed to remove instructions file %s", path, exc_info=True)
+    return False
 
 
 # Load environment from call/.env first (module-relative), then allow process env to override
@@ -873,6 +949,7 @@ def _project_to_bot_link(project_name: str) -> tuple[str, Optional[str]]:
 
 _TRAILING_PUNCT_RE = re.compile(r"[\s\.,;:!\?…'\"`“”‘’\)\]\}›»]+$")
 _TARGET_TOKEN_RE = re.compile(r"^@[A-Za-z0-9][A-Za-z0-9_\-./:*]*$")
+_URL_RE = re.compile(r"https?://\S+")
 
 
 def _normalize_token(tok: str) -> str:
@@ -1510,6 +1587,45 @@ def _build_telegram_file_url(path: str) -> str | None:
         return None
 
 
+def _extract_urls_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    urls: list[str] = []
+    for raw in _URL_RE.findall(text):
+        cleaned = _TRAILING_PUNCT_RE.sub("", raw)
+        if cleaned and cleaned not in urls:
+            urls.append(cleaned)
+    return urls
+
+
+def _build_text_url_items(
+    text: str,
+    *,
+    chat_id: int | None,
+    message_id: int | None,
+    direction: str,
+) -> list[dict]:
+    items: list[dict] = []
+    for url in _extract_urls_from_text(text):
+        name = url.split("?", 1)[0].rsplit("/", 1)[-1] or None
+        items.append(
+            {
+                "type": "resource_link",
+                "uri": url,
+                "url": url,
+                "name": name,
+                "description": f"URL from {direction} text",
+                "source": {
+                    "type": "telegram_text",
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "direction": direction,
+                },
+            }
+        )
+    return items
+
+
 async def _build_resource_link_item(
     *,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1831,6 +1947,20 @@ async def build_input_payload_from_reply(
             )
             if r_text:
                 reply_text = r_text
+                try:
+                    attachments.extend(
+                        _build_text_url_items(
+                            reply_text,
+                            chat_id=getattr(getattr(r, "chat", None), "id", None),
+                            message_id=getattr(r, "message_id", None),
+                            direction="replay",
+                        )
+                    )
+                except Exception:
+                    log.debug(
+                        "Failed to collect URLs from reply text",
+                        exc_info=True,
+                    )
             try:
                 attachments.extend(
                     await _collect_telegram_attachments(
@@ -1858,6 +1988,21 @@ async def build_input_payload_from_reply(
                     "Failed to collect Telegram attachments from current message",
                     exc_info=True,
                 )
+            try:
+                if main_text:
+                    attachments.extend(
+                        _build_text_url_items(
+                            main_text,
+                            chat_id=getattr(getattr(msg, "chat", None), "id", None),
+                            message_id=getattr(msg, "message_id", None),
+                            direction="input",
+                        )
+                    )
+            except Exception:
+                log.debug(
+                    "Failed to collect URLs from message text",
+                    exc_info=True,
+                )
     except Exception:
         log.debug(
             "Failed to inspect Telegram message while building input payload",
@@ -1866,11 +2011,16 @@ async def build_input_payload_from_reply(
     try:
         if attachments:
             seen_keys: set[tuple[str, str]] = set()
+            seen_uris: set[str] = set()
             for it in attachments:
                 if not isinstance(it, dict):
                     continue
                 uri = str(it.get("uri") or "")
                 item_name = str(it.get("name") or "")
+                if uri:
+                    if uri in seen_uris:
+                        continue
+                    seen_uris.add(uri)
                 key = (uri, item_name)
                 if key in seen_keys:
                     continue
@@ -1911,6 +2061,32 @@ async def build_input_payload_from_reply(
         extra_context=ctx_items or None,
         reply_text=(reply_text or None),
     )
+    # Inject chat-scoped instructions if present (before replay/input)
+    try:
+        chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+        project_name = _get_bot_project(update) or None
+        instructions_text, _ = _read_instructions(chat_id, project_name)
+    except Exception:
+        instructions_text = None
+    if instructions_text:
+        ordered = payload.copy() if isinstance(payload, dict) else {}
+        new_payload: dict = {}
+        if "target" in ordered:
+            new_payload["target"] = ordered["target"]
+        new_payload["instructions"] = instructions_text
+        if "replay" in ordered:
+            new_payload["replay"] = ordered["replay"]
+        if "input" in ordered:
+            new_payload["input"] = ordered["input"]
+        if "context" in ordered:
+            new_payload["context"] = ordered["context"]
+        payload = new_payload
+        try:
+            import json as _json
+
+            input_arg = _json.dumps(new_payload, ensure_ascii=False)
+        except Exception:
+            input_arg = str(new_payload)
     try:
         import json as _json
 
@@ -2123,6 +2299,69 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         debug_print("[bot]", "[CLEAR]", f"error {type(e).__name__}: {e}")
         await m.reply(f"Error: {type(e).__name__}: {str(e)}", parse_mode=None)
+
+
+@_require_allowed_users
+async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manage chat-scoped instructions stored on disk."""
+    m = Messenger(context=context, update=update)
+    msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+    raw_text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
+    chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+    project_name = _get_bot_project(update) or None
+
+    # Extract reply text if present
+    reply_text = ""
+    try:
+        r = getattr(msg, "reply_to_message", None)
+        if r is not None:
+            r_text = (getattr(r, "text", None) or getattr(r, "caption", None) or "").strip()
+            if r_text:
+                reply_text = r_text
+    except Exception:
+        reply_text = ""
+
+    # Trim command token (/instructions or /instructions@Bot) from current message
+    cmd_free_text = raw_text
+    if raw_text.startswith("/"):
+        token = raw_text.split(maxsplit=1)[0]
+        base_cmd = token.lstrip("/").split("@", 1)[0].lower()
+        if base_cmd == "instructions":
+            cmd_free_text = raw_text[len(token):].lstrip()
+
+    # If no args and no reply -> show current instructions (or note absence)
+    if not cmd_free_text and not reply_text:
+        current, _ = _read_instructions(chat_id, project_name)
+        if current:
+            await m.reply(current, parse_mode=None)
+        else:
+            await m.reply("No instructions set for this chat.", parse_mode=None)
+        return
+
+    # Clear instructions on explicit "clear"
+    if cmd_free_text.lower() == "clear" and not reply_text:
+        removed = _clear_instructions(chat_id, project_name)
+        if removed:
+            await m.reply("Instructions cleared.", parse_mode=None)
+        else:
+            await m.reply("No instructions to clear.", parse_mode=None)
+        return
+
+    parts: list[str] = []
+    if reply_text:
+        parts.append(reply_text)
+    if cmd_free_text:
+        parts.append(cmd_free_text)
+    content = "\n".join(parts).strip()
+    if not content:
+        await m.reply("No instructions text provided.", parse_mode=None)
+        return
+
+    path = _write_instructions(int(chat_id) if chat_id is not None else -1, project_name, content)
+    if path:
+        await m.reply("Instructions saved.", parse_mode=None)
+    else:
+        await m.reply("Failed to save instructions.", parse_mode=None)
 
 
 @_require_allowed_users
@@ -2355,6 +2594,7 @@ def main() -> None:
     app.add_handler(CommandHandler("reload", handle_reload))
     app.add_handler(CommandHandler("call", handle_call))
     app.add_handler(CommandHandler("clear", handle_clear))
+    app.add_handler(CommandHandler("instructions", handle_instructions))
 
     # Project-defined command aliases (from project.md METADATA in repo.db)
     try:

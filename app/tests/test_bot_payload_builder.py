@@ -3,6 +3,7 @@ import types
 import json
 import asyncio
 import pytest
+from pathlib import Path
 
 from types import SimpleNamespace
 
@@ -44,7 +45,7 @@ class DummyContext:
         self.bot = bot
 
 
-async def _build_payload(name, main_text, reply_text=None, with_document=False):
+async def _build_payload(name, main_text, reply_text=None, with_document=False, chat_id=100):
     from call.telegram_bot.bot import build_input_payload_from_reply
 
     # Reply message (text and optional document)
@@ -56,6 +57,7 @@ async def _build_payload(name, main_text, reply_text=None, with_document=False):
     cur = DummyMessage(text=main_text or "", document=None)
     cur.reply_to_message = reply
     update = DummyUpdate(cur)
+    update.effective_chat = types.SimpleNamespace(id=chat_id, type="private")
     ctx = DummyContext(DummyBot())
     arg, payload = await build_input_payload_from_reply(
         name, main_text or "", update, ctx
@@ -93,3 +95,30 @@ async def test_payload_reply_with_document(monkeypatch):
     # The URL should be a Telegram file download link
     url = next(it.get("url") for it in ctx if it.get("url"))
     assert url.startswith("https://api.telegram.org/file/bot")
+
+
+async def test_payload_includes_instructions(monkeypatch, tmp_path):
+    monkeypatch.setenv("CALL_TELEGRAM_TOKEN", "333:CCC")
+    from call.telegram_bot import bot as tg_bot
+
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "", raising=False)
+    # Force instructions directory to tmp_path
+    monkeypatch.setattr(
+        tg_bot, "_resolve_instructions_dir", lambda project_name: Path(tmp_path)
+    )
+    instructions_file = Path(tmp_path) / "instructions_123.md"
+    instructions_file.write_text("remember this", encoding="utf-8")
+
+    arg, payload, parsed = await _build_payload(
+        "AgentX", "hello", reply_text="prev text", with_document=False, chat_id=123
+    )
+    assert isinstance(parsed, dict)
+    assert parsed.get("instructions") == "remember this"
+    # instructions should appear alongside replay/input
+    keys = list(parsed.keys())
+    assert "instructions" in keys
+    if "replay" in keys:
+        assert keys.index("instructions") < keys.index("replay")
+    if "input" in keys:
+        assert keys.index("instructions") < keys.index("input")
