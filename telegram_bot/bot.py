@@ -1022,6 +1022,15 @@ def _resolve_agent_and_input(
     except Exception:
         own = ""
 
+    # Allow mentions of the bot anywhere in the text (group chats)
+    if not is_private and own:
+        marker = f"@{own}".lower()
+        lower_s = s.lower()
+        if marker in lower_s and not s.startswith("@"):
+            idx = lower_s.index(marker)
+            trimmed = (s[:idx] + s[idx + len(marker) :]).strip()
+            s = f"@{own} {trimmed}".strip()
+
     if s.startswith("@"):
         body = s[1:]
         # '@' followed by nothing -> ignore
@@ -1184,10 +1193,10 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         command_specs = _get_project_command_specs(PROJECT_NAME)
         cmd_lines = _format_command_specs(command_specs)
         help_link = _get_project_help(PROJECT_NAME)
-        header = f"{help_link}\n\n" if help_link else ""
         txt = f"""
-{header}Команды:
+Команды:
 {cmd_lines if cmd_lines else "Команды не указаны в METADATA."}
+{f"\n\n{help_link}" if help_link else ""}
         """.strip()
     else:
         txt = """

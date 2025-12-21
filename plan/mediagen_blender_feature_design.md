@@ -101,3 +101,8 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 - Data: add METADATA field in prompt (commands/models list)
 - Plan: allow [image] [openai1.5]-style keywords; /models returns available models from tool schemas
   or prompt metadata; prompt METADATA declares command list for bot help.
+
+14) [ ] Keep prompt/MediaGenBlender/project.md in sync with bot instructions
+- Repo: prompt, call
+- Files: prompt/MediaGenBlender/project.md, call/telegram_bot/bot.py (or helper)
+- Plan: when `/instructions` updates per-chat instructions, also update the project's prompt header/commands section automatically (no manual reminder needed). Define how to merge/replace instructions and ensure idempotency.

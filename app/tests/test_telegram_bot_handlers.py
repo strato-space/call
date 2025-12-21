@@ -352,6 +352,26 @@ def test_plain_group_at_target_delegates_to_library(monkeypatch):
     assert services.last_call["target"] == "UnknownAgent"
 
 
+def test_plain_group_mention_anywhere_routes_to_bot(monkeypatch):
+    """Bot mention in the middle of text should still route to this bot."""
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    tg_bot.SELECTED_BOT_NAME = "TestBot"
+    tg_bot.PROJECT_NAME = ""
+    upd = DummyUpdate("hello there @TestBot please do something")
+    ctx = DummyContext()
+
+    async def _runner():
+        await tg_bot.handle_plain_text(upd, ctx)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_runner())
+    assert services.last_call is not None
+    assert (services.last_call["target"] or "") == ""
+    assert "please do something" in (services.last_call["input"] or "")
+
+
 def test_normalize_token_strips_trailing_punctuation():
     """Test that _normalize_token removes trailing punctuation from agent names."""
     assert tg_bot._normalize_token("@220-PM-Status!") == "220-PM-Status"
