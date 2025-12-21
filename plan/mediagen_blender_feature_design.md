@@ -60,11 +60,12 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 - Files: call/telegram_bot/bot.py, call/app/call.py, call/lib/api.py
 - Functions: log_session_entry(...), attach_rating_buttons(...), handle_rating_callback(...)
 - Data: reuse call SQLite (call/.cache/call/call.db), add table
-  - Table: bot_session_log
+  - Table: media_gen_blender_bot_session_log
   - Columns: chat_id, message_id, from_id, input, output, ai_request_id,
     input_timestamp, output_timestamp, rating_value, rating_user_id, rating_timestamp
-- Plan: on each bot response, insert row and attach inline buttons:
-  "1 👎", "2 😞", "3 😕", "4 👍", "5 ⭐️". Store output as returned (includes image links/prompts).
+- Plan: on each bot response, update row and update (editMessage) inline buttons:
+  "`1 🤮`, `2 😞`, `3 😑`, `4 👍`, `5 ⭐️`". Store output as returned (includes image links/prompts).
+  Selected option renders as "🟢 😑" (digit replaced, emoji retained).
   Update row on rating callback.
 
 10) [ ] /cansel command tied to ai_request_id
@@ -79,7 +80,7 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 - Files: call/telegram_bot/bot.py, call/lib/api.py (if needed), call/app/call.py (if needed)
 - Functions: cost_totals_read_update(...), append_cost_totals(...)
 - Data: reuse call SQLite, add table
-  - Table: bot_cost_totals
+  - Table: media_gen_blender_bot_cost_totals
   - Columns: total_cost_all_time REAL, total_cost_today REAL, last_updated_date TEXT (YYYY-MM-DD)
 - Plan: parse pricing from call result; on success update totals; when BOT_SHOW_COST_TOTALS=1, append a line with total_all_time, total_today, last_updated_date.
 
