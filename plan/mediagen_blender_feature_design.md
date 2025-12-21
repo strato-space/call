@@ -88,9 +88,9 @@ Files: prompt/MediaGenBlender/project.md, prompt/MediaGenBlender/tg-user-guide.r
 - Files: call/telegram_bot/bot.py (plus a helper module if needed; no api wiring)
 - Functions: set_chat_setting(...), get_chat_setting(...), clear_chat_setting(...)
 - Plan:
-  - Provide one command: `/instructions` (read/write/clear). For specialized bots with a project, resolve project root from call_db metadata and use `<project_root>/instructions/`; for the main bot without a project, use `./instructions/` under the working directory. Ensure the folder exists, write `instructions_{chat_id}.md` via `set_chat_setting`, and support reading/clearing that file.
+  - Provide one command: `/instructions` (read/write/clear). For specialized bots with a project, resolve project root from call_db metadata and use `<project_root>/instructions/`; for the main bot without a project, use `./instructions/` under the working directory. Ensure the folder exists, write `instructions_{chat_id}_{thread_id}.md` via `set_chat_setting`, and support reading/clearing that file.
   - Behavior: when called with text, take `replay` (if present) + the command text (trim `/instructions` or `/instructions@BotNameBot`) + current message `input`, join with newlines, and persist to the file. When called with no arguments, output the current instructions file content. Ignore if no file exists.
-  - `clear_chat_setting` removes the instructions file for the chat.
+  - `clear_chat_setting` removes the instructions file for the chat/thread.
   - For every outgoing call, add an `instructions` attribute from the file content placed before `replay` and `input`—omit the attribute entirely if no instructions file exists.
 
 13) [ ] Model selection keywords + /models + prompt METADATA commands (deduped)

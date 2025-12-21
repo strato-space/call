@@ -275,15 +275,20 @@ def _resolve_instructions_dir(project_name: str | None) -> Path:
     return Path("instructions")
 
 
-def _instructions_path(chat_id: int | None, project_name: str | None) -> Path | None:
+def _instructions_path(
+    chat_id: int | None, project_name: str | None, thread_id: int | None = None
+) -> Path | None:
     if chat_id is None:
         return None
     base = _resolve_instructions_dir(project_name)
-    return base / f"instructions_{chat_id}.md"
+    tid = thread_id if thread_id is not None else 0
+    return base / f"instructions_{chat_id}_{tid}.md"
 
 
-def _read_instructions(chat_id: int | None, project_name: str | None) -> tuple[str | None, Path | None]:
-    path = _instructions_path(chat_id, project_name)
+def _read_instructions(
+    chat_id: int | None, project_name: str | None, thread_id: int | None = None
+) -> tuple[str | None, Path | None]:
+    path = _instructions_path(chat_id, project_name, thread_id)
     if not path:
         return None, None
     try:
@@ -296,8 +301,13 @@ def _read_instructions(chat_id: int | None, project_name: str | None) -> tuple[s
     return None, path
 
 
-def _write_instructions(chat_id: int, project_name: str | None, content: str) -> Path | None:
-    path = _instructions_path(chat_id, project_name)
+def _write_instructions(
+    chat_id: int,
+    project_name: str | None,
+    content: str,
+    thread_id: int | None = None,
+) -> Path | None:
+    path = _instructions_path(chat_id, project_name, thread_id)
     if not path:
         return None
     try:
@@ -309,8 +319,10 @@ def _write_instructions(chat_id: int, project_name: str | None, content: str) ->
         return None
 
 
-def _clear_instructions(chat_id: int | None, project_name: str | None) -> bool:
-    path = _instructions_path(chat_id, project_name)
+def _clear_instructions(
+    chat_id: int | None, project_name: str | None, thread_id: int | None = None
+) -> bool:
+    path = _instructions_path(chat_id, project_name, thread_id)
     if not path:
         return False
     try:
@@ -2091,7 +2103,8 @@ async def build_input_payload_from_reply(
     try:
         chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
         project_name = _get_bot_project(update) or None
-        instructions_text, _ = _read_instructions(chat_id, project_name)
+        thread_id = getattr(msg, "message_thread_id", None) if msg else None
+        instructions_text, _ = _read_instructions(chat_id, project_name, thread_id)
     except Exception:
         instructions_text = None
     if instructions_text:
@@ -2335,6 +2348,7 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
     raw_text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
     chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
     project_name = _get_bot_project(update) or None
+    thread_id = getattr(msg, "message_thread_id", None) if msg else None
 
     # Extract reply text if present
     reply_text = ""
@@ -2357,7 +2371,7 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # If no args and no reply -> show current instructions (or note absence)
     if not cmd_free_text and not reply_text:
-        current, _ = _read_instructions(chat_id, project_name)
+        current, _ = _read_instructions(chat_id, project_name, thread_id)
         if current:
             await m.reply(current, parse_mode=None)
         else:
@@ -2366,7 +2380,7 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Clear instructions on explicit "clear"
     if cmd_free_text.lower() == "clear" and not reply_text:
-        removed = _clear_instructions(chat_id, project_name)
+        removed = _clear_instructions(chat_id, project_name, thread_id)
         if removed:
             await m.reply("Instructions cleared.", parse_mode=None)
         else:
@@ -2383,7 +2397,12 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
         await m.reply("No instructions text provided.", parse_mode=None)
         return
 
-    path = _write_instructions(int(chat_id) if chat_id is not None else -1, project_name, content)
+    path = _write_instructions(
+        int(chat_id) if chat_id is not None else -1,
+        project_name,
+        content,
+        thread_id,
+    )
     if path:
         await m.reply("Instructions saved.", parse_mode=None)
     else:

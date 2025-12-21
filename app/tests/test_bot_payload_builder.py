@@ -107,7 +107,7 @@ async def test_payload_includes_instructions(monkeypatch, tmp_path):
     monkeypatch.setattr(
         tg_bot, "_resolve_instructions_dir", lambda project_name: Path(tmp_path)
     )
-    instructions_file = Path(tmp_path) / "instructions_123.md"
+    instructions_file = Path(tmp_path) / "instructions_123_0.md"
     instructions_file.write_text("remember this", encoding="utf-8")
 
     arg, payload, parsed = await _build_payload(
