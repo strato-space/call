@@ -240,6 +240,21 @@ def _filter_custom_commands(commands: list[str]) -> list[str]:
     return normalized
 
 
+def _get_project_help(project_name: str) -> str:
+    """Return help URL/text from project METADATA.help if present."""
+    try:
+        if not project_name:
+            return ""
+        raw = _services.call_api.read(project_name)
+        meta = parse_metadata_and_prompt(raw or "")
+        help_val = meta.get("help") if isinstance(meta, dict) else None
+        if isinstance(help_val, str):
+            return help_val.strip()
+    except Exception:
+        log.debug("Failed to read project help from metadata", exc_info=True)
+    return ""
+
+
 def _resolve_instructions_dir(project_name: str | None) -> Path:
     """Best-effort resolution of instructions folder based on project."""
     try:
@@ -1168,8 +1183,10 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if PROJECT_NAME:
         command_specs = _get_project_command_specs(PROJECT_NAME)
         cmd_lines = _format_command_specs(command_specs)
+        help_link = _get_project_help(PROJECT_NAME)
+        header = f"{help_link}\n\n" if help_link else ""
         txt = f"""
-Команды:
+{header}Команды:
 {cmd_lines if cmd_lines else "Команды не указаны в METADATA."}
         """.strip()
     else:
