@@ -411,6 +411,17 @@ def test_update_cost_totals_rollover(monkeypatch, tmp_path):
     assert totals2[2] == date.today().isoformat()
 
 
+def test_bot_flag_per_project(monkeypatch):
+    # Base flag false, bot-specific flag true
+    monkeypatch.delenv("BOT_SHOW_COST_TOTALS", raising=False)
+    monkeypatch.setenv("BOT_SHOW_COST_TOTALS__MediaGenBlenderBot", "1")
+    tg_bot._refresh_bot_flags("MediaGenBlenderBot")
+    assert tg_bot.BOT_SHOW_COST_TOTALS is True
+    # Different bot should fall back to default false
+    tg_bot._refresh_bot_flags("OtherBot")
+    assert tg_bot.BOT_SHOW_COST_TOTALS is False
+
+
 def test_normalize_token_strips_trailing_punctuation():
     """Test that _normalize_token removes trailing punctuation from agent names."""
     assert tg_bot._normalize_token("@220-PM-Status!") == "220-PM-Status"

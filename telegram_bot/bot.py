@@ -46,6 +46,15 @@ def _env_flag(name: str, default: str = "0") -> bool:
     value = os.environ.get(name, default)
     return value.strip().lower() in ("1", "true", "yes", "on")
 
+def _env_flag_for_bot(base: str, bot_name: str | None, default: str = "0") -> bool:
+    """Resolve BOTNAME-specific env flag, fallback to base."""
+    if bot_name:
+        key = f"{base}__{bot_name}"
+        val = os.environ.get(key)
+        if val is not None:
+            return val.strip().lower() in ("1", "true", "yes", "on")
+    return _env_flag(base, default)
+
 
 async def _typing_loop(
     bot: object,
@@ -503,6 +512,11 @@ def _env_to_bool(raw: str, default: bool = False) -> bool:
 # Materialize parsed envs
 _ALLOWED_USERS = _parse_allowed_users(_ALLOWED_USERS_RAW)
 _DROP_PENDING_UPDATES = _env_to_bool(DROP_PENDING_UPDATES_RAW, default=False)
+
+def _refresh_bot_flags(bot_name: str | None) -> None:
+    """Refresh per-bot feature flags from env."""
+    global BOT_SHOW_COST_TOTALS
+    BOT_SHOW_COST_TOTALS = _env_flag_for_bot("BOT_SHOW_COST_TOTALS", bot_name, "0")
 
 
 def _extract_cost_currency(res: object) -> tuple[float | None, str | None]:
@@ -2672,6 +2686,7 @@ def main() -> None:
     global SELECTED_BOT_NAME, PROJECT_NAME
     SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
     PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
+    _refresh_bot_flags(SELECTED_BOT_NAME)
     debug_print(
         "[bot]", "[MAIN]", f"bot={SELECTED_BOT_NAME!r} project={PROJECT_NAME!r}"
     )
