@@ -37,8 +37,6 @@ import sys
 import time
 import httpx
 from pathlib import Path
-from datetime import date
-import sqlite3
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -115,7 +113,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 from dotenv import load_dotenv
-from pathlib import Path
 from telegram import Update
 from telegram.constants import ParseMode, ChatAction
 from telegram.error import BadRequest, TimedOut, NetworkError
@@ -306,6 +303,18 @@ def _instructions_path(
     return base / f"instructions_{chat_id}_{tid}.md"
 
 
+def _get_topic_thread_id(msg: object | None) -> int | None:
+    """Return thread id only when Telegram marks the message as a topic."""
+    if msg is None:
+        return None
+    try:
+        if getattr(msg, "is_topic_message", False):
+            return getattr(msg, "message_thread_id", None)
+    except Exception:
+        log.debug("Failed to read topic thread id from message", exc_info=True)
+    return None
+
+
 def _read_instructions(
     chat_id: int | None, project_name: str | None, thread_id: int | None = None
 ) -> tuple[str | None, Path | None]:
@@ -382,7 +391,6 @@ SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
 PROJECT_NAME: str = ""
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
-_CALL_DB_PATH = os.getenv("CALL_DB", "call/call.db")
 BOT_SHOW_COST_TOTALS = _env_flag("BOT_SHOW_COST_TOTALS", "0")
 
 _MEDIA_GROUP_CACHE: dict[str, list] = {}
@@ -529,87 +537,6 @@ def _refresh_bot_flags(bot_name: str | None, project_name: str | None = None) ->
     BOT_SHOW_COST_TOTALS = _env_flag_for_bot(
         "BOT_SHOW_COST_TOTALS", bot_name, project_name, "0"
     )
-
-
-def _extract_cost_currency(res: object) -> tuple[float | None, str | None]:
-    if not isinstance(res, dict):
-        return None, None
-    try:
-        pricing = res.get("pricing") or (
-            res.get("structuredContent", {}).get("pricing")
-            if isinstance(res.get("structuredContent"), dict)
-            else None
-        )
-        if not isinstance(pricing, dict):
-            return None, None
-        cost_raw = pricing.get("cost")
-        if cost_raw is None:
-            return None, None
-        try:
-            cost_val = float(cost_raw)
-        except Exception:
-            return None, None
-        currency = pricing.get("currency") or pricing.get("unit") or None
-        return cost_val, str(currency) if currency else None
-    except Exception:
-        return None, None
-
-
-def _ensure_cost_totals_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS media_gen_blender_bot_cost_totals (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            total_cost REAL DEFAULT 0,
-            total_cost_today REAL DEFAULT 0,
-            last_updated_date TEXT
-        )
-        """
-    )
-
-
-def _update_cost_totals(cost: float) -> tuple[float, float, str] | None:
-    """Update totals in SQLite; returns (total_all, total_today, date)."""
-    if cost is None or cost <= 0:
-        return None
-    db_path = _CALL_DB_PATH or "call/call.db"
-    today = date.today().isoformat()
-    try:
-        conn = sqlite3.connect(db_path)
-        _ensure_cost_totals_table(conn)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT total_cost, total_cost_today, last_updated_date FROM media_gen_blender_bot_cost_totals WHERE id = 1"
-        )
-        row = cur.fetchone()
-        total_all = float(row[0]) if row and row[0] is not None else 0.0
-        total_today = float(row[1]) if row and row[1] is not None else 0.0
-        last_date = row[2] if row else None
-        if last_date != today:
-            total_today = 0.0
-        total_all += cost
-        total_today += cost
-        cur.execute(
-            """
-            INSERT INTO media_gen_blender_bot_cost_totals (id, total_cost, total_cost_today, last_updated_date)
-            VALUES (1, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                total_cost = excluded.total_cost,
-                total_cost_today = excluded.total_cost_today,
-                last_updated_date = excluded.last_updated_date
-            """,
-            (total_all, total_today, today),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return total_all, total_today, today
-    except Exception:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return None
 
 
 def _current_config_dict() -> dict:
@@ -1646,51 +1573,6 @@ async def _call_task(
             thread_id=thread_id,
         )
         try:
-            debug_print(
-                "[bot]",
-                "[CALL_TASK]",
-                f"pricing snapshot: pricing={res.get('pricing') if isinstance(res, dict) else None} "
-                f"structuredPricing={res.get('structuredContent', {}).get('pricing') if isinstance(res, dict) else None} "
-                f"flag_cost_totals={BOT_SHOW_COST_TOTALS} db={_CALL_DB_PATH}",
-            )
-        except Exception:
-            pass
-        totals_line = None
-        try:
-            cost_val, currency = _extract_cost_currency(res)
-            if cost_val is not None and cost_val > 0:
-                totals = _update_cost_totals(cost_val)
-                if totals and BOT_SHOW_COST_TOTALS:
-                    total_all, total_today, last_date = totals
-                    cur = currency or "USD"
-                    totals_line = (
-                        f"Cost totals: all={total_all:.6f} {cur}, "
-                        f"today={total_today:.6f} {cur} (as of {last_date})"
-                    )
-                    debug_print(
-                        "[bot]",
-                        "[CALL_TASK]",
-                        f"cost_totals enabled cost={cost_val} currency={cur} totals={totals}",
-                    )
-                    log.info(
-                        "cost_totals enabled bot=%s project=%s cost=%.6f cur=%s totals=%s db=%s",
-                        SELECTED_BOT_NAME,
-                        PROJECT_NAME,
-                        cost_val,
-                        cur,
-                        totals,
-                        _CALL_DB_PATH,
-                    )
-                else:
-                    debug_print(
-                        "[bot]",
-                        "[CALL_TASK]",
-                        f"cost_totals skipped: totals={totals} flag={BOT_SHOW_COST_TOTALS}",
-                    )
-        except Exception:
-            totals_line = None
-
-        try:
             ok = bool(res.get("ok")) if isinstance(res, dict) else None
             debug_print("[bot]", "[CALL_TASK]", f"result ok={ok}")
         except Exception:
@@ -1735,11 +1617,6 @@ async def _call_task(
                     "[CALL_TASK]",
                     "ok=true; no extra reply to avoid duplicates (pipeline published)",
                 )
-                if totals_line:
-                    try:
-                        await m.reply(totals_line, parse_mode=None)
-                    except Exception:
-                        pass
         except Exception:
             # Never let reply errors crash the task
             pass
@@ -2259,33 +2136,25 @@ async def build_input_payload_from_reply(
         extra_context=ctx_items or None,
         reply_text=(reply_text or None),
     )
-    # Inject chat-scoped instructions if present (before replay/input)
+    # Inject chat-scoped instructions into input if present
     try:
         chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
         project_name = _get_bot_project(update) or None
-        thread_id = getattr(msg, "message_thread_id", None) if msg else None
+        thread_id = _get_topic_thread_id(msg)
         instructions_text, _ = _read_instructions(chat_id, project_name, thread_id)
     except Exception:
         instructions_text = None
     if instructions_text:
         ordered = payload.copy() if isinstance(payload, dict) else {}
-        new_payload: dict = {}
-        if "target" in ordered:
-            new_payload["target"] = ordered["target"]
-        new_payload["instructions"] = instructions_text
-        if "replay" in ordered:
-            new_payload["replay"] = ordered["replay"]
-        if "input" in ordered:
-            new_payload["input"] = ordered["input"]
-        if "context" in ordered:
-            new_payload["context"] = ordered["context"]
-        payload = new_payload
+        base_input = ordered.get("input") or ""
+        ordered["input"] = f"{instructions_text}\n{base_input}"
+        payload = ordered
         try:
             import json as _json
 
-            input_arg = _json.dumps(new_payload, ensure_ascii=False)
+            input_arg = _json.dumps(ordered, ensure_ascii=False)
         except Exception:
-            input_arg = str(new_payload)
+            input_arg = str(ordered)
     try:
         import json as _json
 
@@ -2508,7 +2377,7 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
     raw_text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
     chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
     project_name = _get_bot_project(update) or None
-    thread_id = getattr(msg, "message_thread_id", None) if msg else None
+    thread_id = _get_topic_thread_id(msg)
 
     # Extract reply text if present
     reply_text = ""

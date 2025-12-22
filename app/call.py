@@ -67,6 +67,7 @@ from openai.types.shared import Reasoning as OpenAIReasoning
 import html as _html
 
 from call.lib import api as call_api
+from call.lib import call_db
 
 
 def _suppress_mcp_cleanup_errors(loop, context):
@@ -98,6 +99,44 @@ def _suppress_mcp_cleanup_errors(loop, context):
     loop.default_exception_handler(context)
 
 
+def _extract_cost_from_output(text: str | None):
+    """Parse cost line like 'Cost: 0.015 USD' from textual output."""
+    if not isinstance(text, str):
+        return None
+    m = re.search(r"Cost:\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]{3})?", text)
+    if not m:
+        return None
+    try:
+        cost = float(m.group(1))
+    except Exception:
+        return None
+    currency = m.group(2).strip() if m.group(2) else None
+    return cost, currency
+
+
+def _update_cost_totals_from_output(text: str | None) -> call_db.CostTotals | None:
+    """Update cost totals in call_db from textual output."""
+    try:
+        parsed = _extract_cost_from_output(text)
+        if not parsed:
+            return None
+        cost, currency = parsed
+        res = call_db.update_cost_totals(cost, currency)
+        if res:
+            logging.debug(
+                "[call] cost totals updated cost=%.6f cur=%s totals=all=%.6f today=%.6f date=%s",
+                cost,
+                res.currency or currency,
+                res.total_cost,
+                res.total_cost_today,
+                res.last_updated_date,
+            )
+            return res
+    except Exception:
+        logging.debug("[call] cost totals update failed", exc_info=True)
+    return None
+
+
 class _LiteralYamlDumper(yaml.SafeDumper):
     """YAML dumper that renders multiline strings as block scalars.
     
@@ -117,7 +156,7 @@ class _LiteralYamlDumper(yaml.SafeDumper):
         """
         # Call parent implementation
         style = super().choose_scalar_style()
-        
+
         # If representer explicitly requested literal (|) or folded (>), honor it
         # even for very long strings
         if self.event.style in ('|', '>'):
@@ -2163,6 +2202,26 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_flag_for_cfg(
+    base: str,
+    cfg: RunnableConfig | None,
+    default: bool = False,
+) -> bool:
+    """Resolve a flag for a specific config (project/target) before fallback."""
+    if _env_flag(base, default):
+        return True
+    candidates: list[str] = []
+    if cfg:
+        for value in (cfg.id, cfg.project, cfg.target):
+            if value and value not in candidates:
+                candidates.append(value)
+    for suffix in candidates:
+        raw = os.getenv(f"{base}__{suffix}")
+        if raw is not None:
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+    return False
 
 
 # Get environment variables
@@ -5661,6 +5720,32 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 message=message_for_tg,
             )
             break
+
+    # Update cost totals from textual output (if present)
+    totals = _update_cost_totals_from_output(step1_output)
+    is_error_output = isinstance(step1_output, str) and step1_output.strip().lower().startswith("error:")
+    if (
+        totals
+        and isinstance(step1_output, str)
+        and not is_error_output
+        and _env_flag_for_cfg("BOT_SHOW_COST_TOTALS", cfg, False)
+    ):
+        try:
+            cur = totals.currency or "USD"
+            totals_line = (
+                f"Today: {totals.total_cost_today:.6f} {cur}\n"
+                f"Totals: {totals.total_cost:.6f} {cur}"
+            )
+            step1_output = f"{step1_output.rstrip()}\n\n{totals_line}"
+            logging.debug(
+                "[call] appended cost totals all=%.6f today=%.6f date=%s cur=%s",
+                totals.total_cost,
+                totals.total_cost_today,
+                totals.last_updated_date,
+                cur,
+            )
+        except Exception:
+            logging.debug("[call] failed to append cost totals", exc_info=True)
 
     # Notify digest (no image) and push
     await _notify_digest_if_applicable(

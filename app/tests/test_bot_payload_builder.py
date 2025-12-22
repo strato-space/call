@@ -114,11 +114,4 @@ async def test_payload_includes_instructions(monkeypatch, tmp_path):
         "AgentX", "hello", reply_text="prev text", with_document=False, chat_id=123
     )
     assert isinstance(parsed, dict)
-    assert parsed.get("instructions") == "remember this"
-    # instructions should appear alongside replay/input
-    keys = list(parsed.keys())
-    assert "instructions" in keys
-    if "replay" in keys:
-        assert keys.index("instructions") < keys.index("replay")
-    if "input" in keys:
-        assert keys.index("instructions") < keys.index("input")
+    assert parsed.get("input") == "remember this\nhello"

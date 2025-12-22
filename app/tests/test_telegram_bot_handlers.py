@@ -1,8 +1,6 @@
 import json
 import asyncio
 import types
-import sqlite3
-from datetime import date, timedelta
 import pytest
 
 from call.telegram_bot import bot as tg_bot
@@ -372,48 +370,6 @@ def test_plain_group_mention_anywhere_routes_to_bot(monkeypatch):
     assert services.last_call is not None
     assert (services.last_call["target"] or "") == ""
     assert "please do something" in (services.last_call["input"] or "")
-
-
-def test_extract_cost_currency():
-    cost, curr = tg_bot._extract_cost_currency({"pricing": {"cost": 1.5, "currency": "USD"}})
-    assert cost == 1.5
-    assert curr == "USD"
-    cost2, curr2 = tg_bot._extract_cost_currency(
-        {"structuredContent": {"pricing": {"cost": "2.0", "currency": "EUR"}}}
-    )
-    assert cost2 == 2.0
-    assert curr2 == "EUR"
-    cost_none, curr_none = tg_bot._extract_cost_currency({})
-    assert cost_none is None
-    assert curr_none is None
-
-
-def test_update_cost_totals_rollover(monkeypatch, tmp_path):
-    db_path = tmp_path / "cost.db"
-    monkeypatch.setattr(tg_bot, "_CALL_DB_PATH", str(db_path), raising=False)
-    # First update
-    totals1 = tg_bot._update_cost_totals(1.0)
-    assert totals1 is not None
-    assert totals1[0] == pytest.approx(1.0)
-    assert totals1[1] == pytest.approx(1.0)
-    today = date.today().isoformat()
-    assert totals1[2] == today
-
-    # Force last_updated_date to yesterday to test daily reset
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE media_gen_blender_bot_cost_totals SET last_updated_date=? WHERE id=1",
-        (yesterday,),
-    )
-    conn.commit()
-    conn.close()
-
-    totals2 = tg_bot._update_cost_totals(2.0)
-    assert totals2 is not None
-    assert totals2[0] == pytest.approx(3.0)  # all-time accumulates
-    assert totals2[1] == pytest.approx(2.0)  # daily reset then add 2.0
-    assert totals2[2] == date.today().isoformat()
 
 
 def test_bot_flag_per_project(monkeypatch):

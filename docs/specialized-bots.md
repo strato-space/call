@@ -35,7 +35,16 @@ commands: |-
 
 The bot registers these commands automatically. Leading `/` is optional in the metadata, but `/` is always shown in help output.
 
-### 3. Natural Language Help (/start)
+### 3. Chat-Scoped Instructions (/instructions)
+
+Specialized bots support a bot-level `/instructions` command that stores chat-scoped instructions on disk and injects them into subsequent calls.
+
+- Storage path: `instructions/instructions_{chat_id}_{thread_id}.md`
+- `thread_id` is used only when the message is in a topic; otherwise it is `0`.
+- Instructions are prepended to the outgoing `input` as plain text (`instructions + "\n" + input`).
+- `/instructions` with no args displays current instructions; `/instructions clear` removes them.
+
+### 4. Natural Language Help (/start)
 
 Specialized bots display project goal and usage examples instead of command reference:
 
