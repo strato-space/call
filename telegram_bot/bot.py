@@ -1653,6 +1653,17 @@ async def _call_task(
                         f"Cost totals: all={total_all:.6f} {cur}, "
                         f"today={total_today:.6f} {cur} (as of {last_date})"
                     )
+                    debug_print(
+                        "[bot]",
+                        "[CALL_TASK]",
+                        f"cost_totals enabled cost={cost_val} currency={cur} totals={totals}",
+                    )
+                else:
+                    debug_print(
+                        "[bot]",
+                        "[CALL_TASK]",
+                        f"cost_totals skipped: totals={totals} flag={BOT_SHOW_COST_TOTALS}",
+                    )
         except Exception:
             totals_line = None
 
