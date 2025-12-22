@@ -378,6 +378,11 @@ def test_extract_cost_currency():
     cost, curr = tg_bot._extract_cost_currency({"pricing": {"cost": 1.5, "currency": "USD"}})
     assert cost == 1.5
     assert curr == "USD"
+    cost2, curr2 = tg_bot._extract_cost_currency(
+        {"structuredContent": {"pricing": {"cost": "2.0", "currency": "EUR"}}}
+    )
+    assert cost2 == 2.0
+    assert curr2 == "EUR"
     cost_none, curr_none = tg_bot._extract_cost_currency({})
     assert cost_none is None
     assert curr_none is None

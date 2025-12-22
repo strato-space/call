@@ -535,7 +535,11 @@ def _extract_cost_currency(res: object) -> tuple[float | None, str | None]:
     if not isinstance(res, dict):
         return None, None
     try:
-        pricing = res.get("pricing")
+        pricing = res.get("pricing") or (
+            res.get("structuredContent", {}).get("pricing")
+            if isinstance(res.get("structuredContent"), dict)
+            else None
+        )
         if not isinstance(pricing, dict):
             return None, None
         cost_raw = pricing.get("cost")
@@ -1641,6 +1645,16 @@ async def _call_task(
             chat_id=chat_id,
             thread_id=thread_id,
         )
+        try:
+            debug_print(
+                "[bot]",
+                "[CALL_TASK]",
+                f"pricing snapshot: pricing={res.get('pricing') if isinstance(res, dict) else None} "
+                f"structuredPricing={res.get('structuredContent', {}).get('pricing') if isinstance(res, dict) else None} "
+                f"flag_cost_totals={BOT_SHOW_COST_TOTALS} db={_CALL_DB_PATH}",
+            )
+        except Exception:
+            pass
         totals_line = None
         try:
             cost_val, currency = _extract_cost_currency(res)
