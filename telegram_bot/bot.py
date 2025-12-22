@@ -46,10 +46,20 @@ def _env_flag(name: str, default: str = "0") -> bool:
     value = os.environ.get(name, default)
     return value.strip().lower() in ("1", "true", "yes", "on")
 
-def _env_flag_for_bot(base: str, bot_name: str | None, default: str = "0") -> bool:
-    """Resolve BOTNAME-specific env flag, fallback to base."""
+def _env_flag_for_bot(base: str, bot_name: str | None, project_name: str | None, default: str = "0") -> bool:
+    """Resolve BOTNAME/PROJECT-specific env flag, fallback to base."""
+    candidates: list[str] = []
     if bot_name:
-        key = f"{base}__{bot_name}"
+        candidates.append(f"{base}__{bot_name}")
+        try:
+            stripped = _strip_bot_suffix(bot_name)
+            if stripped and stripped != bot_name:
+                candidates.append(f"{base}__{stripped}")
+        except Exception:
+            pass
+    if project_name:
+        candidates.append(f"{base}__{project_name}")
+    for key in candidates:
         val = os.environ.get(key)
         if val is not None:
             return val.strip().lower() in ("1", "true", "yes", "on")
@@ -513,10 +523,12 @@ def _env_to_bool(raw: str, default: bool = False) -> bool:
 _ALLOWED_USERS = _parse_allowed_users(_ALLOWED_USERS_RAW)
 _DROP_PENDING_UPDATES = _env_to_bool(DROP_PENDING_UPDATES_RAW, default=False)
 
-def _refresh_bot_flags(bot_name: str | None) -> None:
+def _refresh_bot_flags(bot_name: str | None, project_name: str | None = None) -> None:
     """Refresh per-bot feature flags from env."""
     global BOT_SHOW_COST_TOTALS
-    BOT_SHOW_COST_TOTALS = _env_flag_for_bot("BOT_SHOW_COST_TOTALS", bot_name, "0")
+    BOT_SHOW_COST_TOTALS = _env_flag_for_bot(
+        "BOT_SHOW_COST_TOTALS", bot_name, project_name, "0"
+    )
 
 
 def _extract_cost_currency(res: object) -> tuple[float | None, str | None]:
@@ -2686,7 +2698,7 @@ def main() -> None:
     global SELECTED_BOT_NAME, PROJECT_NAME
     SELECTED_BOT_NAME = (args.bot_name or args.bot_name_pos or "").strip()
     PROJECT_NAME = _strip_bot_suffix(SELECTED_BOT_NAME) if SELECTED_BOT_NAME else ""
-    _refresh_bot_flags(SELECTED_BOT_NAME)
+    _refresh_bot_flags(SELECTED_BOT_NAME, PROJECT_NAME)
     debug_print(
         "[bot]", "[MAIN]", f"bot={SELECTED_BOT_NAME!r} project={PROJECT_NAME!r}"
     )

@@ -415,10 +415,13 @@ def test_bot_flag_per_project(monkeypatch):
     # Base flag false, bot-specific flag true
     monkeypatch.delenv("BOT_SHOW_COST_TOTALS", raising=False)
     monkeypatch.setenv("BOT_SHOW_COST_TOTALS__MediaGenBlenderBot", "1")
-    tg_bot._refresh_bot_flags("MediaGenBlenderBot")
+    tg_bot._refresh_bot_flags("MediaGenBlenderBot", "MediaGenBlender")
     assert tg_bot.BOT_SHOW_COST_TOTALS is True
-    # Different bot should fall back to default false
-    tg_bot._refresh_bot_flags("OtherBot")
+    # Project-only override works too
+    tg_bot._refresh_bot_flags("OtherBot", "MediaGenBlender")
+    assert tg_bot.BOT_SHOW_COST_TOTALS is True
+    # Different bot/project should fall back to default false
+    tg_bot._refresh_bot_flags("OtherBot", "OtherProject")
     assert tg_bot.BOT_SHOW_COST_TOTALS is False
 
 
