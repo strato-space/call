@@ -1658,6 +1658,15 @@ async def _call_task(
                         "[CALL_TASK]",
                         f"cost_totals enabled cost={cost_val} currency={cur} totals={totals}",
                     )
+                    log.info(
+                        "cost_totals enabled bot=%s project=%s cost=%.6f cur=%s totals=%s db=%s",
+                        SELECTED_BOT_NAME,
+                        PROJECT_NAME,
+                        cost_val,
+                        cur,
+                        totals,
+                        _CALL_DB_PATH,
+                    )
                 else:
                     debug_print(
                         "[bot]",
