@@ -37,6 +37,8 @@ import sys
 import time
 import httpx
 from pathlib import Path
+from datetime import date
+import sqlite3
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -361,6 +363,8 @@ SELECTED_BOT_NAME: str = os.environ.get("BOT_NAME", "").strip()
 PROJECT_NAME: str = ""
 _ALLOWED_USERS_RAW = os.environ.get("ALLOWED_USERS", "").strip()
 DROP_PENDING_UPDATES_RAW = os.environ.get("DROP_PENDING_UPDATES", "").strip()
+_CALL_DB_PATH = os.getenv("CALL_DB", "call/call.db")
+BOT_SHOW_COST_TOTALS = _env_flag("BOT_SHOW_COST_TOTALS", "0")
 
 _MEDIA_GROUP_CACHE: dict[str, list] = {}
 _MEDIA_GROUP_MEMORY: dict[str, dict] = {}
@@ -499,6 +503,83 @@ def _env_to_bool(raw: str, default: bool = False) -> bool:
 # Materialize parsed envs
 _ALLOWED_USERS = _parse_allowed_users(_ALLOWED_USERS_RAW)
 _DROP_PENDING_UPDATES = _env_to_bool(DROP_PENDING_UPDATES_RAW, default=False)
+
+
+def _extract_cost_currency(res: object) -> tuple[float | None, str | None]:
+    if not isinstance(res, dict):
+        return None, None
+    try:
+        pricing = res.get("pricing")
+        if not isinstance(pricing, dict):
+            return None, None
+        cost_raw = pricing.get("cost")
+        if cost_raw is None:
+            return None, None
+        try:
+            cost_val = float(cost_raw)
+        except Exception:
+            return None, None
+        currency = pricing.get("currency") or pricing.get("unit") or None
+        return cost_val, str(currency) if currency else None
+    except Exception:
+        return None, None
+
+
+def _ensure_cost_totals_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS media_gen_blender_bot_cost_totals (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            total_cost REAL DEFAULT 0,
+            total_cost_today REAL DEFAULT 0,
+            last_updated_date TEXT
+        )
+        """
+    )
+
+
+def _update_cost_totals(cost: float) -> tuple[float, float, str] | None:
+    """Update totals in SQLite; returns (total_all, total_today, date)."""
+    if cost is None or cost <= 0:
+        return None
+    db_path = _CALL_DB_PATH or "call/call.db"
+    today = date.today().isoformat()
+    try:
+        conn = sqlite3.connect(db_path)
+        _ensure_cost_totals_table(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT total_cost, total_cost_today, last_updated_date FROM media_gen_blender_bot_cost_totals WHERE id = 1"
+        )
+        row = cur.fetchone()
+        total_all = float(row[0]) if row and row[0] is not None else 0.0
+        total_today = float(row[1]) if row and row[1] is not None else 0.0
+        last_date = row[2] if row else None
+        if last_date != today:
+            total_today = 0.0
+        total_all += cost
+        total_today += cost
+        cur.execute(
+            """
+            INSERT INTO media_gen_blender_bot_cost_totals (id, total_cost, total_cost_today, last_updated_date)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                total_cost = excluded.total_cost,
+                total_cost_today = excluded.total_cost_today,
+                last_updated_date = excluded.last_updated_date
+            """,
+            (total_all, total_today, today),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return total_all, total_today, today
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
 
 
 def _current_config_dict() -> dict:
@@ -1534,7 +1615,21 @@ async def _call_task(
             chat_id=chat_id,
             thread_id=thread_id,
         )
-        # ... (rest of the code remains the same)
+        totals_line = None
+        try:
+            cost_val, currency = _extract_cost_currency(res)
+            if cost_val is not None and cost_val > 0:
+                totals = _update_cost_totals(cost_val)
+                if totals and BOT_SHOW_COST_TOTALS:
+                    total_all, total_today, last_date = totals
+                    cur = currency or "USD"
+                    totals_line = (
+                        f"Cost totals: all={total_all:.6f} {cur}, "
+                        f"today={total_today:.6f} {cur} (as of {last_date})"
+                    )
+        except Exception:
+            totals_line = None
+
         try:
             ok = bool(res.get("ok")) if isinstance(res, dict) else None
             debug_print("[bot]", "[CALL_TASK]", f"result ok={ok}")
@@ -1580,6 +1675,11 @@ async def _call_task(
                     "[CALL_TASK]",
                     "ok=true; no extra reply to avoid duplicates (pipeline published)",
                 )
+                if totals_line:
+                    try:
+                        await m.reply(totals_line, parse_mode=None)
+                    except Exception:
+                        pass
         except Exception:
             # Never let reply errors crash the task
             pass
