@@ -677,6 +677,34 @@ def test_handle_instructions_sends_attachment_for_long_text(monkeypatch, tmp_pat
     assert filename == "instructions.md"
 
 
+def test_handle_instructions_reads_long_instructions_as_attachment(monkeypatch, tmp_path):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "", raising=False)
+    monkeypatch.setattr(
+        tg_bot, "_resolve_instructions_dir", lambda project_name: tmp_path
+    )
+
+    long_text = "b" * (tg_bot.INSTRUCTIONS_ATTACHMENT_LIMIT + 1)
+    path = tg_bot._instructions_path(555, None)
+    assert path is not None
+    path.write_text(long_text, encoding="utf-8")
+
+    upd = DummyUpdate("/instructions", chat_id=555, chat_type="private")
+    ctx = DummyContext()
+
+    async def _runner_read():
+        await tg_bot.handle_instructions(upd, ctx)
+
+    asyncio.run(_runner_read())
+    assert upd.message._documents, "Expected instructions.md attachment"
+    doc, _kwargs = upd.message._documents[0]
+    filename = getattr(doc, "filename", None) or getattr(doc, "file_name", None)
+    assert filename == "instructions.md"
+
+
 @pytest.mark.asyncio
 async def test_build_input_payload_from_reply_without_telegram_bot_when_flag_disabled(
     monkeypatch,

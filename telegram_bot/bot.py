@@ -2544,6 +2544,17 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not cmd_free_text and not reply_text and not reply_file_text and not cmd_file_text:
         current, _ = _read_instructions(chat_id, project_name, thread_id)
         if current:
+            if len(current) > INSTRUCTIONS_ATTACHMENT_LIMIT:
+                sent = await _send_instructions_attachment(
+                    msg=msg,
+                    context=context,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                    content=current,
+                )
+                if not sent:
+                    await m.reply("Failed to send instructions file.", parse_mode=None)
+                return
             await m.reply(current, parse_mode=None)
         else:
             await m.reply("No instructions set for this chat.", parse_mode=None)

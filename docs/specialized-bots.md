@@ -46,7 +46,7 @@ Specialized bots support a bot-level `/instructions` command that stores chat-sc
 - `/instructions -` is an alias for `/instructions clear`.
 - `/instructions <text>` and replying with `/instructions` save the provided text (same behavior as before).
 - Attaching a `.txt` or `.md` file reads its content and saves it as instructions.
-- If saved instructions exceed 3800 characters, the bot sends an `instructions.md` attachment back.
+- If saved instructions exceed 3800 characters, the bot sends an `instructions.md` attachment when showing or saving them.
 
 ### 4. Natural Language Help (/start)
 
