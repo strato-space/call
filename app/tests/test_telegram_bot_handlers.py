@@ -588,8 +588,19 @@ def test_handle_instructions_save_read_clear(monkeypatch, tmp_path):
     assert "reply note" in saved
     assert "first line" in saved
 
-    # Clear instructions via bare /instructions
-    upd_clear = DummyUpdate("/instructions", chat_id=555, chat_type="private")
+    # Read instructions (no args)
+    upd_read = DummyUpdate("/instructions", chat_id=555, chat_type="private")
+    ctx_read = DummyContext()
+
+    async def _runner_read():
+        await tg_bot.handle_instructions(upd_read, ctx_read)
+
+    asyncio.run(_runner_read())
+    assert upd_read.message._replies
+    assert "reply note" in upd_read.message._replies[0][0]
+
+    # Clear instructions via /instructions -
+    upd_clear = DummyUpdate("/instructions -", chat_id=555, chat_type="private")
     ctx_clear = DummyContext()
 
     async def _runner_clear():

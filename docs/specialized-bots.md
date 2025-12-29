@@ -42,7 +42,8 @@ Specialized bots support a bot-level `/instructions` command that stores chat-sc
 - Storage path: `instructions/instructions_{chat_id}_{thread_id}.md`
 - `thread_id` is used only when the message is in a topic; otherwise it is `0`.
 - Instructions are prepended to the outgoing `input` as plain text (`instructions + "\n" + input`).
-- `/instructions` with no args clears current instructions; `/instructions clear` still works.
+- `/instructions` with no args sends current instructions; `/instructions clear` still works.
+- `/instructions -` is an alias for `/instructions clear`.
 - `/instructions <text>` and replying with `/instructions` save the provided text (same behavior as before).
 - Attaching a `.txt` or `.md` file reads its content and saves it as instructions.
 - If saved instructions exceed 3800 characters, the bot sends an `instructions.md` attachment back.

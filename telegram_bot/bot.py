@@ -2540,18 +2540,18 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
         if base_cmd == "instructions":
             cmd_free_text = raw_text[len(token):].lstrip()
 
-    # If no args and no reply -> clear instructions
+    # If no args and no reply -> show current instructions (or note absence)
     if not cmd_free_text and not reply_text and not reply_file_text and not cmd_file_text:
-        removed = _clear_instructions(chat_id, project_name, thread_id)
-        if removed:
-            await m.reply("Instructions cleared.", parse_mode=None)
+        current, _ = _read_instructions(chat_id, project_name, thread_id)
+        if current:
+            await m.reply(current, parse_mode=None)
         else:
-            await m.reply("No instructions to clear.", parse_mode=None)
+            await m.reply("No instructions set for this chat.", parse_mode=None)
         return
 
     # Clear instructions on explicit "clear"
     if (
-        cmd_free_text.lower() == "clear"
+        cmd_free_text.lower() in {"clear", "-"}
         and not reply_text
         and not reply_file_text
         and not cmd_file_text
