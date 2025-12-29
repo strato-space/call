@@ -25,6 +25,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import inspect
+import io
 import os
 from dataclasses import dataclass
 import logging
@@ -113,7 +115,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.constants import ParseMode, ChatAction
 from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import (
@@ -313,6 +315,138 @@ def _get_topic_thread_id(msg: object | None) -> int | None:
     except Exception:
         log.debug("Failed to read topic thread id from message", exc_info=True)
     return None
+
+
+INSTRUCTIONS_ATTACHMENT_LIMIT = 3800
+INSTRUCTIONS_TEXT_EXTS = {".txt", ".md"}
+INSTRUCTIONS_TEXT_MIME = {"text/plain", "text/markdown"}
+
+
+async def _maybe_await(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _download_telegram_file_bytes(
+    *,
+    context: ContextTypes.DEFAULT_TYPE,
+    file_id: str,
+) -> bytes | None:
+    try:
+        f = await context.bot.get_file(file_id)
+    except Exception:
+        log.debug("Failed to fetch Telegram file %s", file_id, exc_info=True)
+        return None
+    for method_name in ("download_as_bytearray", "download_to_memory"):
+        method = getattr(f, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            if method_name == "download_as_bytearray":
+                result = await _maybe_await(method())
+                if isinstance(result, (bytes, bytearray, memoryview)):
+                    return bytes(result)
+                if hasattr(result, "getvalue"):
+                    return result.getvalue()
+                continue
+            buf = io.BytesIO()
+            try:
+                result = method(out=buf)
+            except TypeError:
+                log.debug(
+                    "Telegram file downloader does not accept out= for %s",
+                    file_id,
+                    exc_info=True,
+                )
+                result = method()
+            result = await _maybe_await(result)
+            if isinstance(result, (bytes, bytearray, memoryview)):
+                return bytes(result)
+            data = buf.getvalue()
+            if data:
+                return data
+        except Exception:
+            log.debug(
+                "Failed to download Telegram file %s via %s",
+                file_id,
+                method_name,
+                exc_info=True,
+            )
+    try:
+        file_path = getattr(f, "file_path", "") or ""
+        url = _build_telegram_file_url(file_path)
+        if not url:
+            return None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception:
+        log.debug("Failed to download Telegram file %s via URL", file_id, exc_info=True)
+        return None
+
+
+async def _read_text_attachment(
+    msg: object | None, context: ContextTypes.DEFAULT_TYPE
+) -> tuple[str | None, str | None]:
+    if msg is None:
+        return None, None
+    try:
+        doc = getattr(msg, "document", None)
+        if doc is None:
+            return None, None
+        file_id = getattr(doc, "file_id", None)
+        if not file_id:
+            return None, None
+        file_name = (getattr(doc, "file_name", None) or "").strip()
+        mime_type = (getattr(doc, "mime_type", None) or "").strip().lower()
+        ext = Path(file_name).suffix.lower() if file_name else ""
+        if ext not in INSTRUCTIONS_TEXT_EXTS and mime_type not in INSTRUCTIONS_TEXT_MIME:
+            return None, file_name or None
+        data = await _download_telegram_file_bytes(context=context, file_id=file_id)
+        if not data:
+            return None, file_name or None
+        text = data.decode("utf-8", errors="replace").strip()
+        if not text:
+            return None, file_name or None
+        return text, file_name or None
+    except Exception:
+        log.debug("Failed to read text attachment for /instructions", exc_info=True)
+        return None, None
+
+
+async def _send_instructions_attachment(
+    *,
+    msg: object | None,
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int | None,
+    thread_id: int | None,
+    content: str,
+) -> bool:
+    data = content.encode("utf-8")
+
+    def _make_input_file() -> InputFile:
+        return InputFile(io.BytesIO(data), filename="instructions.md")
+
+    if msg is not None and hasattr(msg, "reply_document"):
+        try:
+            await msg.reply_document(document=_make_input_file())
+            return True
+        except Exception:
+            log.debug("Failed to reply with instructions attachment", exc_info=True)
+    if chat_id is None:
+        return False
+    try:
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=_make_input_file(),
+            message_thread_id=thread_id,
+        )
+        return True
+    except Exception:
+        log.debug("Failed to send instructions attachment", exc_info=True)
+        return False
 
 
 def _read_instructions(
@@ -2381,6 +2515,8 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Extract reply text if present
     reply_text = ""
+    reply_file_text = ""
+    r = None
     try:
         r = getattr(msg, "reply_to_message", None)
         if r is not None:
@@ -2388,7 +2524,13 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
             if r_text:
                 reply_text = r_text
     except Exception:
+        log.debug("Failed to read reply text for /instructions", exc_info=True)
         reply_text = ""
+
+    if r is not None:
+        reply_file_text, _ = await _read_text_attachment(r, context)
+
+    cmd_file_text, _ = await _read_text_attachment(msg, context)
 
     # Trim command token (/instructions or /instructions@Bot) from current message
     cmd_free_text = raw_text
@@ -2398,17 +2540,22 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
         if base_cmd == "instructions":
             cmd_free_text = raw_text[len(token):].lstrip()
 
-    # If no args and no reply -> show current instructions (or note absence)
-    if not cmd_free_text and not reply_text:
-        current, _ = _read_instructions(chat_id, project_name, thread_id)
-        if current:
-            await m.reply(current, parse_mode=None)
+    # If no args and no reply -> clear instructions
+    if not cmd_free_text and not reply_text and not reply_file_text and not cmd_file_text:
+        removed = _clear_instructions(chat_id, project_name, thread_id)
+        if removed:
+            await m.reply("Instructions cleared.", parse_mode=None)
         else:
-            await m.reply("No instructions set for this chat.", parse_mode=None)
+            await m.reply("No instructions to clear.", parse_mode=None)
         return
 
     # Clear instructions on explicit "clear"
-    if cmd_free_text.lower() == "clear" and not reply_text:
+    if (
+        cmd_free_text.lower() == "clear"
+        and not reply_text
+        and not reply_file_text
+        and not cmd_file_text
+    ):
         removed = _clear_instructions(chat_id, project_name, thread_id)
         if removed:
             await m.reply("Instructions cleared.", parse_mode=None)
@@ -2419,8 +2566,12 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
     parts: list[str] = []
     if reply_text:
         parts.append(reply_text)
+    if reply_file_text:
+        parts.append(reply_file_text)
     if cmd_free_text:
         parts.append(cmd_free_text)
+    if cmd_file_text:
+        parts.append(cmd_file_text)
     content = "\n".join(parts).strip()
     if not content:
         await m.reply("No instructions text provided.", parse_mode=None)
@@ -2434,6 +2585,14 @@ async def handle_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     if path:
         await m.reply("Instructions saved.", parse_mode=None)
+        if len(content) > INSTRUCTIONS_ATTACHMENT_LIMIT:
+            await _send_instructions_attachment(
+                msg=msg,
+                context=context,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                content=content,
+            )
     else:
         await m.reply("Failed to save instructions.", parse_mode=None)
 

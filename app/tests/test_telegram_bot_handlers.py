@@ -126,15 +126,22 @@ class RecordingCallApi:
 
 
 class DummyMessage:
-    def __init__(self, text):
+    def __init__(self, text="", caption=None, document=None):
         self.text = text
+        self.caption = caption
+        self.document = document
         self.message_thread_id = 0
         self.message_id = 123
         self._replies = []
+        self._documents = []
 
     async def reply_text(self, text, parse_mode=None):
         self._replies.append((text, parse_mode))
         return types.SimpleNamespace(message_id=456)
+
+    async def reply_document(self, document=None, **kwargs):
+        self._documents.append((document, kwargs))
+        return types.SimpleNamespace(message_id=457)
 
 
 class DummyChat:
@@ -581,19 +588,8 @@ def test_handle_instructions_save_read_clear(monkeypatch, tmp_path):
     assert "reply note" in saved
     assert "first line" in saved
 
-    # Read instructions (no args)
-    upd_read = DummyUpdate("/instructions", chat_id=555, chat_type="private")
-    ctx_read = DummyContext()
-
-    async def _runner_read():
-        await tg_bot.handle_instructions(upd_read, ctx_read)
-
-    asyncio.run(_runner_read())
-    assert upd_read.message._replies
-    assert "reply note" in upd_read.message._replies[0][0]
-
-    # Clear instructions
-    upd_clear = DummyUpdate("/instructions clear", chat_id=555, chat_type="private")
+    # Clear instructions via bare /instructions
+    upd_clear = DummyUpdate("/instructions", chat_id=555, chat_type="private")
     ctx_clear = DummyContext()
 
     async def _runner_clear():
@@ -601,6 +597,74 @@ def test_handle_instructions_save_read_clear(monkeypatch, tmp_path):
 
     asyncio.run(_runner_clear())
     assert not path.exists()
+    assert upd_clear.message._replies
+    assert "Instructions cleared." in upd_clear.message._replies[0][0]
+
+
+def test_handle_instructions_reads_text_attachment(monkeypatch, tmp_path):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "", raising=False)
+    monkeypatch.setattr(
+        tg_bot, "_resolve_instructions_dir", lambda project_name: tmp_path
+    )
+
+    class DummyDocument:
+        def __init__(self, file_id, file_name=None, mime_type=None):
+            self.file_id = file_id
+            self.file_name = file_name
+            self.mime_type = mime_type
+
+    class DummyFile:
+        async def download_as_bytearray(self):
+            return b"file instructions"
+
+    class DummyBot:
+        async def get_file(self, file_id):
+            return DummyFile()
+
+    upd = DummyUpdate("/instructions", chat_id=555, chat_type="private")
+    upd.message.document = DummyDocument(
+        "doc1", file_name="rules.txt", mime_type="text/plain"
+    )
+    ctx = DummyContext()
+    ctx.bot = DummyBot()
+
+    async def _runner_save():
+        await tg_bot.handle_instructions(upd, ctx)
+
+    asyncio.run(_runner_save())
+    path = tg_bot._instructions_path(555, None)
+    assert path.exists()
+    saved = path.read_text(encoding="utf-8")
+    assert saved == "file instructions"
+
+
+def test_handle_instructions_sends_attachment_for_long_text(monkeypatch, tmp_path):
+    services = FakeCallApi()
+    tg_bot.set_services(call_api_module=services)
+    monkeypatch.setattr(tg_bot, "ALLOWED_USERS", set(), raising=False)
+    monkeypatch.setattr(tg_bot, "SELECTED_BOT_NAME", "", raising=False)
+    monkeypatch.setattr(tg_bot, "PROJECT_NAME", "", raising=False)
+    monkeypatch.setattr(
+        tg_bot, "_resolve_instructions_dir", lambda project_name: tmp_path
+    )
+
+    long_text = "a" * (tg_bot.INSTRUCTIONS_ATTACHMENT_LIMIT + 1)
+    upd = DummyUpdate(f"/instructions {long_text}", chat_id=555, chat_type="private")
+    ctx = DummyContext()
+
+    async def _runner_save():
+        await tg_bot.handle_instructions(upd, ctx)
+
+    asyncio.run(_runner_save())
+    assert upd.message._documents, "Expected instructions.md attachment"
+    doc, _kwargs = upd.message._documents[0]
+    filename = getattr(doc, "filename", None) or getattr(doc, "file_name", None)
+    assert filename == "instructions.md"
+
 
 @pytest.mark.asyncio
 async def test_build_input_payload_from_reply_without_telegram_bot_when_flag_disabled(
