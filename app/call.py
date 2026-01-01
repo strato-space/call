@@ -2011,6 +2011,56 @@ async def _embed_files_in_user_input(
         return raw
 
 
+_MEDIA_OUTPUT_MARKER = "/media/output_"
+_FETCH_IMAGES_MARKER = "fetch-images"
+_MEDIA_OUTPUT_URL_RE = re.compile(
+    r"https?://[^\s<>\"]*/media/output_[^\s<>\"]+",
+    re.IGNORECASE,
+)
+_FETCH_IMAGES_URL_RE = re.compile(
+    r"https?://[^\s<>\"]*/media/output_[^\s<>\"]*fetch-images[^\s<>\"]*",
+    re.IGNORECASE,
+)
+_FETCH_IMAGES_ANCHOR_RE = re.compile(
+    r"<a\b[^>]*href=[\"'][^\"']*fetch-images[^\"']*[\"'][^>]*>.*?</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_fetch_images_links(text: str) -> str:
+    """Remove fetch-images media output links when non-fetch media outputs exist."""
+    if not isinstance(text, str) or not text:
+        return text
+    if _FETCH_IMAGES_MARKER not in text or _MEDIA_OUTPUT_MARKER not in text:
+        return text
+
+    media_urls = _MEDIA_OUTPUT_URL_RE.findall(text)
+    if not media_urls:
+        return text
+
+    has_fetch = any(_FETCH_IMAGES_MARKER in url for url in media_urls)
+    has_non_fetch = any(_FETCH_IMAGES_MARKER not in url for url in media_urls)
+    if not (has_fetch and has_non_fetch):
+        return text
+
+    filtered = _FETCH_IMAGES_ANCHOR_RE.sub("", text)
+    filtered = _FETCH_IMAGES_URL_RE.sub("", filtered)
+    if filtered == text:
+        return text
+
+    output_lines: list[str] = []
+    pending_blank = False
+    for line in filtered.splitlines():
+        if line.strip():
+            if pending_blank and output_lines:
+                output_lines.append("")
+            output_lines.append(line.rstrip())
+            pending_blank = False
+        else:
+            pending_blank = True
+    return "\n".join(output_lines).strip("\n")
+
+
 async def _init_bot_safe(*, project_name: str | None = None) -> None:
     """Call init_bot safely whether it's async or sync; swallow errors."""
     try:
@@ -2092,6 +2142,17 @@ async def _notify_digest_if_applicable(
             use_thread_id,
             getattr(cfg, "id", ""),
         )
+        message_output = step1_output or ""
+        if isinstance(step1_output, str) and _env_flag_for_cfg(
+            "TG_FILTER_FETCH_IMAGES", cfg, False
+        ):
+            filtered = _strip_fetch_images_links(step1_output)
+            if filtered != step1_output:
+                message_output = filtered
+                logging.debug(
+                    "[digest] filtered fetch-images links for agent=%s",
+                    getattr(cfg, "id", ""),
+                )
         result = await send_digest_notification(
             agent_name=(cfg.id or ""),
             agent_path=(cfg.path or None),
@@ -2101,7 +2162,7 @@ async def _notify_digest_if_applicable(
                 else None
             ),
             input_text=user_input,
-            text=(step1_output or ""),
+            text=message_output,
             chat_id=use_chat_id,
             message_thread_id=use_thread_id,
             image_path=None,

@@ -157,6 +157,22 @@ Lines 651-685:
 - Display goal + usage examples (no commands)
 - Universal bots show full command reference
 
+### Telegram Image Link Filtering (MediaGen Outputs)
+
+When a response contains multiple MediaGen output URLs, Telegram only previews one.
+To avoid the source image (`fetch-images`) being shown instead of the generated result,
+the app can strip `fetch-images` links from the digest **when a non-fetch media output exists**.
+
+Enable via environment:
+- `TG_FILTER_FETCH_IMAGES=1` (global)
+- `TG_FILTER_FETCH_IMAGES__MediaGenBlender=1`
+- `TG_FILTER_FETCH_IMAGES__MediaGenMeme=1`
+
+Behavior:
+- Applies only to the Telegram digest text (does not modify stored `final_output`).
+- Removes URLs whose filename contains `fetch-images` if at least one other
+  `media/output_` URL is present.
+
 ### Resolution Chain
 
 1. **Bot mention**: `@BotName input` → extract target from input
