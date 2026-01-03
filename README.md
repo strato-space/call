@@ -1145,6 +1145,20 @@ Call uses the following precedence for environment loading:
 - If `call/.env` is missing, Call copies `../.env` to `call/.env` on first run
 - Use `override=False` to preserve OS environment variables
 
+### Encrypted `.env` (dotenvx)
+
+Keep a plaintext `.env` locally (ignored by git) and commit a separate encrypted copy.
+
+```bash
+# Encrypt local .env into an encrypted copy
+dotenvx encrypt -f .env --env-keys-file .env.keys --stdout > .env.enc
+
+# Decrypt encrypted copy back to .env
+dotenvx decrypt -f .env.enc --env-keys-file .env.keys --stdout > .env
+```
+
+Keep `.env.keys` private; it is required to decrypt.
+
 ### Example `.env` File
 
 ```env

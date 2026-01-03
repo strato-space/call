@@ -58,3 +58,4 @@ prompt
 # test case artifact 
 ready/TempBadPrompt2.md
 .env
+.env.keys
