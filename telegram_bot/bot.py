@@ -2698,10 +2698,49 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # If message has media but no text/caption:
     # - Private chats: handle it (invoke default project / target) so voice/photos "just work".
     # - Group chats: ignore it to avoid noise; require an explicit mention/target in text/caption.
-    if has_media and not text:
-        name = base or PROJECT_NAME or ""
-        main_text = ""
-        should_handle = bool(is_private)
+    if has_media:
+        try:
+            own = (SELECTED_BOT_NAME or "").strip() or _project_to_bot_handle(
+                PROJECT_NAME
+            )
+        except Exception:
+            own = ""
+
+        # In groups, allow "@BotName" with media and no extra text.
+        if text and (not is_private) and own:
+            normalized = _TRAILING_PUNCT_RE.sub("", text.strip())
+            if normalized.lower() == f"@{own.lower()}":
+                name = base or PROJECT_NAME or ""
+                main_text = ""
+                should_handle = True
+            else:
+                try:
+                    name, main_text, should_handle = _resolve_agent_and_input(
+                        text, base, is_private=is_private
+                    )
+                except Exception as e:
+                    # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+                    log.warning(
+                        "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
+                        type(e).__name__, e
+                    )
+                    name, main_text, should_handle = "", "", False
+        elif not text:
+            name = base or PROJECT_NAME or ""
+            main_text = ""
+            should_handle = bool(is_private)
+        else:
+            try:
+                name, main_text, should_handle = _resolve_agent_and_input(
+                    text, base, is_private=is_private
+                )
+            except Exception as e:
+                # Conservative fallback: do not handle to avoid scheduling unwanted tasks
+                log.warning(
+                    "handle_plain_text: _resolve_agent_and_input failed: %s: %s",
+                    type(e).__name__, e
+                )
+                name, main_text, should_handle = "", "", False
     else:
         try:
             name, main_text, should_handle = _resolve_agent_and_input(

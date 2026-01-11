@@ -59,3 +59,4 @@ prompt
 ready/TempBadPrompt2.md
 .env
 .env.keys
+acp/fastagent.secrets.yaml
