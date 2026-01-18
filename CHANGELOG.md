@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-01-18
+
+- **MCP Transport:** Prefer Streamable HTTP for remote MCP servers (SSE still supported when explicitly configured). (`app/call.py`)
+- **MCP Config:** Document Streamable HTTP root endpoints (no `/mcp`), expand `media-gen` docs, and add a disabled-by-default `vertex-rag-mcp` preset (stdio via `uv`). (`mcp_config.yaml`)
+- **Docs/Examples:** Update MCP docs and example configs for the Streamable HTTP migration and `/home/tools/...` paths. (`README.md`, `docs/*`, `claude_desktop_config.json`, `mcp_config.json`)
+
 ## 2025-12-17
 
 - **Telegram Attachments:** Convert Telegram media (photos, documents, video, voice, audio) into `context` `resource_link` items with Telegram file URLs resolved via `get_file()` and Telegram `source` metadata. Support media groups/albums by aggregating attachments by `media_group_id`. (`telegram_bot/bot.py`, `README.md`, `tg-user-guide*.md`)

@@ -44,23 +44,23 @@ OAuth option (ADC user creds):
 ## Current state in this repo
 
 Active credential path:
-- `/home/strato-space/call/.env`
+- `/home/tools/call/.env`
   - `GOOGLE_APPLICATION_CREDENTIALS=/etc/fast-agent/gcp/fast-agent-vp.json`
-- `/home/strato-space/server/mcp/.env`
+- `/home/tools/server/mcp/.env`
   - `GOOGLE_APPLICATION_CREDENTIALS=/etc/fast-agent/gcp/fast-agent-vp.json`
 
 Runtime wiring:
-- `mcp@` systemd units read `/home/strato-space/call/.env`
-  and `/home/strato-space/server/mcp/<name>.env`.
-- `gsh` (Google Sheets) inherits ADC from `/home/strato-space/call/.env`.
+- `mcp@` systemd units read `/home/tools/call/.env`
+  and `/home/tools/server/mcp/<name>.env`.
+- `gsh` (Google Sheets) inherits ADC from `/home/tools/call/.env`.
 - `media-gen` (Vertex AI) adds:
   - `GOOGLE_GENAI_USE_VERTEXAI=true`
   - `GOOGLE_CLOUD_PROJECT=strato-space-ai`
   - `GOOGLE_CLOUD_LOCATION=us-central1`
-  via `/home/strato-space/server/mcp/media-gen.env`.
+  via `/home/tools/server/mcp/media-gen.env`.
 
 Other local configs:
-- `/home/strato-space/ai/.env`
+- `/home/tools/ai/.env`
   - `GOOGLE_APPLICATION_CREDENTIALS=C:\Users\Leader\PycharmProjects\ai\wallet\service-account-key.json`
 - `call/mcp_config.json` and `agent/mcp_config.sample.json`
   - Local Sheets examples now use `GOOGLE_APPLICATION_CREDENTIALS`.

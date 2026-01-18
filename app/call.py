@@ -337,7 +337,11 @@ if _env_file is None:
 from agents import Agent, Runner, WebSearchTool, SQLiteSession
 from agents.tool import FileSearchTool, FunctionTool, ImageGenerationTool, function_tool
 from agents.run_context import RunContextWrapper
-from agents.mcp import MCPServerSse, MCPServerStdio
+from agents.mcp import MCPServerStdio
+try:
+    from agents.mcp import MCPServerStreamableHttp
+except ImportError:
+    from agents.mcp.server import MCPServerStreamableHttp
 from agents.model_settings import ModelSettings
 
 # Simple Agent factory/cache to avoid re-instantiating identical Agents within a run.
@@ -1049,7 +1053,7 @@ async def _validate_and_cache_mcp_config() -> dict | None:
         if _MCP_EXIT_STACK is None:
             raise MCPInitializationError("MCP initialization requires exit stack to be set")
 
-        # Filter config: keep enabled servers that are not plain serverUrl-only (remote HTTP/SSE).
+        # Filter config: keep enabled servers that are not plain serverUrl-only (remote Streamable HTTP).
         local_cfg_yaml: dict | None = None
         try:
             servers_map = cfg_yaml.get("mcpServers") or {}
@@ -1063,7 +1067,7 @@ async def _validate_and_cache_mcp_config() -> dict | None:
                     has_command = "command" in spec
                     has_bridge = isinstance(spec.get("bridge"), dict)
                     has_server_url = "serverUrl" in spec
-                    # Plain remote HTTP/SSE: serverUrl present, but no command/bridge.
+                    # Plain remote Streamable HTTP: serverUrl present, but no command/bridge.
                     if has_server_url and not has_command and not has_bridge:
                         continue
                     local_servers[name] = spec
@@ -4734,8 +4738,8 @@ class MCPServerStdioHook(MCPServerHookMixin, MCPServerStdio):
                     self._call_tool_parent_override = None
 
 
-class MCPServerSseHook(MCPServerHookMixin, MCPServerSse):
-    """Wrapper for MCPServerSse that reuses the same Telegram logging mixin."""
+class MCPServerStreamableHttpHook(MCPServerHookMixin, MCPServerStreamableHttp):
+    """Wrapper for MCPServerStreamableHttp that reuses the same Telegram logging mixin."""
 
     async def call_tool(self, tool_name, arguments):
         parent_override = None
@@ -5333,11 +5337,11 @@ async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
                     k: str(v).replace("{API_ACCESS_TOKEN}", os.getenv("API_ACCESS_TOKEN", ""))
                     for k, v in (spec.get("headers") or {}).items()
                 }
-                # Allow per-server override of SSE read timeout via config.
+                # Allow per-server override of Streamable HTTP read timeout via config.
                 # Fallback default is 1800s (30 minutes) to support long-running sessions.
                 sse_read_timeout = float(spec.get("sseReadTimeoutSeconds", 1800))
 
-                srv = MCPServerSseHook(
+                srv = MCPServerStreamableHttpHook(
                     params={
                         "url": str(spec.get("serverUrl")),
                         "headers": headers,
@@ -5348,19 +5352,22 @@ async def _build_mcp_servers_singleton(cfg_yaml: dict) -> dict[str, Any]:
                 )
                 await srv.__aenter__()
                 servers_by_name[name] = srv
-                logging.info("[mcp] Registered remote MCP server '%s' via SSE", name)
-                debug_print("[mcp]", f"✅ Registered remote '{name}' via SSE")
+                logging.info(
+                    "[mcp] Registered remote MCP server '%s' via Streamable HTTP",
+                    name,
+                )
+                debug_print("[mcp]", f"✅ Registered remote '{name}' via Streamable HTTP")
                 continue
             except Exception as exc:
                 logging.info(
-                    "[mcp] Server '%s' is remote but failed to initialize SSE client: %s",
+                    "[mcp] Server '%s' is remote but failed to initialize Streamable HTTP client: %s",
                     name,
                     exc,
                 )
                 try:
                     debug_print(
                         "[mcp]",
-                        f"❌ Failed to initialize SSE client for '{name}': {exc}",
+                        f"❌ Failed to initialize Streamable HTTP client for '{name}': {exc}",
                     )
                 except Exception:
                     pass
@@ -5495,7 +5502,7 @@ async def _build_mcp_servers_from_yaml(
                         }
                         sse_read_timeout = float(spec.get("sseReadTimeoutSeconds", 1800))
 
-                        srv = MCPServerSseHook(
+                        srv = MCPServerStreamableHttpHook(
                             params={
                                 "url": str(spec.get("serverUrl")),
                                 "headers": headers,
@@ -5506,12 +5513,15 @@ async def _build_mcp_servers_from_yaml(
                         )
                         srv = await astack.enter_async_context(srv)
                         mcp_servers_started.append(srv)
-                        logging.info("[mcp] Registered remote MCP server '%s' via SSE", name)
-                        debug_print("[mcp]", f"✅ Remote '{name}' ready via SSE")
+                        logging.info(
+                            "[mcp] Registered remote MCP server '%s' via Streamable HTTP",
+                            name,
+                        )
+                        debug_print("[mcp]", f"✅ Remote '{name}' ready via Streamable HTTP")
                         continue
                     except Exception as exc:
                         logging.info(
-                            "MCP '%s' is remote (%s) but failed to initialize SSE client: %s",
+                            "MCP '%s' is remote (%s) but failed to initialize Streamable HTTP client: %s",
                             name,
                             spec.get("serverUrl"),
                             exc,
@@ -5519,10 +5529,14 @@ async def _build_mcp_servers_from_yaml(
                         try:
                             debug_print(
                                 "[mcp]",
-                                f"Skipping remote '{name}': SSE init failed for serverUrl={spec.get('serverUrl')}: {exc}",
+                                f"Skipping remote '{name}': Streamable HTTP init failed for serverUrl={spec.get('serverUrl')}: {exc}",
                             )
                         except Exception as e:
-                            logging.debug("[mcp] Failed to log SSE skip message for '%s': %s", name, e)
+                            logging.debug(
+                                "[mcp] Failed to log Streamable HTTP skip message for '%s': %s",
+                                name,
+                                e,
+                            )
                         continue
 
         if disabled_names:
@@ -5591,7 +5605,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
       tuple: (agent, cfg, session) - Agent instance, config, and session object
     """
     # Use singleton MCP servers from global cache for local/stdio servers.
-    # Remote HTTP/SSE servers (serverUrl-only) are created per request.
+    # Remote Streamable HTTP servers (serverUrl-only) are created per request.
     debug_print("[call]", "[MCP] Getting MCP servers from singleton cache (local-only)...")
     local_mcp_servers, cfg_yaml = await _prepare_mcp_servers(astack=None)
     debug_print("[call]", f"[MCP] ✅ Local MCP servers ready: {len(local_mcp_servers)} servers")
@@ -5610,7 +5624,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 has_command = "command" in spec
                 has_bridge = isinstance(spec.get("bridge"), dict)
                 has_server_url = "serverUrl" in spec
-                # Plain remote HTTP/SSE: serverUrl present, but no command/bridge.
+                # Plain remote Streamable HTTP: serverUrl present, but no command/bridge.
                 if has_server_url and not has_command and not has_bridge:
                     remote_servers[name] = spec
             if remote_servers:

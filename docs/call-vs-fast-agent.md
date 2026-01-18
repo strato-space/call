@@ -1,7 +1,7 @@
 # Call vs Fast-Agent - Deep Comparison for Strato Goals
 
 This document compares two repositories against the goals stated in:
-- /home/strato-space/ai/org/strato/context/01. strato stategy/process-agents.md
+- /home/tools/ai/org/strato/context/01. strato stategy/process-agents.md
 
 Scope and evidence:
 - call: README.md, docs/cards.md, docs/project-level-prompts.md, docs/mcp_config.md, docs/mcp_sse_timeouts.md, app/call.py

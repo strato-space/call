@@ -121,7 +121,7 @@ python -m call.cli.main prompts --project * --state ready --format table
 - **`wallet/`** stores deployment-time secrets such as `service-account-key.json`. Only commit placeholders.
 - **`windsurf/`** centralizes IDE defaults; update it in lockstep with formatter/linter changes.
 - **`requirements.txt`** pins runtime dependencies for CLI, bot, Actions API, and MCP server.
-- **Claude Desktop configs**: when editing `claude_desktop_config.json`, include only servers with `enabled: true` in `mcp_config.yaml` and set filesystem catalog roots to `c:/home/strato-space` on Windows.
+- **Claude Desktop configs**: when editing `claude_desktop_config.json`, include only servers with `enabled: true` in `mcp_config.yaml` and set filesystem catalog roots to `c:/home/tools` on Windows.
 
 ### Data Flow
 
@@ -564,7 +564,7 @@ The runtime automatically loads external MCP servers when agents specify tools. 
 
 - MCP servers are initialized once and reused between runs according to the lifecycle documented in `call/app/call.py` and `docs/mcp_sse_timeouts.md`.
 - Agents (including agents-as-tools) are cached by name in a small in-memory `AGENT_CACHE` so they do not need to be re-instantiated on every call.
-- On reuse, each cached agent receives a fresh `mcp_servers` list built for the current run. This ensures that agents never hold onto MCP server instances whose sessions have already been cleaned up (for example, after SSE timeouts or MCP auto-reinitialization for remote servers like Google Sheets `gsh`).
+- On reuse, each cached agent receives a fresh `mcp_servers` list built for the current run. This ensures that agents never hold onto MCP server instances whose sessions have already been cleaned up (for example, after Streamable HTTP timeouts or MCP auto-reinitialization for remote servers like Google Sheets `gsh`).
 - This design prevents follow-up calls from failing with `UserError("Server not initialized. Make sure you call connect() first.")` after an MCP reconnection, while still keeping agent construction overhead low.
 
 > **See [`docs/mcp_config.md`](docs/mcp_config.md) for detailed MCP configuration guide.**
@@ -1165,8 +1165,8 @@ Keep `.env.keys` private; it is required to decrypt.
 # Core
 OPENAI_API_KEY=sk-proj-...
 LLM_MODEL=gpt-5
-AGENT_REPO=c:/home/strato-space/agent
-PROMPT_REPO=c:/home/strato-space/prompt
+AGENT_REPO=c:/home/tools/agent
+PROMPT_REPO=c:/home/tools/prompt
 repos=agent,prompt
 
 # Telegram

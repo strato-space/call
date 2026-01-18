@@ -153,13 +153,13 @@ async def mcp_call(...):
 ## Logs & Debugging (Bots + MCP)
 - Bot services (journald): `journalctl -u bot@MediaGenBlenderBot -f`, `journalctl -u bot@MediaGenMemeBot -f`
 - MCP services (journald): `journalctl -u mcp@media-gen -f`, `journalctl -u mcp@gsh -f`
-- MediaGen app logs (`/home/strato-space/mediagen`):
+- MediaGen app logs (`/home/tools/mediagen`):
   - `agents/logs/fastagent-execution.jsonl` (tool call traces)
   - `agents/logs/agent-media-gen-services.log`
   - `agents/logs/fastagent-orchestrator.log`
   - `backend/logs/backend-out.log`, `backend/logs/backend-error.log`
   - `tail -n 100 agents/logs/fastagent-execution.jsonl | rg "fetch-images"`
-- Host rollups (if present): `/home/strato-space/logs/StratoSpace-*.log`
+- Host rollups (if present): `/home/tools/logs/StratoSpace-*.log`
 - Local call log (if enabled): `call/logs/0x.log`
 
 ## MediaGen Runtime Checklist
