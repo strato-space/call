@@ -4,9 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## 2026-01-18
 
-- **MCP Transport:** Prefer Streamable HTTP for remote MCP servers (SSE still supported when explicitly configured). (`app/call.py`)
-- **MCP Config:** Document Streamable HTTP root endpoints (no `/mcp`), expand `media-gen` docs, and add a disabled-by-default `vertex-rag-mcp` preset (stdio via `uv`). (`mcp_config.yaml`)
-- **Docs/Examples:** Update MCP docs and example configs for the Streamable HTTP migration and `/home/tools/...` paths. (`README.md`, `docs/*`, `claude_desktop_config.json`, `mcp_config.json`)
+### PROBLEM SOLVED
+- Remote MCP configs and docs drifted between SSE vs Streamable HTTP and incorrect endpoint paths (`/mcp` vs `/`), causing connection failures.
+- Hardcoded `/home/strato-space/...` paths in examples became invalid after moving tooling under `/home/tools`.
+- No documented preset existed for Vertex RAG MCP, making it harder to enable RAG consistently.
+
+### FEATURE IMPLEMENTED
+- Prefer Streamable HTTP for remote MCP servers by default (SSE still supported when explicitly configured).
+- Expanded `media-gen` MCP server docs and added a disabled-by-default `vertex-rag-mcp` preset (stdio via `uv`).
+- Updated examples and docs to match the Streamable HTTP migration and `/home/tools/...` paths.
+
+### CHANGES
+- `app/call.py`: use `MCPServerStreamableHttp` for remote `serverUrl` MCP servers.
+- `mcp_config.yaml`: clarify root endpoint (`/`), expand `media-gen` entry, add `vertex-rag-mcp` preset.
+- `README.md`, `docs/*`, `claude_desktop_config.json`, `mcp_config.json`: update wording and `/home/tools` paths.
 
 ## 2025-12-17
 
