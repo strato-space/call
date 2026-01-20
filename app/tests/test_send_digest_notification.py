@@ -54,7 +54,7 @@ def test_send_digest_notification_chunks_long_plain_text(monkeypatch):
     sent_chunks: list[str] = []
 
     def fake_publish_results(title, content):
-        # Для простого текста publish_results больше не должен вызываться
+        # For plain text, publish_results should no longer be called
         published["called"] = True
         return "https://example.com/digest"
 
@@ -79,13 +79,13 @@ def test_send_digest_notification_chunks_long_plain_text(monkeypatch):
 
     _ = asyncio.run(_run())
 
-    # publish_results не должен быть вызван для plain text
+    # publish_results should not be called for plain text
     assert published["called"] is False
-    # Ожидаем несколько сообщений (батчинг)
+    # Expect multiple messages (batching)
     assert len(sent_chunks) >= 2
-    # Суммарная длина не меньше исходной (с учётом возможных переводов строк)
+    # Total length is at least the original (including possible line breaks)
     assert sum(len(c) for c in sent_chunks) >= len(long_text)
-    # Каждый кусок не превышает телеграмный лимит
+    # Each chunk does not exceed the Telegram limit
     assert all(len(c) <= 4000 for c in sent_chunks)
 
 

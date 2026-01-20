@@ -674,7 +674,7 @@ class RunnableConfig:
         )
 
 
-# todo исключить обращение к файловой системе, использовать repo.db и радиально упростить код исключив взаимное влиние prompt / agent /project за исключением model и model-settings /  model-settings-${model}
+# TODO: avoid filesystem access, use repo.db, and drastically simplify the code by removing prompt/agent/project cross-effects except for model and model-settings/model-settings-${model}.
 
 
 def build_runnable_instructions_config(

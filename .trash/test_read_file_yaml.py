@@ -10,13 +10,13 @@ from call.app.call import _dump_yaml_literal
 # Simulate what read_text_file returns
 # This is what comes from MCP - already has real newlines
 file_content_real_newlines = """# PM Status Report Mapping Configuration
-# Матрица соответствия для автоматических отчётов
-# Последнее обновление: 2025-10-16
-# Источник данных: MCP tg-ro (list_chats, list_topics), voice (projects)
-# Инструкции: prompt/draft/220-mapping-instructions.yaml
+# Mapping matrix for automated reports
+# Last updated: 2025-10-16
+# Data source: MCP tg-ro (list_chats, list_topics), voice (projects)
+# Instructions: prompt/draft/220-mapping-instructions.yaml
 
 # ============================================================================
-# ЧАТЫ ДЛЯ ОТЧЁТОВ
+# CHATS FOR REPORTS
 # ============================================================================
 
 report_chats:
@@ -26,13 +26,13 @@ report_chats:
   - name: STR | Oper Auto
     chat_id: 3100424032
     mode: production
-    description: Основной production чат для операционных отчётов
+    description: Primary production chat for operational reports
     
     topics:
       - name: General
         thread_id: 1
-        description: Общие операционные вопросы
-        excluded: true  # Топик не участвует в обработке
+        description: General operational questions
+        excluded: true  # Topic is excluded from processing
         projects: []
         source_chats: []
 """

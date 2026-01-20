@@ -4,10 +4,11 @@
 Rebuild role and goal metadata for Markdown prompt files.
 
 Rules:
-- role: take from the first line that starts with "Ты — " or "Ты - " in PROMPT body
-  (capture the text after the dash/em-dash)
-- goal: take all text after the first occurrence of "Твоя цель:" in PROMPT body
-  until the next section header (##) or end of PROMPT block.
+- role: take from the first line that starts with the Russian or English "You are"
+  form in the PROMPT body (capture the text after the dash/em-dash).
+- goal: take all text after the first occurrence of a Russian or English
+  "Your goal:" marker in the PROMPT body until the next section header (##)
+  or end of the PROMPT block.
 
 Edits:
 - Remove existing 'goal' in METADATA and set new 'goal' from PROMPT
@@ -62,10 +63,10 @@ def extract_prompt_body(text: str) -> str:
 
 
 def extract_role(prompt_text: str) -> Optional[str]:
-    # Match first line starting with Ты — or Ты - ; accept whitespace around dash
+    # Match first line starting with the Russian "You are" form; accept whitespace around dash
     for line in prompt_text.splitlines():
         s = line.strip()
-        # Russian: "Ты — ..." or "Ты - ..."
+        # Russian form with em dash or hyphen.
         m = re.match(r"^\s*Ты\s*[—-]\s*(.+)$", s)
         if not m:
             # English: "You are ..." (case-insensitive)
@@ -79,7 +80,7 @@ def extract_role(prompt_text: str) -> Optional[str]:
 
 
 def extract_goal(prompt_text: str) -> Optional[str]:
-    # Find 'Твоя цель:' or 'Your goal:' (case-insensitive). Capture until next major section or end
+    # Find Russian or English "Your goal:" (case-insensitive). Capture until next major section or end
     m = re.search(r"(Твоя\s+цель|Your\s+goal)\s*:\s*", prompt_text, flags=re.IGNORECASE)
     if not m:
         return None

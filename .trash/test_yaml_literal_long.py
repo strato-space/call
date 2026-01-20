@@ -39,20 +39,20 @@ _LiteralYamlDumper.add_representer(str, _literal_yaml_str_representer)
 # Test with very long multiline string (>4000 chars like in the user's case)
 long_text = """# PM Input/Output Format Specification
 
-**Source of Truth для всех PM-агентов (PM-1..PM-11)**
+**Source of Truth for all PM agents (PM-1..PM-11)**
 
 ---
 
 ## Input Format
 
-Каждый PM-агент получает routing context от **PM.md** (головной orchestrator):
+Each PM agent receives routing context from **PM.md** (root orchestrator):
 
 ```json
 {
-  "input": "исходный user input",
-  "context": "исходный context",
-  "replay": "исходный replay",
-  "topic": "Название топика",
+  "input": "original user input",
+  "context": "original context",
+  "replay": "original replay",
+  "topic": "Topic name",
   "interval": {
     "from": "YYYY-MM-DD",
     "to": "YYYY-MM-DD"
@@ -72,24 +72,24 @@ long_text = """# PM Input/Output Format Specification
     "tool": "send_message",
     "chat_id": "-100...",
     "thread_id": "123",
-    "topic_name": "Название топика"
+    "topic_name": "Topic name"
   }
 }
 ```
 
-### Поля Input
+### Input fields
 
-- **input** — оригинальный запрос пользователя (опционально)
-- **context** — дополнительный контекст (опционально)
-- **replay** — контекст предыдущего диалога (опционально)
-- **topic** — название топика из маппинга
-- **interval** — временной интервал для анализа
-- **sources** — источники данных
-- **output** — параметры доставки результата
+- **input** — original user request (optional)
+- **context** — additional context (optional)
+- **replay** — previous dialog context (optional)
+- **topic** — topic name from the mapping
+- **interval** — time interval for analysis
+- **sources** — data sources
+- **output** — delivery parameters
 
 ## Output Format
 
-Используй параметры из полученного атрибута `output` для доставки результатов.
+Use parameters from the `output` attribute to deliver results.
 """ * 3  # Multiply to make it >4000 chars
 
 data = {

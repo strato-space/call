@@ -67,7 +67,7 @@ async def publish_results(
             return False
 
     # If the content does not look like HTML, treat it as plain text and wrap it
-    # into a <code>…</code> block so Telegraph renders it как моноширинный текст.
+    # into a <code>…</code> block so Telegraph renders it as monospace text.
     use_content = raw_content
     try:
         if isinstance(raw_content, str) and raw_content.strip() and not _looks_like_html_fragment(raw_content):

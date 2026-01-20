@@ -499,7 +499,7 @@ def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
             <!-- METADATA:END -->
 
             <!-- PROMPT: START -->
-            ВАЖНО: сделай что-то
+            IMPORTANT: do something
             <!-- PROMPT: END -->
             """
         ).strip()
@@ -526,8 +526,8 @@ def test_builder_parses_prompt_block_with_spaced_tags(monkeypatch, tmp_path):
 
     assert err is None
     assert cfg is not None
-    assert "ВАЖНО" in cfg.instructions
-    assert cfg.instructions.strip().startswith("ВАЖНО")
+    assert "IMPORTANT" in cfg.instructions
+    assert cfg.instructions.strip().startswith("IMPORTANT")
 
 
 def test_builder_agent_attributes_do_not_include_project_metadata():
@@ -640,7 +640,7 @@ def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
         agent=None,
         prompt=None,
         target=None,
-        input="сообщи дату-время и прекрати работу",
+        input="report the date and time and stop working",
     )
 
     assert err is None
@@ -652,7 +652,7 @@ def test_builder_pure_gpt_no_selectors_uses_env_model(monkeypatch):
     assert cfg.id == "void"
     assert cfg.prompt is None
     assert cfg.attributes == {"model": "gpt-4o-mini"}
-    assert cfg.input == "сообщи дату-время и прекрати работу"
+    assert cfg.input == "report the date and time and stop working"
 
 
 def test_builder_pure_gpt_with_model_override(monkeypatch):

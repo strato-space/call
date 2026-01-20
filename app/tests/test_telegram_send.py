@@ -146,10 +146,10 @@ def test_send_markdown_v2_message() -> None:
 
     # Prepare a MarkdownV2 sample (escaped automatically by helper)
     md_text = (
-        "В Анапе, ...\n\n"
-        "**[МегаФон](https://www.google.com/maps/search/%D0%9C%D0%B5%D0%B3%D0%B0%D0%A4%D0%BE%D0%BD%2C+%D0%90%D0%BD%D0%B0%D0%BF%D0%B0)**\n"
-        "_Анапа, Россия_\n"
-        "Адрес: ул. Красноармейская, 15.\n"
+        "In City, ...\n\n"
+        "**[MegaFon](https://www.google.com/maps/search/MegaFon,+City)**\n"
+        "_City, Russia_\n"
+        "Address: 1 Sample Street\n"
     )
     safe_text, mode = telegram_prepare_markdown(md_text, 4000, version="v2")
     assert mode == "MarkdownV2"
@@ -196,7 +196,7 @@ def test_send_html_message() -> None:
     # Prepare an HTML sample (sanitized + truncated by helper)
     html_text = (
         "<b>SelfReflection</b>\n"
-        "Проверяем HTML режим <i>курсив</i> и <b>жирный</b> и ссылку "
+        "Check HTML mode <i>italic</i> and <b>bold</b> and the link "
         '<a href="https://example.com?q=1&x=2">Example</a>.'
     )
     safe_text, mode = telegram_prepare_html(html_text, 4000)

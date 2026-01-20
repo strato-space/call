@@ -2191,7 +2191,7 @@ async def _send_error_notification(
     if selected_chat_id is None:
         return
 
-    text = (message or "").strip() or "Неизвестная ошибка"
+    text = (message or "").strip() or "Unknown error"
 
     try:
         await init_bot()
@@ -2588,9 +2588,9 @@ async def send_digest_notification(
     def _looks_like_html(s: str) -> bool:
         """Heuristic: detect HTML-ish content.
 
-        Если есть явные теги (<b>, <i>, <a href=, <code>, <pre> и т.п.), считаем,
-        что это HTML и позволяем использовать Telegra.ph при превышении лимита.
-        Для простого текста без тегов — HTML не считается.
+        If there are explicit tags (<b>, <i>, <a href=, <code>, <pre>, etc.), we treat
+        it as HTML and allow using Telegra.ph when the limit is exceeded.
+        For plain text without tags, it is not considered HTML.
         """
         try:
             t = (s or "").strip().lower()
@@ -2769,21 +2769,21 @@ async def send_digest_notification(
             debug_print(f"send_digest_notification result=true publish_url={local_url}")
             return message_obj
 
-        # Plain-text batching: если это не HTML и длина > 4000, режем и шлём батчом.
+        # Plain-text batching: if this is not HTML and length > 4000, split and send in batches.
         if (not is_html) and isinstance(text, str) and len(text) > 4000:
             full = text
-            # Длина чуть меньше лимита, чтобы оставался запас на обёртку/санитайзер
+            # Length is slightly below the limit to leave room for wrapper/sanitizer.
             chunk_size = 3800
             first_message: Optional[Message] = None
             for idx in range(0, len(full), chunk_size):
                 chunk = full[idx : idx + chunk_size]
-                # Для простого текста даём Telegram самому выбрать parse_mode через
-                # telegram_prepare_html (внутри telegram_send_message)
+                # For plain text, let Telegram choose parse_mode via
+                # telegram_prepare_html (inside telegram_send_message)
                 message_obj = await telegram_send_message(
                     text=chunk,
                     chat_id=eff_chat_id,
                     message_thread_id=eff_thread_id,
-                    # Кнопки нужны на каждом батч-куске, иначе тесты теряют markup
+                    # Buttons are needed on each batch chunk, otherwise tests lose markup.
                     reply_markup=reply_markup,
                 )
                 if first_message is None:
@@ -2791,7 +2791,7 @@ async def send_digest_notification(
             debug_print("send_digest_notification result=true (batched plain text)")
             return first_message
 
-        # Обычный случай: единичное сообщение (HTML или короткий текст)
+        # Common case: single message (HTML or short text)
         message_obj = await telegram_send_message(
             text=text,
             chat_id=eff_chat_id,
@@ -5559,11 +5559,11 @@ def image_genetation_tool(
     background: str | None = None,
 ) -> str:
     """
-    Генерация картинки с параметрами. Возвращает data URL base64.
+    Generate an image with parameters. Returns a base64 data URL.
     Args:
-      prompt: текстовое описание
+      prompt: text description
       size: "1024x1024" | "1024x1792" | ...
-      background: "transparent" для PNG с альфой, иначе None
+      background: "transparent" for PNG with alpha, otherwise None
     """
     img = client.images.generate(
         model="gpt-image-1",
@@ -5579,7 +5579,7 @@ def image_genetation_tool(
 
 # agent = Agent(
 #     name="Designer",
-#     instructions="Если пользователь просит картинку — вызывай инструмент generate_image.",
+#     instructions="If the user asks for an image, call the generate_image tool.",
 #     tools=[image_genetation_tool],
 # )
 
@@ -5779,7 +5779,7 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             short_msg = str(e) or "Error"
             debug_print("[app]", f"Error during main agent run: {short_msg}")
             step1_output = f"Error: {short_msg}"
-            # todo: проверить парсинг ошибок и вообще единообразие выдачи сообщений об ошибках
+            # TODO: verify error parsing and overall consistency of error message output.
             parsed_error = getattr(e, "error", None)
             message_for_tg = None
             if isinstance(parsed_error, dict):

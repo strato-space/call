@@ -1190,7 +1190,7 @@ def _resolve_agent_and_input(
 
     - Group chats: require an explicit @-mention; support:
         @Target <input>            -> extract Target and rest (no validation)
-ло        @BotName @Target <input>   -> extract Target and rest (no validation)
+        @BotName @Target <input>   -> extract Target and rest (no validation)
         @ <input>                  -> input-only (no target)
     - Private chats: plain text behaves like '/call <input>' (no implicit target).
         @Target <input>            -> extract Target and rest (no validation)
@@ -1300,30 +1300,30 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             debug_print("[bot]", "[START]", f"Failed to read project goal: {e}")
 
         if not goal_text:
-            goal_text = "Проектный бот."
+            goal_text = "Project bot."
 
         command_specs = _get_project_command_specs(PROJECT_NAME)
         cmd_lines = _format_command_specs(command_specs)
-        commands_block = cmd_lines or "Команды не указаны в METADATA."
+        commands_block = cmd_lines or "Commands are not specified in METADATA."
 
         specialized_help = f"""🎯 {PROJECT_NAME}
 
 {goal_text}
 
-Команды:
+Commands:
 {commands_block}
 
 ---
 
-💬 Общайтесь со мной на естественном языке.
+💬 Chat with me in natural language.
 
-В приватном чате просто напишите запрос.
-В группе команды работают без @упоминания.
+In private chat, just send your request.
+In groups, commands work without @mention.
 
-Примеры:
-- "статус проекта"
-- "задачи на сегодня"
-- "отчёт за неделю"
+Examples:
+- "project status"
+- "tasks for today"
+- "weekly report"
 """
         await m.reply(specialized_help.strip(), parse_mode=None)
         debug_print("[bot]", "[START]", "replied (specialized)")
@@ -1378,25 +1378,25 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         cmd_lines = _format_command_specs(command_specs)
         help_link = _get_project_help(PROJECT_NAME)
         txt = f"""
-Команды:
-{cmd_lines if cmd_lines else "Команды не указаны в METADATA."}
+Commands:
+{cmd_lines if cmd_lines else "Commands are not specified in METADATA."}
 {f"\n\n{help_link}" if help_link else ""}
         """.strip()
     else:
         txt = """
-https://github.com/strato-space/call/blob/main/tg-user-guide.ru.md
+https://github.com/strato-space/call/blob/main/tg-user-guide.md
 
-Быстро:
-- /call @AgentFab @31-* — обработать 31-* через AgentFab
-- /call @AiNewsAggr Новости Apple — запустить агента AiNewsAggr с входом
-- /prompts_ready | /prompts_draft — списки промптов (фильтры: --project, --agent, --prompt, --target, --state)
-- /reload — пересканировать репозитории и обновить индекс
+Quick:
+- /call @AgentFab @31-* — process 31-* via AgentFab
+- /call @AiNewsAggr Apple news — run AiNewsAggr with input
+- /prompts_ready | /prompts_draft — prompt lists (filters: --project, --agent, --prompt, --target, --state)
+- /reload — rescan repositories and rebuild the index
 
-Подсказки:
-- В личных чатах: "@Name input" эквивалентно "/call @Name input" (если Name найден в каталоге)
-- Если @Name не найден - сообщение молча игнорируется (с записью в лог)
-- В группах используйте @упоминание или /call
-- Приоритет target: prompt > точный project > agent > шаблонный project
+Tips:
+- In private chats: "@Name input" is equivalent to "/call @Name input" (if Name is found in the catalog)
+- If @Name is not found, the message is silently ignored (and logged)
+- In groups, use @mention or /call
+- Target priority: prompt > exact project > agent > project pattern
         """.strip()
     await m.reply(txt, parse_mode=None)
     debug_print("[bot]", "[HELP]", "replied")

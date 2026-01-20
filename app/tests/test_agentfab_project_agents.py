@@ -7,9 +7,12 @@ from call.lib.utils import parse_metadata_and_prompt
 
 def test_agentfab_project_agents_keys_present():
     # Load project.md
-    root = Path(__file__).resolve().parents[3]
-    proj_md = root / "prompt" / "AgentFab_v1" / "project.md"
-    assert proj_md.exists(), f"project.md not found at {proj_md}"
+    prompt_repo = Path(os.environ.get("PROMPT_REPO", "")).expanduser()
+    if not prompt_repo.exists():
+        raise AssertionError("PROMPT_REPO is not set or does not exist")
+    proj_md = prompt_repo / "AgentFab_v1" / "project.md"
+    if not proj_md.exists():
+        raise AssertionError(f"project.md not found at {proj_md}")
     text = proj_md.read_text(encoding="utf-8")
     meta = parse_metadata_and_prompt(text)
     assert isinstance(meta, dict), "METADATA must be a YAML mapping"

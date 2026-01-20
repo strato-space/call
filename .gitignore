@@ -64,3 +64,5 @@ acp/fastagent.secrets.yaml
 # Cache
 .cache/
 .pytest_cache/
+# Local MCP config
+mcp_config.yaml
