@@ -1,16 +1,16 @@
 # fast_agent / MCP SSE timeout notes
 
-## Контекст
+## Context
 
-- Стек: `fast_agent` + `mcp.client` + `agents.mcp.server` + HTTP/SSE-прокси (nginx) + внешние MCP-сервера (в т.ч. call-mcp, gsh-mcp).
-- Ранее были локальные патчи в `.venv`, поднимавшие `sse_read_timeout` до 30 минут. Сейчас они откатаны до дефолтных 5 минут, а устойчивость обеспечивается авто‑reinit MCP на уровне `call`.
-- Цель этого документа — зафиксировать наблюдения по таймаутам и возможные улучшения, которые стоит оформить как upstream issue / patch позже.
+- Stack: `fast_agent` + `mcp.client` + `agents.mcp.server` + HTTP/SSE proxy (nginx) + external MCP servers (incl. call-mcp, gsh-mcp).
+- We previously had local patches in `.venv` that raised `sse_read_timeout` to 30 minutes. Those are now rolled back to the default 5 minutes, and stability is handled by MCP auto-reinit at the `call` layer.
+- This document captures timeout observations and possible improvements to file as upstream issues/patches later.
 
-## Наблюдение 1: read_transport_sse_timeout_seconds не применяется к HTTP-транспорту
+## Observation 1: read_transport_sse_timeout_seconds is not applied to HTTP transport
 
-**Файл:** `.venv/lib/python3.13/site-packages/fast_agent/mcp/mcp_connection_manager.py`
+**File:** `.venv/lib/python3.13/site-packages/fast_agent/mcp/mcp_connection_manager.py`
 
-Фрагмент выбора транспорта:
+Transport selection snippet:
 
 ```python
 elif config.transport == "sse":
@@ -32,7 +32,7 @@ elif config.transport == "http":
     )
 ```
 
-**Файл:** `.venv/lib/python3.13/site-packages/fast_agent/config.py`
+**File:** `.venv/lib/python3.13/site-packages/fast_agent/config.py`
 
 ```python
 class MCPServerSettings(BaseModel):
@@ -44,7 +44,7 @@ class MCPServerSettings(BaseModel):
     """The timeout in seconds for the server connection."""
 ```
 
-**Файл:** `.venv/lib/python3.13/site-packages/fast_agent/mcp/streamable_http_tracking.py`
+**File:** `.venv/lib/python3.13/site-packages/fast_agent/mcp/streamable_http_tracking.py`
 
 ```python
 @asynccontextmanager
@@ -78,14 +78,14 @@ async def tracking_streamablehttp_client(
         ...
 ```
 
-### Суть
+### Summary
 
-- Конфиг `MCPServerSettings` предоставляет поле `read_transport_sse_timeout_seconds`, которое в `mcp_connection_manager` **используется только для SSE‑транспорта** (`tracking_sse_client`).
-- Для HTTP‑транспорта (`transport == "http"`) тот же параметр не пробрасывается в `tracking_streamablehttp_client`, то есть дефолтное значение `sse_read_timeout` (5 минут) не может быть изменено через конфиг.
+- `MCPServerSettings` exposes `read_transport_sse_timeout_seconds`, which **is only used for SSE transport** (`tracking_sse_client`) in `mcp_connection_manager`.
+- For HTTP transport (`transport == "http"`), the same value is not passed into `tracking_streamablehttp_client`, so the default `sse_read_timeout` (5 minutes) cannot be overridden via config.
 
-### Идея патча
+### Patch idea
 
-- Выровнять поведение HTTP и SSE‑транспорта:
+- Align HTTP and SSE behavior:
 
 ```python
 return tracking_streamablehttp_client(
@@ -97,9 +97,9 @@ return tracking_streamablehttp_client(
 )
 ```
 
-- При таком изменении цепочка конфиг → транспорт → `httpx.Timeout(..., read=...)` будет одинаковой для обоих типов транспорта.
+- With this, the config → transport → `httpx.Timeout(..., read=...)` chain is consistent for both transport types.
 
-### Черновик issue (набросок)
+### Draft issue (outline)
 
 > **Title:** `MCPServerSettings.read_transport_sse_timeout_seconds` is not applied to HTTP transport
 >
@@ -124,9 +124,9 @@ return tracking_streamablehttp_client(
 >
 > This keeps behavior backward compatible (default is still 300 seconds) while making the config field effective for HTTP transports as well.
 
-## Наблюдение 2: разный дефолт sse_read_timeout в StreamableHTTPTransport и streamablehttp_client
+## Observation 2: different default sse_read_timeout in StreamableHTTPTransport vs streamablehttp_client
 
-**Файл:** `.venv/lib/python3.13/site-packages/mcp/client/streamable_http.py`
+**File:** `.venv/lib/python3.13/site-packages/mcp/client/streamable_http.py`
 
 ```python
 class StreamableHTTPTransport:
@@ -156,17 +156,17 @@ async def streamablehttp_client(
     transport = StreamableHTTPTransport(url, headers, timeout, sse_read_timeout, auth)
 ```
 
-### Суть
+### Summary
 
-- Конструктор `StreamableHTTPTransport` по умолчанию использует `sse_read_timeout=60*5` (5 минут).
-- Обёртка `streamablehttp_client` по умолчанию задаёт `sse_read_timeout=60*30` (30 минут).
-- Для пользователей, которые используют только `streamablehttp_client(...)`, это может быть нормой, но для тех, кто ожидает единый дефолт у класса и хелпера, поведение выглядит слегка неинтуитивным.
+- `StreamableHTTPTransport` defaults to `sse_read_timeout=60*5` (5 minutes).
+- The helper `streamablehttp_client` defaults to `sse_read_timeout=60*30` (30 minutes).
+- For users who only use `streamablehttp_client(...)`, this may be fine, but for those expecting a single default across class and helper, the behavior is a bit counterintuitive.
 
-### Идея issue
+### Issue idea
 
-- Обсудить в upstream, должен ли `streamablehttp_client` синхронизировать свой дефолт с `StreamableHTTPTransport`, либо это сознательное решение API (упрощённый helper с более длинным тайм-аутом).
-- Это не блокирующая проблема, а скорее повод для прояснения и, возможно, выравнивания дефолтов.
+- Discuss upstream whether `streamablehttp_client` should align its default with `StreamableHTTPTransport`, or whether this is an intentional API decision (a helper with a longer timeout).
+- This is not blocking, but worth clarifying and potentially aligning defaults.
 
 ---
 
-Эти заметки — черновик. При подготовке реальных PR/issue стоит дополнить их конкретными версиями пакетов (`fast_agent`, `mcp`, `agents`) и небольшими примерами конфигурации (`fastagent.config.yaml`), воспроизводящими поведение.
+These notes are a draft. If we open actual PRs/issues, we should add exact package versions (`fast_agent`, `mcp`, `agents`) and small config examples (`fastagent.config.yaml`) that reproduce the behavior.

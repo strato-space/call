@@ -1,47 +1,47 @@
-# Выбор фреймворка для интеграции с Call
+# Framework selection for Call integration
 
-## 1. Что уже умеет Call
+## 1. What Call already provides
 
-- **Единый контракт запуска.** Публичное API (REST, MCP, CLI) принимает один JSON с проектом/агентом/промптом и прокидывает его в рантайм без преобразований, что упрощает внедрение внешних раннеров, пока они могут вернуть итоговый текст и, опционально, расширенную «envelope». 【F:call/README.md†L41-L116】
-- **SQLite-индекс поверх файловых репозиториев.** Все проекты, агенты и промпты агрегируются в `call/repo.db`, что минимизирует обращения к файловой системе и даёт точку расширения для альтернативных движков. 【F:call/README.md†L97-L132】【F:call/lib/repo_db.py†L1-L186】
-- **Настраиваемый `RunnableConfig`.** Call собирает из карточек YAML/Markdown компактный DTO с инструкциями, списком MCP-серверов и тулзов. Любой внешний фреймворк должен уметь принять этот набор и отдать ответ. 【F:call/lib/api.py†L456-L560】
-- **Текущий раннер основан на пакете `agents`.** Основная функция в `call/app/call.py` строит `Agent` из инструкций и подключает MCP/инструменты. Это место потенциальной замены на другой рантайм. 【F:call/app/call.py†L1-L135】
+- **Unified launch contract.** The public API (REST, MCP, CLI) accepts a single JSON payload with project/agent/prompt and passes it to the runtime without transformations. This simplifies external runner integration as long as they can return the final text and, optionally, a richer envelope. 【F:call/README.md†L41-L116】
+- **SQLite index over file repositories.** All projects, agents, and prompts are aggregated into `call/repo.db`, minimizing filesystem access and providing an extension point for alternative engines. 【F:call/README.md†L97-L132】【F:call/lib/repo_db.py†L1-L186】
+- **Configurable `RunnableConfig`.** Call builds a compact DTO from YAML/Markdown cards with instructions, MCP servers, and tools. Any external framework must accept this set and return a response. 【F:call/lib/api.py†L456-L560】
+- **Current runner based on the `agents` package.** The main function in `call/app/call.py` constructs an `Agent` from instructions and connects MCP/tools. This is the primary swap-out point for another runtime. 【F:call/app/call.py†L1-L135】
 
-## 2. Что лежит в смежных репозиториях
+## 2. What exists in adjacent repositories
 
-- **Agent repo** — дерево карточек с точным именованием, aliases, строгими секциями (`goal`, `constraints`, `prompts`) и ориентацией на Markdown `METADATA`. Это нужно учитывать при трансляции в формат внешнего фреймворка. 【F:agent/README.md†L3-L124】
-- **Примеры карточек** показывают, что агенты описывают цепочки шагов, файловые контракты и ожидаемые артефакты. Значит, рантайм должен поддерживать последовательности действий, а не только одиночные запросы. 【F:agent/UxFab/UxCreator/agent.md†L1-L200】
-- **Prompt repo** хранит индивидуальные промпты, которые подтягиваются по ссылке из карточки агента. От внешнего фреймворка потребуется поддержка вложенных шагов/ролей. 【F:prompt/ready/33-Questioning.md†L1-L64】
+- **Agent repo** — a tree of cards with strict naming, aliases, and sections (`goal`, `constraints`, `prompts`) that rely on Markdown `METADATA`. This must be respected when translating to an external framework format. 【F:agent/README.md†L3-L124】
+- **Card examples** show agents describing multi-step flows, file contracts, and expected artifacts. The runtime must support sequences of actions, not just single requests. 【F:agent/UxFab/UxCreator/agent.md†L1-L200】
+- **Prompt repo** stores individual prompts referenced from agent cards. An external framework must support nested steps/roles. 【F:prompt/ready/33-Questioning.md†L1-L64】
 
-## 3. Требования к интеграции
+## 3. Integration requirements
 
-1. **Приём структурированного описания агента.** Фреймворк должен уметь ingest-ить Markdown/YAML с многошаговыми цепочками и списком вспомогательных промптов.
-2. **Тонкая настройка моделей.** `RunnableConfig` передаёт `model`, `model_settings`, список MCP-тулов, поэтому фреймворк обязан поддерживать произвольные модели OpenAI с параметрами и отдавать управление тулзами. 【F:call/lib/api.py†L456-L487】
-3. **Совместимость с событиями и логами.** Желательно не ломать текущую обвязку (`call.lib.repo_db.push_event`, Telegram-бот и Actions) — значит, новый раннер должен работать асинхронно и возвращать результаты в прежнем формате. 【F:call/lib/repo_db.py†L128-L186】【F:call/README.md†L171-L197】
-4. **Минимальные правки карточек.** Agent/Prompt репозитории обновляются независимо и следуют строгим правилам, поэтому трансляция в формат другого фреймворка должна происходить автоматически без ручного редактирования. 【F:agent/README.md†L78-L105】
+1. **Ingest structured agent descriptions.** The framework must parse Markdown/YAML with multi-step chains and a list of auxiliary prompts.
+2. **Fine-grained model configuration.** `RunnableConfig` passes `model`, `model_settings`, and MCP tools, so the framework must support arbitrary OpenAI models with parameters and tool control. 【F:call/lib/api.py†L456-L487】
+3. **Compatibility with events and logs.** We should preserve the current wrapper (`call.lib.repo_db.push_event`, Telegram bot, Actions) — so the runner must be async and return results in the existing envelope format. 【F:call/lib/repo_db.py†L128-L186】【F:call/README.md†L171-L197】
+4. **Minimal card changes.** Agent/Prompt repos evolve independently with strict rules, so translation to another framework should be automatic without manual edits. 【F:agent/README.md†L78-L105】
 
-## 4. MetaGPT против SuperAGI
+## 4. MetaGPT vs SuperAGI
 
 ### MetaGPT
-- Плюсы: Python-first, небольшое ядро, легко оборачивается вокруг существующего `RunnableConfig`. Позволяет собирать многоагентные сценарии из описаний ролей и поддерживает кастомные тулзы, поэтому интеграция может ограничиться адаптером, который строит MetaGPT-«Roles» из Markdown-агентов и дергает их в нужном порядке.
-- Минусы: нет готовой поддержки MCP, придётся реализовывать мост для передачи файлов и внешних сервисов.
+- Pros: Python-first, small core, easy to wrap around existing `RunnableConfig`. It can build multi-agent flows from role descriptions and supports custom tools, so integration can be an adapter that converts Markdown agents into MetaGPT roles and runs them in order.
+- Cons: no built-in MCP support; we would need a bridge for file passing and external services.
 
 ### SuperAGI
-- Плюсы: готовая инфраструктура с UI, задачами, долговременной памятью.
-- Минусы: жёсткие ожидания по БД и воркерам, требуется своя модель данных и lifecycle (triggers, toolkits). Чтобы встроить его в Call, придётся переводить весь SQLite-индекс в формат SuperAGI и поддерживать их API поверх уже существующих CLI/Telegram сценариев.
+- Pros: packaged infrastructure with UI, tasks, and long-term memory.
+- Cons: rigid expectations around DB/workers, its own data model and lifecycle (triggers, toolkits). Embedding it in Call would require translating the entire SQLite index into SuperAGI’s format and maintaining their API on top of existing CLI/Telegram flows.
 
-**Вывод:** MetaGPT проще встроить в текущую архитектуру Call. Он ближе по масштабу к нынешнему `agents` раннеру, не заставляет пересобирать индекс и позволяет быстро сделать адаптер «`RunnableConfig` → MetaGPT roles». SuperAGI имеет смысл только если нужен его оркестратор и UI; для лёгкой замены рантайма он избыточен.
+**Conclusion:** MetaGPT is easier to integrate into the current Call architecture. It is closer in scope to the existing `agents` runner, avoids rebuilding the index, and enables a quick adapter from `RunnableConfig` to MetaGPT roles. SuperAGI only makes sense if its orchestration/UI is required; for a light runtime replacement it is overkill.
 
-## 5. Дополнительные варианты
+## 5. Additional options
 
-- **LangGraph (LangChain)** — гибкий граф действий, легко строится из списка промптов и поддерживает инструменты; можно использовать как альтернативу MetaGPT, если уже есть зависимость от LangChain.
-- **CrewAI** — ориентирован на описания ролей и задач, JSON-контракт близок к текущему `RunnableConfig`, но придётся обеспечить поддержку MCP или отказаться от неё.
+- **LangGraph (LangChain)** — flexible action graph, easy to build from a prompt list, supports tools; a viable alternative if LangChain is already in use.
+- **CrewAI** — role/task oriented, JSON contract close to `RunnableConfig`, but we would need MCP support or drop it.
 
-## 6. Практические шаги
+## 6. Practical steps
 
-1. Добавить слой адаптации (`call/lib/runners/metagpt.py`), который создаёт роли и задачи MetaGPT из `RunnableConfig` и промптов.
-2. Расширить `call.lib.api.build_runnable_instructions_config` небольшим флагом `engine=metagpt`, чтобы выбрать нужный раннер, не ломая обратную совместимость с пакетом `agents`. 【F:call/lib/api.py†L456-L560】
-3. Сохранить существующий REST/MCP слой и репозиторный индекс без изменений, чтобы Telegram и CLI продолжили работать. 【F:call/README.md†L57-L132】
-4. Внедрить модульные тесты на уровне `call/app/tests` для проверки, что новый раннер возвращает envelope и поддерживает инструменты/модельные настройки.
+1. Add an adapter layer (`call/lib/runners/metagpt.py`) that creates MetaGPT roles/tasks from `RunnableConfig` and prompts.
+2. Extend `call.lib.api.build_runnable_instructions_config` with a small `engine=metagpt` flag to select the runner without breaking compatibility with the `agents` package. 【F:call/lib/api.py†L456-L560】
+3. Keep the existing REST/MCP layer and repository index intact so Telegram and CLI continue to work. 【F:call/README.md†L57-L132】
+4. Add module tests under `call/app/tests` to verify that the new runner returns the envelope and supports tools/model settings.
 
-Такая стратегия позволит постепенно заменить текущий пакет `agents` на MetaGPT (или другой лёгкий фреймворк), не нарушая соглашений смежных репозиториев и существующих клиентских интеграций.
+This strategy lets us gradually replace the `agents` package with MetaGPT (or another lightweight framework) without breaking adjacent repos or existing client integrations.

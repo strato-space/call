@@ -1,36 +1,27 @@
 # MCP SSE / Streamable HTTP timeouts
 
-Этот документ фиксирует:
+This document records:
 
-- Исторические **локальные патчи** в `.venv`, которыми мы поднимали
-  `sse_read_timeout` до 30 минут (разделы 1–6).
-- Текущее состояние runtime `call`, в котором мы **вернулись к дефолтным
-  5‑минутным** тайм-аутам и решили проблему обрывов на стороне `call` через
-  авто‑переинициализацию MCP.
+- Historical **local patches** in `.venv` that raised `sse_read_timeout` to 30 minutes (sections 1-6).
+- The current `call` runtime state where we **returned to the default 5-minute** timeouts and solved disconnects on the `call` side via MCP auto-reinitialization.
 
-Актуальная стратегия (2025‑11‑19):
+Current strategy (2025-11-19):
 
-- Во всех MCP‑клиентах (`mcp.client.sse`, `mcp.client.streamable_http`,
-  `agents.mcp.server`, `fast_agent`) используется `sse_read_timeout = 60 * 5`
-  (5 минут) — то есть патчи на 30 минут **откатаны**.
-- При `anyio.ClosedResourceError`, `httpx.ReadTimeout` / `ConnectTimeout` или
-  `McpError` во время запуска агента `call` считает MCP‑сессию «мёртвой» и
-  выполняет:
+- All MCP clients (`mcp.client.sse`, `mcp.client.streamable_http`, `agents.mcp.server`, `fast_agent`) use `sse_read_timeout = 60 * 5` (5 minutes). The 30-minute patches are rolled back.
+- On `anyio.ClosedResourceError`, `httpx.ReadTimeout` / `ConnectTimeout`, or `McpError` during agent startup, `call` treats the MCP session as "dead" and runs:
   - `cleanup_mcp_servers()`
   - `wait_for_mcp_init(timeout=120.0)`
-  - один повторный запуск `Runner.run`.
-- Таким образом, обрыв SSE после нескольких минут простоя рассматривается как
-  нормальный сигнал «нужно пересоздать сессию», а не как фатальная ошибка.
+  - one retry of `Runner.run`.
+- Therefore, SSE drops after a few minutes of idle time are treated as a normal "recreate the session" signal, not a fatal error.
 
-Разделы 1–6 ниже описывают патчи, которые **могут быть переиспользованы**,
-если в будущем снова понадобится 30‑минутный тайм-аут.
+Sections 1-6 below describe patches that **can be reused** if a 30-minute timeout is needed again.
 
 > NOTE: all paths below are **inside the virtualenv** used by `call`.
 > After reinstalling deps, these files will be overwritten.
 
 ---
 
-## 1. agents: increase default SSE read timeout for MCP servers (исторический патч)
+## 1. agents: increase default SSE read timeout for MCP servers (historical patch)
 
 File:
 
@@ -66,17 +57,17 @@ Changes:
   )
   ```
 
-Effect (когда патч был активен):
+Effect (when the patch was active):
 
-- Если `sse_read_timeout` не задавался явно в MCP server params, `agents`
-  использовал **30 минут** вместо **5 минут** для SSE / Streamable HTTP.
+- If `sse_read_timeout` was not explicitly set in MCP server params, `agents`
+  used **30 minutes** instead of **5 minutes** for SSE / Streamable HTTP.
 
-В текущем состоянии runtime `call` эти изменения **откатаны**, код библиотек
-работает с дефолтом `60 * 5`.
+In the current `call` runtime, these changes are rolled back and the libraries
+use the default `60 * 5`.
 
 ---
 
-## 2. mcp.client: StreamableHTTP defaults (исторический патч)
+## 2. mcp.client: StreamableHTTP defaults (historical patch)
 
 File:
 
@@ -98,13 +89,13 @@ Changes:
 + async def streamablehttp_client(..., timeout: float | timedelta = 30, sse_read_timeout: float | timedelta = 60 * 30, ...):
   ```
 
-Effect (когда патч был активен): транспорт использует **30 минут** как
-дефолтный SSE read timeout. В текущей установке `call` это изменение
-откатано, и используется дефолт библиотеки (5 минут).
+Effect (when the patch was active): the transport used **30 minutes** as the
+default SSE read timeout. In the current `call` install this is rolled back and
+library defaults (5 minutes) are used.
 
 ---
 
-## 3. mcp.client: SessionGroup helper defaults (исторический патч)
+## 3. mcp.client: SessionGroup helper defaults (historical patch)
 
 File:
 
@@ -126,14 +117,14 @@ Changes:
 +     sse_read_timeout: timedelta = timedelta(seconds=60 * 30)
   ```
 
-Effect (когда патч был активен): любой код, использующий `ClientSessionGroup`
-без явного `sse_read_timeout`, наследовал 30‑минутный SSE тайм-аут.
+Effect (when the patch was active): any code using `ClientSessionGroup` without
+explicit `sse_read_timeout` inherited a 30-minute SSE timeout.
 
-Сейчас дефолт снова 5 минут.
+The default is now back to 5 minutes.
 
 ---
 
-## 4. fast_agent: SSE tracking transports (исторический патч)
+## 4. fast_agent: SSE tracking transports (historical patch)
 
 Files:
 
@@ -192,12 +183,12 @@ Changes:
    ):
    ```
 
-Effect (когда патч был активен): `fast_agent` tracking‑транспорты следовали
-30‑минутному SSE тайм‑ауту. Сейчас используется значение по умолчанию (5 минут).
+Effect (when the patch was active): `fast_agent` tracking transports followed a
+30-minute SSE timeout. The default is now 5 minutes.
 
 ---
 
-## 5. fast_agent: config-level default for SSE read timeout (исторический патч)
+## 5. fast_agent: config-level default for SSE read timeout (historical patch)
 
 File:
 
@@ -213,13 +204,13 @@ Changes:
    """The timeout in seconds for the server connection."""
   ```
 
-Effect (когда патч был активен): при чтении `fastagent.config.yaml` значение по
-умолчанию становилось 1800 секунд (30 минут). В текущей конфигурации `call`
-дефолт снова 300 секунд (5 минут).
+Effect (when the patch was active): when reading `fastagent.config.yaml`, the
+default became 1800 seconds (30 minutes). In the current `call` config, the
+default is back to 300 seconds (5 minutes).
 
 ---
 
-## 6. mcp.client.sse: base SSE client default (исторический патч)
+## 6. mcp.client.sse: base SSE client default (historical patch)
 
 File:
 
@@ -237,8 +228,8 @@ Changes:
 + async def sse_client(..., timeout: float = 5, sse_read_timeout: float = 60 * 30, ...):
   ```
 
-Effect (когда патч был активен): low‑level SSE client использовал 30‑минутный
-тайм-аут по умолчанию. Сейчас дефолт возвращён к 5 минутам.
+Effect (when the patch was active): the low-level SSE client used a 30-minute
+default timeout. The default is now back to 5 minutes.
 
 ---
 
@@ -258,123 +249,130 @@ Beyond these patches, the timeout is also **configurable** at several layers:
      sse_read_timeout=self.params.get("sse_read_timeout", 60 * 30)
      ```
 
-   - Если вы где-то в своём коде вручную создаёте `MCPServerSse(...)` или
-     `MCPServerStreamableHttp(...)`, можно **передать `sse_read_timeout` в params**
-     и управлять тайм-аутом без патча библиотек.
+   - If you manually create `MCPServerSse(...)` or `MCPServerStreamableHttp(...)`
+     in your code, you can pass `sse_read_timeout` in params and control the
+     timeout without patching libraries.
 
 2. **mcp.client (Python API)**
 
    - `mcp.client.sse.sse_client(..., sse_read_timeout=...)`
    - `mcp.client.streamable_http.streamablehttp_client(..., sse_read_timeout=...)`
 
-   Любой собственный клиент MCP может задавать этот параметр явно.
+   Any custom MCP client can set this parameter explicitly.
 
 3. **fast_agent config (`fastagent.config.yaml`)**
 
-   - В `fast_agent.config.Settings.mcp.servers.<name>` можно указать:
+   - In `fast_agent.config.Settings.mcp.servers.<name>` you can set:
 
      ```yaml
      mcp:
        servers:
          call:
-           read_transport_sse_timeout_seconds: 1800  # или другое значение
+           read_transport_sse_timeout_seconds: 1800  # or another value
      ```
 
-   - Это значение используется в `fast_agent.mcp.mcp_connection_manager` при
-     создании `tracking_sse_client` / `tracking_streamablehttp_client` и
-     передаётся как `sse_read_timeout`.
+   - This value is used in `fast_agent.mcp.mcp_connection_manager` when creating
+     `tracking_sse_client` / `tracking_streamablehttp_client` and is passed as
+     `sse_read_timeout`.
 
-### Почему мы всё равно патчим `.venv`
+### Why we still patch `.venv`
 
-Текущий `call` runtime и массовые запуски `AgentFab` используют стек
-`agents` + `mcp.client`, где не было удобного конфиг-уровня для
-` sse_read_timeout` именно для удалённого `call-mcp`.
+The current `call` runtime and mass AgentFab runs use the `agents` + `mcp.client`
+stack, which did not expose a convenient config-level way to set
+` sse_read_timeout` for remote `call-mcp`.
 
-Чтобы **быстро снять ограничение в ~5 минут**, мы подняли дефолты на всех
-слоях, задействованных в трассе:
+To **quickly remove the ~5-minute limit**, we raised defaults at all layers
+in the trace:
 
-- `agents.mcp.server` → MCPServerSse / MCPServerStreamableHttp
+- `agents.mcp.server` -> MCPServerSse / MCPServerStreamableHttp
 - `mcp.client.sse` / `mcp.client.streamable_http`
 - `mcp.client.session_group`
-- `fast_agent` tracking-транспорты и config default
+- `fast_agent` tracking transports and config default
 
-При будущих рефакторингах можно добавить явную прокладку
-`read_transport_sse_timeout_seconds` / `sse_read_timeout` из конфигов
-(например, из `fastagent.config.yaml` или `call/mcp_config.yaml`) и после
-этого отказаться от `site-packages` патчей.
+In future refactors, we can add explicit wiring for
+`read_transport_sse_timeout_seconds` / `sse_read_timeout` from config
+(e.g., from `fastagent.config.yaml` or `call/mcp_config.yaml`) and then
+stop patching `site-packages`.
 
 ---
 
-## 8. Как повторить после обновления библиотек
+## 8. How to reapply after upgrading libraries
 
-1. Обновите зависимости (`pip install -r requirements.txt` и т.п.).
-2. В активированном `.venv` выполните быстрый поиск:
+1. Update dependencies (`pip install -r requirements.txt`, etc.).
+2. In the activated `.venv`, run a quick search:
 
    ```bash
    rg "sse_read_timeout" "$(python -c 'import sys,site; print(site.getsitepackages()[0])')"
    ```
 
-3. Сверьтесь с этим документом и снова примените изменения во всех файлах
-   из разделов 1–6, возвращая `60 * 5` → `60 * 30` и `300` → `1800` там,
-   где это описано.
+3. Compare with this document and reapply changes in all files from sections 1-6,
+   changing `60 * 5` -> `60 * 30` and `300` -> `1800` where described.
 
-После этого долгие сессии `call-mcp`/AgentFab снова не должны падать по
-`httpx.ReadTimeout` через 5 минут простоя.
-
----
-
-## 9. OpenAI backend 5-минутный лимит (Responses / Agents)
-
-Этот документ в основном описывает **клиентские** тайм-ауты чтения SSE и
-Streamable HTTP. В ходе дальнейшего исследования поведения AgentFab было
-обнаружено отдельное ограничение примерно в **5 минут на стороне backend OpenAI**,
-которое влияет на долгие задачи, выполняемые синхронно через Responses / Agents
-API.
-
-Ключевые наблюдения (конец 2025):
-
-- Официальный Python SDK OpenAI использует дефолтный HTTP-тайм-аут **10 минут**
-  (`DEFAULT_TIMEOUT = Timeout(600, connect=5.0)`), поэтому он **не** является
-  источником 5-минутного обрыва.
-- Наши слои MCP и `fast_agent` теперь используют **30 минут** как дефолтный
-  `sse_read_timeout` (см. разделы 1–7 выше).
-- Тем не менее, при использовании AgentFab с OpenAI Agents SDK / Responses API
-  в **блокирующем режиме** (без `background: true`) сложные задачи по-прежнему
-  обрываются примерно через 5 минут с ошибкой A2A `TaskNotFoundError`
-  (`code = -32001`), которая затем пробрасывается через MCP.
-- Ошибка и отсутствие соответствующего лимита в локальных библиотеках указывают
-  на существование **серверного TTL порядка 5 минут** для синхронных задач
-  Responses / Agents.
-- Этот TTL сейчас **не конфигурируется** с нашей стороны; рекомендованный способ
-  обхода со стороны OpenAI — запускать долгие задачи с `background: true` и
-  далее опрашивать `/responses/{id}`.
-
-Практические последствия для `call` / AgentFab:
-
-- Локальные настройки тайм-аутов SSE на 30 минут гарантируют, что клиенты
-  готовы ждать достаточно долго.
-- Если задача AgentFab всё равно умирает примерно через 5 минут с
-  `TaskNotFoundError(-32001)` или похожей ошибкой, наиболее вероятная причина —
-  именно этот **backend-лимит**, а не тайм-аут MCP/SSE.
-- Чтобы избежать этого, слой Agents должен:
-  - создавать Responses с `background: true`,
-  - сохранять `response.id` и
-362→  - забирать результат через `responses.retrieve(...)` (polling или
-363→    продолжение стрима).
-
-Этот раздел носит информационный характер; никаких дополнительных изменений в
-MCP SSE-стеке для учёта 5-минутного backend-лимита OpenAI не требуется.
+After that, long `call-mcp`/AgentFab sessions should no longer fail with
+`httpx.ReadTimeout` after 5 minutes of idle time.
 
 ---
 
-## 10. Кеш агентов и «мёртвые» MCP-сессии
+## 9. OpenAI backend 5-minute limit (Responses / Agents)
 
-- В `call/app/call.py` есть небольшой кеш агентов `AGENT_CACHE`, который хранит экземпляры `Agent` по имени (в том числе под-агенты, используемые как tools вроде `PM-4-DialogTaskSummary`). Это позволяет не создавать агента заново на каждом вызове.
-- После внедрения авто‑reinit MCP (последовательность `cleanup_mcp_servers()` → `wait_for_mcp_init()` → повторный `Runner.run`) выяснилось, что один и тот же кешированный агент может продолжать ссылаться на **старые** экземпляры MCP‑серверов, у которых уже вызван `cleanup()` и `session = None` (типичный симптом: `UserError("Server not initialized. Make sure you call connect() first.")` от `agents.mcp.server`).
-- Чтобы этого избежать, фабрика `get_or_create_agent()` теперь при каждом повторном использовании кешированного агента **обновляет его поле `mcp_servers`** свежим списком MCP‑серверов, собранным для текущего запуска.
-- В связке с авто‑reinit это означает:
-  - при обрыве SSE / истечении тайм-аута мы пересоздаём MCP‑сессии;
-  - при следующем запуске под‑агент из кеша получает новый список `mcp_servers` и больше не держит «мёртвые» подключения (в т.ч. к удалённому `gsh`).
-- Если вы видите повторяющиеся ошибки `"Server not initialized"` на втором и последующих вызовах после простоя, имеет смысл:
-  - проверить, что логика обновления `agent.mcp_servers` при reuse действительно присутствует;
-  - затем уже анализировать сетевые тайм-ауты и поведение удалённого MCP‑сервера по частям этого документа.
+This document mostly covers **client-side** SSE/Streamable HTTP read timeouts.
+Further research on AgentFab behavior revealed a separate limit of about
+**5 minutes on the OpenAI backend**, which affects long-running tasks executed
+synchronously via the Responses / Agents API.
+
+Key observations (late 2025):
+
+- The official OpenAI Python SDK uses a default HTTP timeout of **10 minutes**
+  (`DEFAULT_TIMEOUT = Timeout(600, connect=5.0)`), so it is **not** the source
+  of the 5-minute cutoff.
+- Our MCP and `fast_agent` layers now use **30 minutes** as the default
+  `sse_read_timeout` (see sections 1-7 above).
+- Still, when using AgentFab with the OpenAI Agents SDK / Responses API in
+  **blocking mode** (without `background: true`), complex tasks still fail
+  after about 5 minutes with an A2A `TaskNotFoundError` (`code = -32001`),
+  which is then propagated through MCP.
+- The error and the absence of any such limit in local libs indicate a
+  **server-side TTL of about 5 minutes** for synchronous Responses / Agents.
+- This TTL is **not configurable** on our side. The recommended workaround
+  from OpenAI is to run long tasks with `background: true` and then poll
+  `/responses/{id}`.
+
+Practical implications for `call` / AgentFab:
+
+- Local SSE timeout settings at 30 minutes ensure clients are willing to wait.
+- If an AgentFab task still dies after ~5 minutes with
+  `TaskNotFoundError(-32001)` or a similar error, the most likely cause is this
+  **backend limit**, not an MCP/SSE timeout.
+- To avoid this, the Agents layer should:
+  - create Responses with `background: true`,
+  - store `response.id`, and
+  - retrieve the result via `responses.retrieve(...)` (polling or stream resume).
+
+This section is informational; no additional changes to the MCP SSE stack are
+required to handle the 5-minute OpenAI backend limit.
+
+---
+
+## 10. Agent cache and "dead" MCP sessions
+
+- `call/app/call.py` has a small agent cache `AGENT_CACHE` that keeps `Agent`
+  instances by name (including sub-agents used as tools, e.g.
+  `PM-4-DialogTaskSummary`). This avoids re-creating agents for every call.
+- After introducing MCP auto-reinit
+  (`cleanup_mcp_servers()` -> `wait_for_mcp_init()` -> retry `Runner.run`), we
+  found that the same cached agent could keep references to **old** MCP servers
+  that were already `cleanup()`'d with `session = None` (typical symptom:
+  `UserError("Server not initialized. Make sure you call connect() first.")`
+  from `agents.mcp.server`).
+- To avoid this, `get_or_create_agent()` now **refreshes the agent's
+  `mcp_servers` field** on each reuse with a fresh MCP server list for the
+  current run.
+- Together with auto-reinit, this means:
+  - when SSE drops or timeouts occur, we recreate MCP sessions;
+  - on the next run, a cached sub-agent gets the new `mcp_servers` list and no
+    longer holds "dead" connections (including to remote `gsh`).
+- If you see repeated "Server not initialized" errors on second and later calls
+  after idle time, it is worth:
+  - verifying that `agent.mcp_servers` is refreshed on reuse;
+  - only then investigating network timeouts and remote MCP server behavior in
+    the rest of this document.

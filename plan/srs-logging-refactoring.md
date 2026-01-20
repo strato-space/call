@@ -1,94 +1,94 @@
-# SRS: Нормализация обработки ошибок и централизованного логирования
+# SRS: Normalize error handling and centralized logging
 
-**Файл:** `srs-logging-refactoring.md`  
-**Статус:** Draft → Ready (после M3)  
-**Владелец:** @slava (Strato Space)  
-**Затронутые пакеты:** `lib/`, `cli/`, `actions/`, `app/`, `telegram_bot/`, `mcp/`
-
----
-
-## 1. Область действия и цели
-
-Нужно унифицировать **формат ошибок** и **поведение логирования** во всех входных точках (CLI, FastAPI Actions, MCP, библиотека, Telegram bot) и во внутренних хелперах. Цель — единая ошибка‑обёртка, предсказуемые поля, отсутствие «сырого» `print`, централизованные логеры и воспроизводимая диагностика в проде и тестах. Основания и действующие принципы зафиксированы в репозитории (KISS, явные отказные пути, «логируй каждое исключение»). fileciteturn0file0
+**File:** `srs-logging-refactoring.md`  
+**Status:** Draft -> Ready (after M3)  
+**Owner:** @slava (Strato Space)  
+**Impacted packages:** `lib/`, `cli/`, `actions/`, `app/`, `telegram_bot/`, `mcp/`
 
 ---
 
-## 2. Термины и ссылки
+## 1. Scope and goals
 
-- **Конверт ошибки (error envelope)** — стандартный JSON с полями `ok=false`, вложенным объектом `error` и зеркальным `description`. Схема и порядок полей описаны в документации репозитория. fileciteturn0file1
-- **Фасад логирования** — `call.lib.logging` c `configure_logging`, `get_logger`, `debug_print`, переключатели `CALL_DEBUG`, `CALL_LOG_JSON` и флаг `--json-logs` в CLI. fileciteturn0file1
-- **Дизайн‑принципы** — KISS, SOLID/DI, явные ошибки, наблюдаемость. fileciteturn0file0
+We need to unify the **error format** and **logging behavior** across all entry points (CLI, FastAPI Actions, MCP, library, Telegram bot) and internal helpers. The goal is a single error wrapper, predictable fields, no raw `print`, centralized loggers, and reproducible diagnostics in prod and tests. The foundation and current principles are documented in the repo (KISS, explicit failure paths, "log every exception"). 
 
 ---
 
-## 3. Наблюдаемые проблемы (сводка)
+## 2. Terms and references
 
-1) Части кода собирают ошибки вручную (`{ok:false,...}`), игнорируя общий конструктор.  
-2) Входные точки (CLI, HTTP middleware) используют «сырой» `print`, что обходит конфигурацию логов и JSON‑режим.  
-3) Исключения часто подавляются без записи в лог, что делает инциденты невоспроизводимыми.  
-4) Вокруг `debug_print` встречаются лишние `try/except`, создающие «чёрные дыры».  
-5) Документация и тесты частично фиксируют желаемое поведение, но нет регресс‑защит (линт/тест) на появление `print` и расхождение схемы ошибок. fileciteturn0file0
+- **Error envelope** — the standard JSON with `ok=false`, a nested `error` object, and mirrored `description`. The schema and field order are documented in the repo. 
+- **Logging facade** — `call.lib.logging` with `configure_logging`, `get_logger`, `debug_print`, toggles `CALL_DEBUG`, `CALL_LOG_JSON`, and CLI flag `--json-logs`. 
+- **Design principles** — KISS, SOLID/DI, explicit errors, observability. 
 
 ---
 
-## 4. Требования
+## 3. Observed problems (summary)
 
-### 4.1 Функциональные
-- Экспортировать **публичные** хелперы ошибки и применять их повсеместно.
-- Заменить все «ручные» ошибки и HTTP/CLI ответы на вызовы общего хелпера.
-- Стандартизировать CLI‑обработку ошибок, ранний вызов `configure_logging` при `--debug/--json-logs`. fileciteturn0file1
-- Перед каждым возвратом конверта фиксировать исключение/контекст в лог.
-- Удалить «сырые» `print` в рантайме; использовать `get_logger`/`debug_print`. fileciteturn0file1
-
-### 4.2 Нефункциональные
-- **Наблюдаемость:** каждое исключение и I/O‑ошибка — в лог (включая продолжение работы). fileciteturn0file0
-- **Стабильность схемы:** порядок и наличие полей в ошибке соответствуют документации. fileciteturn0file1
-- **Совместимость:** сохранить коды/exit‑codes, обновить места, где читали устаревшее поле `code` (верхнего уровня). fileciteturn0file1
+1) Parts of the code build errors manually (`{ok:false,...}`), bypassing the common constructor.  
+2) Entry points (CLI, HTTP middleware) use raw `print`, bypassing log configuration and JSON mode.  
+3) Exceptions are often swallowed without logging, making incidents unreproducible.  
+4) Extra `try/except` wrappers around `debug_print` create "black holes."  
+5) Docs and tests partially define desired behavior, but there is no regression guard (lint/test) preventing `print` or schema drift. 
 
 ---
 
-## 5. Проектные решения (выбор лучших положений из 4 планов)
+## 4. Requirements
 
-### 5.1 Канонические конструкторы ошибок
-- Поднять приватные `_error_payload` / `_error_payload_event` до публичных API:  
-  `error_response(...)`, `event_error_response(...)` (названия примерные).  
-- Гарантировать включение: `error`, `error.code`, `error.message`, `error_code`, `description`; опционально — `type`, `param`, `provider_code`, `agent`, `project`, `details`.  
-- Поддержать упрощённые входы (строка/Exception) и перенос контекста (ids, опции).  
-- Докстринги с примерами и ссылкой на схему. fileciteturn0file1
+### 4.1 Functional
+- Export **public** error helpers and apply them everywhere.
+- Replace all "manual" errors and HTTP/CLI responses with the common helper.
+- Standardize CLI error handling, with early `configure_logging` for `--debug/--json-logs`. 
+- Log the exception/context before every envelope return.
+- Remove raw `print` in runtime code; use `get_logger`/`debug_print`. 
 
-### 5.2 Повсеместное применение
-- `lib/` (например, `reload`, `clear_session`, интерпретация `exec`‑payload) — вместо ad‑hoc словарей вызываем `error_response`.  
-- `actions/` — все `JSONResponse` по ошибкам строятся через хелпер, HTTP‑статус синхронизирован с `error.code`.  
-- `mcp/` — ранние выходы и валидация используют тот же хелпер (или требуют прокидывания уже готового конверта из `lib`).  
-- `cli/` — вводится `_emit_error(error_response)`; все `except` печатают его через stderr‑безопасный вывод, сохраняя `exit 1`. fileciteturn0file1
-
-### 5.3 Единое логирование вместо `print`
-- В `actions`‑middleware и других путях — `get_logger("<module>")` + `debug_print` для CALL_DEBUG‑трасс.  
-- В `app/`, `agent_utils`, `telegraph_utils` — вместо `print` использовать `debug_print` (для шума) и `logger.warning/error` (для проблем).  
-- Ранние инициализации: CLI при `--debug/--json-logs` вызывает `configure_logging` до первой печати. fileciteturn0file1
-
-### 5.4 Логируй перед возвратом
-- Перед возвратом `error_response` писать короткую строку: модуль, причина, ключевые поля (agent/project, счетчики и т.п.); при `CALL_DEBUG=1` — стек. fileciteturn0file0
-
-### 5.5 Упростить вокруг `debug_print`
-- Удалить обёртки `try/except: pass` вокруг `debug_print` — он уже безопасен; оставить единый стиль префиксов `[app]`, `[actions]`, `[repo.scan]`, `[bot]`. fileciteturn0file0
-
-### 5.6 Расширение фасада логирования (минимализм + полезность)
-- Добавить вспомогательные `log_exception(logger_name, msg, exc)` и контекст‑менеджер *log‑and‑suppress* — для единообразия сообщений и трасс. (Опционально; не ломает KISS.) fileciteturn0file0
-
-### 5.7 Документация и регресс‑защита
-- Обновить разделы **Error payload schema**, **Logging** и **CLI**; указать экспорт новых хелперов и запрет `print` в рантайме. fileciteturn0file1  
-- Линт‑правило/тест, проваливающее CI при наличии `print(` вне whitelisted‑скриптов. fileciteturn0file0
+### 4.2 Non-functional
+- **Observability:** every exception and I/O error goes to logs (including when execution continues). 
+- **Schema stability:** error field order and presence match the documentation. 
+- **Compatibility:** preserve codes/exit-codes; update consumers that used the deprecated top-level `code` field. 
 
 ---
 
-## 6. Контракты и интерфейсы
+## 5. Design decisions (best parts from 4 plans)
 
-### 6.1 Error Envelope (канонический)
-Сервер/библиотека/CLI обязаны возвращать/печать единый конверт (порядок полей стабилен):  
-`ok=false`, `error{ code, message, type?, param?, provider_code? }`, `error_code`, `description`, `agent?`, `project?`, `final_output`, `echo`, `session_id?`. fileciteturn0file1
+### 5.1 Canonical error constructors
+- Promote private `_error_payload` / `_error_payload_event` to public API:  
+  `error_response(...)`, `event_error_response(...)` (names are examples).  
+- Guarantee inclusion of: `error`, `error.code`, `error.message`, `error_code`, `description`; optional: `type`, `param`, `provider_code`, `agent`, `project`, `details`.  
+- Support simplified inputs (string/Exception) and context propagation (ids, options).  
+- Docstrings with examples and schema reference. 
 
-### 6.2 Публичные хелперы ошибок
+### 5.2 Apply everywhere
+- `lib/` (e.g., `reload`, `clear_session`, `exec` payload interpretation) should call `error_response` instead of ad-hoc dicts.  
+- `actions/` should build all error `JSONResponse` via the helper; HTTP status synced to `error.code`.  
+- `mcp/` should use the same helper for early returns and validation (or pass through already-built envelopes from `lib`).  
+- `cli/` should introduce `_emit_error(error_response)`; all `except` paths print it via stderr-safe output, preserving `exit 1`. 
+
+### 5.3 Unified logging instead of `print`
+- In `actions` middleware and other paths, use `get_logger("<module>")` + `debug_print` for CALL_DEBUG traces.  
+- In `app/`, `agent_utils`, `telegraph_utils`, replace `print` with `debug_print` (noise) and `logger.warning/error` (issues).  
+- Early initialization: CLI calls `configure_logging` before first output when `--debug/--json-logs` is set. 
+
+### 5.4 Log before returning
+- Before returning `error_response`, log a short line: module, reason, key fields (agent/project, counters, etc.); with `CALL_DEBUG=1` include stack. 
+
+### 5.5 Simplify around `debug_print`
+- Remove `try/except: pass` wrappers around `debug_print` - it is already safe; keep a single prefix style `[app]`, `[actions]`, `[repo.scan]`, `[bot]`. 
+
+### 5.6 Logging facade expansion (minimal but useful)
+- Add helper `log_exception(logger_name, msg, exc)` and a *log-and-suppress* context manager for consistent messages and traces. (Optional; does not violate KISS.) 
+
+### 5.7 Docs and regression protection
+- Update sections **Error payload schema**, **Logging**, and **CLI**; document exported helpers and the ban on `print` in runtime code.   
+- Add a lint rule/test that fails CI if `print(` appears outside whitelisted scripts. 
+
+---
+
+## 6. Contracts and interfaces
+
+### 6.1 Error Envelope (canonical)
+Server/library/CLI must return/print a single envelope (field order is stable):  
+`ok=false`, `error{ code, message, type?, param?, provider_code? }`, `error_code`, `description`, `agent?`, `project?`, `final_output`, `echo`, `session_id?`. 
+
+### 6.2 Public error helpers
 ```python
 def error_response(
     message: str | Exception,
@@ -104,89 +104,89 @@ def error_response(
     session_id: str | None = None,
 ) -> dict: ...
 ```
-- **Гарантии:** наличие `error` и зеркальной `description`; когда `message` — исключение, `code` и `type` маппятся на разумные значения, стек добавляется в лог при `CALL_DEBUG=1` (не в ответ).
+- **Guarantees:** `error` and mirrored `description` are present; when `message` is an exception, `code` and `type` are mapped to reasonable values, and the stack is logged under `CALL_DEBUG=1` (not included in the response).
 
-Аналогично: `event_error_response(...)` для event‑каналов.
+Similarly: `event_error_response(...)` for event channels.
 
 ### 6.3 CLI
-- Хелпер `_emit_error(payload: dict) -> None` печатает ровно конверт; `exit 1`. Логи — через `get_logger("cli")`. Опции `--debug`, `--json-logs` включают раннее `configure_logging`. fileciteturn0file1
+- Helper `_emit_error(payload: dict) -> None` prints exactly the envelope; `exit 1`. Logs via `get_logger("cli")`. Options `--debug`, `--json-logs` enable early `configure_logging`. 
 
-### 6.4 Логирование
-- Переключатели: `CALL_DEBUG`, `CALL_LOG_JSON`, CLI `--json-logs`, опциональный файл через `CALL_LOG_FILE`. fileciteturn0file1
-- Требование: **никаких `print`** для диагностики в `app/`, `actions/`, `lib/`, `telegram_bot/`, `mcp/`. Пользовательский **нормальный вывод** CLI допускается, **ошибки** — только через конверт + stderr. fileciteturn0file0
-
----
-
-## 7. Совместимость и миграция
-
-- В документации уже зафиксировано, что «устаревшее верхнеуровневое поле `code` удалено; статус читается из `error.code`». Проверить внешние потребители и обновить их. fileciteturn0file1
-- Сохранить `exit 1` в CLI при `ok:false`. fileciteturn0file1
-- JSON‑порядок полей в конверте не менять. fileciteturn0file1
+### 6.4 Logging
+- Toggles: `CALL_DEBUG`, `CALL_LOG_JSON`, CLI `--json-logs`, optional file via `CALL_LOG_FILE`. 
+- Requirement: **no `print`** for diagnostics in `app/`, `actions/`, `lib/`, `telegram_bot/`, `mcp/`. User-facing normal CLI output is allowed; errors only via envelope + stderr. 
 
 ---
 
-## 8. План внедрения (Milestones)
+## 7. Compatibility and migration
 
-- **M1 — API**
-  - Экспортировать `error_response`, `event_error_response`; докстринги; базовые тесты.
-- **M2 — Adoption**
-  - `lib/` и `actions/` перевод на хелперы; MCP ранние возвраты; CLI `_emit_error`.
-- **M3 — Logging**
-  - Удаление `print`; переход middleware/утилит на `get_logger`/`debug_print`; раннее `configure_logging` в CLI.
-- **M4 — Exceptions**
-  - Гарантия «логируй перед возвратом»; точечные сообщения с контекстом.
-- **M5 — Docs & Tests & Lint**
-  - Обновить README/AGENTS; добавить линт‑правило на `print(`; регресс‑тесты (CLI/Actions/Bot).
-- **M6 — (Optional) Logging Helpers**
-  - `log_exception` и контекст‑менеджер; покрытие тестами.
+- Docs already state that the deprecated top-level field `code` was removed; status is read from `error.code`. Verify external consumers and update them. 
+- Preserve `exit 1` in CLI on `ok:false`. 
+- Do not change JSON field order in the envelope. 
 
 ---
 
-## 9. Критерии приёмки
+## 8. Implementation plan (Milestones)
 
-- Все изменённые пути при сбое возвращают конверт **строго по схеме** (наличие `error`, зеркального `description`, валидных `error.code`/`error_code`). fileciteturn0file1  
-- В `actions` и `cli` нет «ручных» словарей ошибок; покрыто тестами.  
-- В `app/`, `actions/`, `lib/`, `telegram_bot/`, `mcp/` отсутствуют «сырые» `print` (провал линта при появлении). fileciteturn0file0  
-- При `CALL_DEBUG=1` исключение логируется со стеком до возврата конверта; ответ не содержит стека.  
-- CLI при `--json-logs` эмитит JSON‑логи; ошибки печатаются единообразно. fileciteturn0file1
-
----
-
-## 10. Тест‑план (минимальный регресс)
-
-- **Unit (lib):** хелперы ошибок — наличие полей; строка/Exception; опции (`provider_code`, `param`).  
-- **Actions (FastAPI):** невалидные запросы к `/prompts`, `/exec` → конверт; статус = `error.code`; лог‑хук срабатывает. fileciteturn0file1  
-- **CLI:** команды `list/models/call/reload/clear-session` — симулировать исключения и проверить `_emit_error` + `exit 1` + раннее логирование. fileciteturn0file1  
-- **Bot:** целевые тесты на маршруты логирования (существующие тесты расширить).  
-- **Lint:** правило «нет `print(`» по `app/`, `actions/`, `lib/` (whitelist для утилит‑скриптов). fileciteturn0file0
+- **M1 - API**
+  - Export `error_response`, `event_error_response`; docstrings; basic tests.
+- **M2 - Adoption**
+  - Move `lib/` and `actions/` to helpers; MCP early returns; CLI `_emit_error`.
+- **M3 - Logging**
+  - Remove `print`; migrate middleware/utils to `get_logger`/`debug_print`; early `configure_logging` in CLI.
+- **M4 - Exceptions**
+  - Guarantee "log before return"; focused messages with context.
+- **M5 - Docs & Tests & Lint**
+  - Update README/AGENTS; add lint rule for `print(`; regression tests (CLI/Actions/Bot).
+- **M6 - (Optional) Logging Helpers**
+  - `log_exception` and context manager; test coverage.
 
 ---
 
-## 11. Политики кодирования (выдержка)
+## 9. Acceptance criteria
 
-- KISS, явные отказные пути, «логируй каждое исключение и I/O‑ошибку». fileciteturn0file0  
-- Использовать `call.lib.logging.debug_print` и структурированные конверты из `call.lib.api`. fileciteturn0file0
-
----
-
-## 12. Риски и откат
-
-- **Риск:** пропущенные места ручной сборки ошибок → **Митигируем** поиском по `{"ok": False` и `error_code` + тестами.  
-- **Риск:** нарушения порядка полей → **Митигируем** snapshot‑тестами и статической проверкой структуры.  
-- **Откат:** фича‑флаги не требуются; изменения обратимы на уровне API‑хелперов (стабильные сигнатуры).
+- All changed failure paths return an envelope **strictly by schema** (presence of `error`, mirrored `description`, valid `error.code`/`error_code`).   
+- No "manual" error dicts in `actions` and `cli`; covered by tests.  
+- No raw `print` in `app/`, `actions/`, `lib/`, `telegram_bot/`, `mcp/` (lint fails if present).   
+- With `CALL_DEBUG=1`, exceptions are logged with stack before returning the envelope; the response contains no stack.  
+- CLI with `--json-logs` emits JSON logs; errors are printed consistently. 
 
 ---
 
-## 13. Метрики успеха
+## 10. Test plan (minimal regression)
 
-- % путей, покрытых общим хелпером ошибок (цель: 100%).  
-- Кол‑во «сырых» `print` в рантайме (цель: 0).  
-- Время на диагностику инцидента (p50/p95) — снижение после M3.  
-- Отсутствие регрессий по форматам CLI/HTTP (все контракты зелёные).
+- **Unit (lib):** error helpers - required fields; string/Exception; options (`provider_code`, `param`).  
+- **Actions (FastAPI):** invalid requests to `/prompts`, `/exec` -> envelope; status = `error.code`; log hook fires.   
+- **CLI:** commands `list/models/call/reload/clear-session` - simulate exceptions and verify `_emit_error` + `exit 1` + early logging.   
+- **Bot:** targeted tests for logging paths (extend existing tests).  
+- **Lint:** rule "no `print(`" for `app/`, `actions/`, `lib/` (whitelist utility scripts). 
 
 ---
 
-## 14. Приложение A — Пример конверта ошибки
+## 11. Coding policies (excerpt)
+
+- KISS, explicit failure paths, "log every exception and I/O error".   
+- Use `call.lib.logging.debug_print` and structured envelopes from `call.lib.api`. 
+
+---
+
+## 12. Risks and rollback
+
+- **Risk:** missed manual error construction -> **Mitigate** by searching for `{\"ok\": False` and `error_code` plus tests.  
+- **Risk:** field order violations -> **Mitigate** with snapshot tests and static structure checks.  
+- **Rollback:** no feature flags required; changes are reversible at the API helper level (stable signatures).
+
+---
+
+## 13. Success metrics
+
+- % of paths covered by the common error helper (target: 100%).  
+- Count of raw `print` in runtime (target: 0).  
+- Time to diagnose incidents (p50/p95) - reduced after M3.  
+- No regressions in CLI/HTTP formats (all contracts green).
+
+---
+
+## 14. Appendix A - Error envelope example
 
 ```json
 {
@@ -206,8 +206,8 @@ def error_response(
   "echo": false
 }
 ```
-(См. документацию по схеме — порядок полей стабилен, `error.message` дублируется в `description`.) fileciteturn0file1
+(See schema docs - field order is stable, `error.message` is mirrored in `description`.) 
 
 ```
 
-# Конец SRS
+# End of SRS

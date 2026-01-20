@@ -1,24 +1,24 @@
 # Set-Proxies.ps1
-# Установить системные переменные окружения для прокси
+# Set system environment variables for proxies
 
-# === Настройки прокси ===
+# === Proxy settings ===
 $httpProxy  = "http://localhost:10809"
 $httpsProxy = "http://localhost:10809"
 $allProxy   = "socks5h://localhost:10808"
 
-# NO_PROXY список (через запятую)
+# NO_PROXY list (comma-separated)
 $noProxy = "localhost,127.0.0.1,::1,github.com,*.github.com,api.telegram.org"
 
-# === Установка через setx (перманентно для текущего пользователя) ===
+# === Set via setx (persistent for the current user) ===
 setx HTTP_PROXY  $httpProxy
 setx HTTPS_PROXY $httpsProxy
 setx ALL_PROXY   $allProxy
 setx NO_PROXY    $noProxy
 
-# === Также сразу выставляем в текущей сессии ===
+# === Also set for the current session ===
 $env:HTTP_PROXY  = $httpProxy
 $env:HTTPS_PROXY = $httpsProxy
 $env:ALL_PROXY   = $allProxy
 $env:NO_PROXY    = $noProxy
 
-Write-Host "Прокси переменные установлены. Перезапусти терминал/IDE для применения."
+Write-Host "Proxy variables set. Restart your terminal/IDE to apply."
