@@ -38,10 +38,79 @@ def _read_card_text(path: Path | None) -> str:
         return ""
 
 
+def _set_repo_env(kind: str, path: Path) -> None:
+    key = "AGENT_REPO" if kind == "agent" else "PROMPT_REPO"
+    os.environ[key] = str(path)
+
+
+def _looks_like_prompt_repo(path: Path) -> bool:
+    if (path / "prompt_reference.md").exists():
+        return True
+    for name in ("ready", "draft"):
+        sub = path / name
+        if sub.is_dir():
+            try:
+                if any(sub.rglob("*.md")):
+                    return True
+            except Exception:
+                return True
+    try:
+        for child in path.iterdir():
+            if child.is_dir() and not child.name.startswith("."):
+                if (child / "project.md").exists():
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _looks_like_agent_repo(path: Path) -> bool:
+    if (path / "agent.md").exists() or (path / "agent.yaml").exists():
+        return True
+    try:
+        for project_dir in path.iterdir():
+            if not project_dir.is_dir() or project_dir.name.startswith("."):
+                continue
+            if project_dir.name.lower() in ("ready", "draft"):
+                continue
+            for agent_dir in project_dir.iterdir():
+                if not agent_dir.is_dir():
+                    continue
+                if (agent_dir / "agent.md").exists() or (agent_dir / "agent.yaml").exists():
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _detect_repo_kind(path: Path) -> str | None:
+    if _looks_like_prompt_repo(path):
+        return "prompt"
+    if _looks_like_agent_repo(path):
+        return "agent"
+    return None
+
+
 def _load_repos_from_env() -> List[str]:
     raw = os.environ.get("repos", "")
-    toks = [t.strip().lower() for t in raw.replace(";", ",").split(",") if t.strip()]
-    return [t for t in toks if t in {"agent", "prompt"}]
+    entries = [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
+    tokens: List[str] = []
+    for entry in entries:
+        clean = entry.strip().strip('"').strip("'")
+        if not clean:
+            continue
+        low = clean.lower()
+        if low in {"agent", "prompt"}:
+            tokens.append(low)
+            continue
+        path = Path(clean).expanduser()
+        if not path.exists():
+            continue
+        kind = _detect_repo_kind(path)
+        if kind:
+            _set_repo_env(kind, path)
+            tokens.append(kind)
+    return tokens
 
 
 # todo - add othes repos of any structurue 0 not jusy agent and prompt

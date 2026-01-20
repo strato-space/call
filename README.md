@@ -1092,6 +1092,9 @@ TELEGRAPH_TOKEN=your_telegraph_token
 ```env
 # Repository scanning (comma/semicolon-separated)
 repos=agent,prompt
+# Absolute paths are also accepted; repo kind is auto-detected and mapped to
+# AGENT_REPO/PROMPT_REPO automatically.
+# repos=/home/strato-space/agent,/home/strato-space/prompt
 
 # Agent execution
 AGENTS_DEFAULT_MAX_TURNS=150   # Max conversation turns (default: 150)
