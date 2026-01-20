@@ -829,6 +829,7 @@ load_dotenv(dotenv_path=str(_env_file), override=True)
 
 _ensure_proxy_env_defaults()
 _configure_agents_proxy_http_client()
+openai = OpenAI()
 
 
 # check_proxy_tool removed - no longer needed
@@ -5571,7 +5572,8 @@ def image_genetation_tool(
       size: "1024x1024" | "1024x1792" | ...
       background: "transparent" for PNG with alpha, otherwise None
     """
-    img = client.images.generate(
+
+    img = openai.images.generate(
         model="gpt-image-1",
         prompt=prompt,
         size=size,
