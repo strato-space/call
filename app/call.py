@@ -137,6 +137,15 @@ def _update_cost_totals_from_output(text: str | None) -> call_db.CostTotals | No
     return None
 
 
+def _is_text_item(obj: Any) -> bool:
+    return (
+        isinstance(obj, dict)
+        and set(obj.keys()) <= {"type", "text"}
+        and obj.get("type") == "text"
+        and isinstance(obj.get("text"), str)
+    )
+
+
 class _LiteralYamlDumper(yaml.SafeDumper):
     """YAML dumper that renders multiline strings as block scalars.
     
@@ -3982,9 +3991,6 @@ class MCPServerHookMixin:
 
         try:
             # If result is a simple text item or list of text items, unwrap to plain text
-            def _is_text_item(obj: Any) -> bool:
-                return isinstance(obj, dict) and set(obj.keys()) <= {"type", "text"} and obj.get("type") == "text" and isinstance(obj.get("text"), str)
-
             def _gather_texts(obj: Any) -> list[str]:
                 out: list[str] = []
                 if _is_text_item(obj):

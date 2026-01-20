@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
+import sqlite3
+from typing import Optional, List, Dict, Any, Tuple
 from agents.model_settings import ModelSettings
 from dataclasses import dataclass, field, asdict
 from contextvars import ContextVar
