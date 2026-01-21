@@ -2418,12 +2418,11 @@ async def init_bot(*, project_name: str | None = None):
     # Bypass system proxies for Telegram and disable trust_env to reduce connection issues
     import os as _os
 
-    _os.environ.setdefault(
-        "NO_PROXY", "api.telegram.org,*.telegram.org,*.stratospace.fun"
-    )
-    _os.environ.setdefault(
-        "no_proxy", "api.telegram.org,*.telegram.org,*.stratospace.fun"
-    )
+    base_no_proxy = "api.telegram.org,*.telegram.org"
+    extra_no_proxy = _os.environ.get("CALL_NO_PROXY_DOMAINS", "").strip()
+    no_proxy = f"{base_no_proxy},{extra_no_proxy}" if extra_no_proxy else base_no_proxy
+    _os.environ.setdefault("NO_PROXY", no_proxy)
+    _os.environ.setdefault("no_proxy", no_proxy)
     request = HTTPXRequest(
         connect_timeout=20.0,
         read_timeout=120.0,

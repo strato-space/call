@@ -70,13 +70,14 @@ else:
 def custom_openapi():
     if getattr(app, "openapi_schema", None):
         return app.openapi_schema
+    base_url = os.getenv("CALL_ACTIONS_BASE_URL", "https://example.com")
     schema = get_openapi(
         title=app.title,
         version=app.version,
         routes=app.routes,
     )
     schema["servers"] = [
-        {"url": "https://call-actions.stratospace.fun"},
+        {"url": base_url},
     ]
     # bearer security
     comps = schema.setdefault("components", {})

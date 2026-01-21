@@ -621,7 +621,7 @@
   },
   "servers": [
     {
-      "url": "https://call-actions.stratospace.fun"
+      "url": "{{ CALL_ACTIONS_BASE_URL }}"
     }
   ],
   "security": [

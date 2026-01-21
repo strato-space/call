@@ -471,7 +471,7 @@ python -m call.cli.main clear-session --chat-id -100123 --thread-id 10
 
 Call exposes a FastAPI-based REST API with bearer authentication for external integrations.
 
-**Base URL:** `https://call-actions.stratospace.fun`
+**Base URL:** `https://example.com`
 
 **Authentication:** Bearer token in `Authorization` header
 
@@ -493,21 +493,21 @@ Call exposes a FastAPI-based REST API with bearer authentication for external in
 
 ```bash
 # List prompts for a project
-curl -sS "https://call-actions.stratospace.fun/prompts?project=AgentFab" \
+curl -sS "https://example.com/prompts?project=AgentFab" \
   -H "Authorization: Bearer YOUR_TOKEN" | jq
 
 # Execute an agent
-curl -sS "https://call-actions.stratospace.fun/exec" \
+curl -sS "https://example.com/exec" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"agent":"DialogPostAnalysis","context":{"text":"hi"},"model":"gpt-4o-mini"}'
 
 # Read a card
-curl -sS "https://call-actions.stratospace.fun/read/33-Questioning" \
+curl -sS "https://example.com/read/33-Questioning" \
   -H "Authorization: Bearer YOUR_TOKEN"
 
 # List available models
-curl -sS "https://call-actions.stratospace.fun/models" \
+curl -sS "https://example.com/models" \
   -H "Authorization: Bearer YOUR_TOKEN" | jq
 ```
 
@@ -516,7 +516,7 @@ curl -sS "https://call-actions.stratospace.fun/models" \
 Pass `model` as query parameter or in JSON body to override the effective model for a request:
 
 ```bash
-curl -sS "https://call-actions.stratospace.fun/call?name=DialogPostAnalysis&input=hello&model=gpt-4o-mini" \
+curl -sS "https://example.com/call?name=DialogPostAnalysis&input=hello&model=gpt-4o-mini" \
   -H "Authorization: Bearer YOUR_TOKEN" | jq
 ```
 

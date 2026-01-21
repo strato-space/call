@@ -25,6 +25,8 @@ _attribute_overrides_var: ContextVar[Dict[str, Any] | None] = ContextVar(
     default=None,
 )
 
+_VOICE_HOST = os.getenv("CALL_VOICE_HOST", "voice.example.com")
+
 
 def read(card_id: str) -> str:
     """Return raw card text stored in repo.db for the given identifier."""
@@ -1375,8 +1377,10 @@ async def call_async(
                 err_code = "MCP_INIT_FAILED"
                 cause = getattr(e, "cause", None)
                 cause_msg = str(cause) if cause else ""
-                if "voice.stratospace.fun" in cause_msg:
-                    msg = "Voice service is unavailable (voice.stratospace.fun timeout). Please try again later."
+                if _VOICE_HOST and _VOICE_HOST in cause_msg:
+                    msg = (
+                        f"Voice service is unavailable ({_VOICE_HOST} timeout). Please try again later."
+                    )
                 else:
                     msg = "MCP tools initialization failed. One of external MCP servers is unavailable. Please try again later."
                 if cause_msg:
