@@ -2,7 +2,7 @@
 
 ## Environment & Tooling Fundamentals
 
-- Activate the shared virtualenv with `source /workspace/.venv/bin/activate` before running Python or pytest.
+- Activate the shared virtualenv with `source /home/tools/.venv/bin/activate` before running Python or pytest.
 - Provision or refresh sibling repos with `tools/repos.sh --codex`; they land in `/workspace/{agent,prompt,voice,rms,server}`.
 - Install extras into that env and avoid global pip packages; use `uv pip compile` plus `pip install -r requirements.txt` for updates.
 - Stick with built-in linting; do not add formatters unless the project maintainers ask for them.
@@ -180,6 +180,7 @@ Thanks for keeping the repo tidy and well-documented!
 ## Build, Test & Development Commands
 
 - `pytest` runs all tests; add `-k fragment` to focus.
+- For a full run in this repo: `uv sync --active --extra dev` then `PYTHONPATH=/home/tools uv run --active pytest`.
 - `python -m cli.main --help` explores CLI workflows; `uvicorn actions.main:app --reload` serves REST locally.
 - Use `tools/` scripts to capture integration traces.
 
