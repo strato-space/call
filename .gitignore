@@ -59,6 +59,8 @@ prompt
 ready/TempBadPrompt2.md
 .env
 .env.keys
+.env.enc
+wallet/service-account-key.json
 acp/fastagent.secrets.yaml
 
 # Cache

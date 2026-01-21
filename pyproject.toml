@@ -23,6 +23,7 @@ dependencies = [
   "pydantic-settings[dotenv]>=2.5.2,<3",
   "fastapi",
   "uvicorn",
+  "mcp-image",
   "mcp-server-time",
 ]
 
@@ -32,3 +33,9 @@ dev = [
   "pytest-asyncio",
   "trio",
 ]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+"mcp-image" = { path = "/home/tools/mcp-images" }

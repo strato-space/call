@@ -1,0 +1,36 @@
+mcpServers:
+  # Public open-source MCP servers (example defaults)
+  fs:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+  seq:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+
+  memory:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory"]
+    env:
+      MEMORY_FILE_PATH: "./.memory"
+
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ""
+
+  time:
+    command: uvx
+    args: ["mcp-server-time"]
+
+  fetch:
+    command: uvx
+    args: ["mcp-server-fetch"]
+
+  web_search:
+    enabled: false
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    env:
+      BRAVE_API_KEY: ""
