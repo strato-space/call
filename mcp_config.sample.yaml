@@ -14,12 +14,6 @@ mcpServers:
     env:
       MEMORY_FILE_PATH: "./.memory"
 
-  github:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: ""
-
   time:
     command: uvx
     args: ["mcp-server-time"]
@@ -27,6 +21,21 @@ mcpServers:
   fetch:
     command: uvx
     args: ["mcp-server-fetch"]
+
+  media-gen:
+    # Uses public repo via npx. Provide secrets in env file (OPENAI_API_KEY, etc).
+    command: npx
+    args: ["-y", "github:strato-space/media-gen-mcp", "--env-file", "/path/to/media-gen.env"]
+
+  image:
+    # Uses public repo via uvx. No secrets required for basic fetch/resize.
+    command: uvx
+    args:
+      - --from
+      - git+https://github.com/IA-Programming/mcp-images@main
+      - python
+      - -m
+      - mcp_image
 
   web_search:
     enabled: false
