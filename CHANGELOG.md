@@ -5,14 +5,40 @@ All notable changes to this project will be documented in this file.
 ## 2026-01-21
 
 ### PROBLEM SOLVED
-- Actions `/reload` responses had no regression coverage, so payload drift could go unnoticed.
+- Local configuration artifacts and editor presets were mixed with repository content, making it harder to publish safely.
+- Actions API base URLs and hostnames were hardcoded, limiting deployment flexibility.
+- Actions `/reload` responses lacked regression coverage.
 
 ### FEATURE IMPLEMENTED
+- Added a public MCP config sample and kept local config untracked for safer sharing.
+- Made Actions/OpenAPI base URL configurable via environment variables.
 - Added unit coverage for the Actions `/reload` response shape (`ok`, `scanned`).
 
 ### CHANGES
-- `actions/main.py`: import `api_reload` for direct Actions API patching in tests.
-- `app/tests/test_actions_api_unit.py`: add `test_reload_ok` to assert payload shape.
+- `.gitignore`: ignore local config/credential artifacts.
+- `mcp_config.sample.yaml`, `pyproject.toml`, `uv.lock`: add public MCP sample and image tool dependency; refresh lockfile.
+- `actions/main.py`, `actions/openapi.json`, `app/call.py`, `lib/api.py`, `app/tests/test_tg_output_filter.py`, `.env.example`, `README.md`: route base URLs through env config and refresh docs/examples.
+- `app/tests/test_actions_api_unit.py`: add `test_reload_ok`.
+- `README.md`, `AGENTS.md`: document `CALL_ACTIONS_BASE_URL` and `mcp_config.sample.yaml` usage.
+
+## 2026-01-20
+
+### PROBLEM SOLVED
+- Test runs were sensitive to environment drift across subprocess CLI tests.
+- Repo discovery failed when repo paths were provided as absolute paths.
+- Image tooling initialization and MCP output helpers were fragmented.
+
+### FEATURE IMPLEMENTED
+- Auto-detect agent/prompt repo locations from configured repo lists to simplify setup.
+- Added shared test scaffolding and dependency metadata for repeatable local runs.
+
+### CHANGES
+- `conftest.py`, `pyproject.toml`: add shared test fixtures and dev dependency metadata.
+- `lib/repo_fs.py`, `.env.example`, `README.md`: support auto-detected repo paths and document behavior.
+- `app/call.py`, `lib/api.py`: reuse shared text-item helper and initialize the image client after proxy setup.
+- `app/tests/*`, `telegram_bot/bot.py`, `tools/*`: normalize sample text and align helper usage.
+- `.gitignore`: ignore cache directories and local MCP config files.
+- `docs/*`, `plan/*`, `tools/Set-Proxies.ps1`: translate and refresh documentation/plan materials.
 
 ## 2026-01-18
 

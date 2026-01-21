@@ -116,7 +116,7 @@ python -m call.cli.main prompts --project * --state ready --format table
 #### Subsystem Quick Reference
 
 - **`actions/`** publishes `actions/openapi.json` and mirrors `call.lib.api` helpers (`call`, `list`, `models`, etc.). Patch the schema whenever endpoints change so client generation stays accurate.
-- **`mcp/`** exposes the same surface as REST (`call`, `exec`, `notify`, `reload`, `models`) via presets in `mcp_config.yaml` / `mcp_config.json`. Keep tool signatures aligned with the payload contract.
+- **`mcp/`** exposes the same surface as REST (`call`, `exec`, `notify`, `reload`, `models`) via presets in `mcp_config.sample.yaml` (public template) and local overrides in `mcp_config.yaml` / `mcp_config.json`. Keep tool signatures aligned with the payload contract.
 - **`telegram_bot/`** fronts the runtime with `/agents`, `/prompts`, `/call`, parsed replies, and renders structured envelopes. Preserve HTML-safe output, welcome banners, and debug logging flows when adjusting handlers.
 - **`wallet/`** stores deployment-time secrets such as `service-account-key.json`. Only commit placeholders.
 - **`windsurf/`** centralizes IDE defaults; update it in lockstep with formatter/linter changes.
@@ -546,7 +546,7 @@ Call implements a Model Context Protocol server using the FastMCP SDK.
 
 **Configuration:**
 
-MCP server presets are defined in `mcp_config.yaml` / `mcp_config.json` for external MCP servers (filesystem, sequential thinking, Google Sheets, etc.).
+MCP server presets are defined in `mcp_config.sample.yaml` (shareable template) and local overrides in `mcp_config.yaml` / `mcp_config.json` for external MCP servers (filesystem, sequential thinking, Google Sheets, etc.).
 
 **Running:**
 
@@ -555,7 +555,7 @@ MCP server presets are defined in `mcp_config.yaml` / `mcp_config.json` for exte
 python -m call.mcp.server
 
 # Via Claude Desktop (configured in claude_desktop_config.json)
-# See mcp_config.yaml for server definitions
+# See mcp_config.sample.yaml for server definitions (copy to mcp_config.yaml for local edits)
 ```
 
 **Integration:**
@@ -1135,6 +1135,9 @@ EVENT_DB_PATH=call/call.db     # Event log (default)
 ```env
 # Bearer authentication token
 CALL_ACTIONS_TOKEN=your_bearer_token_here
+
+# Public base URL for OpenAPI/Actions clients
+CALL_ACTIONS_BASE_URL=https://example.com
 ```
 
 ### Environment Resolution

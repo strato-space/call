@@ -18,7 +18,7 @@
 - `wallet/` — secure credentials (e.g., Google service-account JSON). Treat everything under this folder as sensitive and never check real secrets into commits or logs.
 - `windsurf/` — IDE preset (`settings.json`) for the Windsurf editor. Update it in lock-step with repo-wide tooling changes (linters, formatters, etc.).
 - `requirements.txt` — pinned Python dependencies for the runtime/CLI/bot surfaces. Update via controlled tooling (e.g., `uv pip compile`) and test under `/workspace/.venv`.
-- `mcp_config.yaml` / `mcp_config.json` — declarative configuration for external MCP services (filesystem, sequential thinking, Google Sheets, voice, etc.). Keep comments synchronized with actual presets and adjust CLI/docs when toggling defaults.
+- `mcp_config.sample.yaml` (public template) plus `mcp_config.yaml` / `mcp_config.json` (local overrides) — declarative configuration for external MCP services (filesystem, sequential thinking, Google Sheets, voice, etc.). Keep comments synchronized with actual presets and adjust CLI/docs when toggling defaults.
 - `tools/` — helper scripts (`repos.sh`, etc.) for managing environments and dependencies.
 
 Review the relevant directory documentation before making changes; many subsystems have README notes or inline comments that capture nuanced behaviors.
