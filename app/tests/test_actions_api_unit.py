@@ -161,3 +161,15 @@ def test_models_endpoint(monkeypatch, client: TestClient, auth_headers):
     data = r.json()
     assert isinstance(data, list)
     assert data[0].get("id") == "gpt-4o-mini"
+
+
+def test_reload_ok(monkeypatch, client: TestClient, auth_headers):
+    monkeypatch.setattr(
+        main, "api_reload", lambda: {"ok": True, "scanned": 2}, raising=True
+    )
+
+    r = client.get("/reload", headers=auth_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("ok") is True
+    assert data.get("scanned") == 2

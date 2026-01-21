@@ -188,6 +188,7 @@ Thanks for keeping the repo tidy and well-documented!
 
 - Co-locate `test_*.py` with code; share setup in `conftest.py`.
 - Add integration coverage when altering `actions/` or `mcp/`; mirror documentation-driven smoke checks when prompts change.
+- For Actions endpoints, add unit coverage in `app/tests/test_actions_api_unit.py` and assert response payload shape.
 - Run `pytest --maxfail=1 --disable-warnings` before pushing and ensure new features ship with meaningful assertions.
 
 ## Commit & Pull Request Guidelines

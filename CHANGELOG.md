@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-01-21
+
+### PROBLEM SOLVED
+- Actions `/reload` responses had no regression coverage, so payload drift could go unnoticed.
+
+### FEATURE IMPLEMENTED
+- Added unit coverage for the Actions `/reload` response shape (`ok`, `scanned`).
+
+### CHANGES
+- `actions/main.py`: import `api_reload` for direct Actions API patching in tests.
+- `app/tests/test_actions_api_unit.py`: add `test_reload_ok` to assert payload shape.
+
 ## 2026-01-18
 
 ### PROBLEM SOLVED

@@ -18,6 +18,7 @@ from call.lib.api import call_async as api_call_async
 from call.lib.api import list as api_list
 from call.lib.api import list_prompts as api_list_prompts
 from call.lib.api import models as api_models
+from call.lib.api import reload as api_reload
 from call.lib.api import read as api_read
 from call.lib.api import write as api_write
 from call.lib.api import api_interpret_exec_payload as api_interpret_exec_payload

@@ -489,6 +489,8 @@ Call exposes a FastAPI-based REST API with bearer authentication for external in
 | `/reload` | POST | Rebuild repository index |
 | `/notify` | POST | Send event notification (requires `event` field) |
 
+On success, `/reload` returns `{"ok": true, "scanned": <count>}`.
+
 **Examples:**
 
 ```bash
