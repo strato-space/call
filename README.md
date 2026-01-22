@@ -104,20 +104,20 @@ python -m call.cli.main prompts --project * --state ready --format table
 
 ### Module Organization
 
-- **`lib/`** — Core library exposing `api.py` (public interface), `repo_db.py` (SQLite queries), `repo_fs.py` (filesystem scanning), `discovery.py` (agent/prompt resolution), `logging.py`, `utils.py`
-- **`app/`** — Application runtime (`call.py`) containing `build_and_run_agent()`, welcome banner logic, MCP integration, agents-as-tools wrappers
-- **`cli/`** — Command-line interface (`main.py`) for interactive usage and scripting
-- **`actions/`** — FastAPI REST API with bearer auth, OpenAPI schema generation
-- **`mcp/`** — Model Context Protocol server (FastMCP SDK) exposing tools: `call`, `exec`, `agents`, `prompts`, `models`, `read`, `write`, `reload`
-- **`telegram_bot/`** — Production Telegram bot with message parsing, reply context extraction, inline buttons
+- **`src/call/lib/`** — Core library exposing `api.py` (public interface), `repo_db.py` (SQLite queries), `repo_fs.py` (filesystem scanning), `discovery.py` (agent/prompt resolution), `logging.py`, `utils.py`
+- **`src/call/app/`** — Application runtime (`call.py`) containing `build_and_run_agent()`, welcome banner logic, MCP integration, agents-as-tools wrappers
+- **`src/call/cli/`** — Command-line interface (`main.py`) for interactive usage and scripting
+- **`src/call/actions/`** — FastAPI REST API with bearer auth, OpenAPI schema generation
+- **`src/call/mcp/`** — Model Context Protocol server (FastMCP SDK) exposing tools: `call`, `exec`, `agents`, `prompts`, `models`, `read`, `write`, `reload`
+- **`src/call/telegram_bot/`** — Production Telegram bot with message parsing, reply context extraction, inline buttons
 - **`docs/`** — Additional documentation (`cards.md`, `mcp_config.md`, integration assessments)
-- **`tools/`** — Helper scripts (`repos.sh` for workspace synchronization)
+- **`src/call/tools/`** — Helper scripts (`repos.sh` for workspace synchronization)
 
 #### Subsystem Quick Reference
 
-- **`actions/`** publishes `actions/openapi.json` and mirrors `call.lib.api` helpers (`call`, `list`, `models`, etc.). Patch the schema whenever endpoints change so client generation stays accurate.
-- **`mcp/`** exposes the same surface as REST (`call`, `exec`, `notify`, `reload`, `models`) via presets in `mcp_config.sample.yaml` (public template) and local overrides in `mcp_config.yaml` / `mcp_config.json`. Keep tool signatures aligned with the payload contract.
-- **`telegram_bot/`** fronts the runtime with `/agents`, `/prompts`, `/call`, parsed replies, and renders structured envelopes. Preserve HTML-safe output, welcome banners, and debug logging flows when adjusting handlers.
+- **`src/call/actions/`** publishes `src/call/actions/openapi.json` and mirrors `call.lib.api` helpers (`call`, `list`, `models`, etc.). Patch the schema whenever endpoints change so client generation stays accurate.
+- **`src/call/mcp/`** exposes the same surface as REST (`call`, `exec`, `notify`, `reload`, `models`) via presets in `mcp_config.sample.yaml` (public template) and local overrides in `mcp_config.yaml` / `mcp_config.json`. Keep tool signatures aligned with the payload contract.
+- **`src/call/telegram_bot/`** fronts the runtime with `/agents`, `/prompts`, `/call`, parsed replies, and renders structured envelopes. Preserve HTML-safe output, welcome banners, and debug logging flows when adjusting handlers.
 - **`wallet/`** stores deployment-time secrets such as `service-account-key.json`. Only commit placeholders.
 - **`windsurf/`** centralizes IDE defaults; update it in lockstep with formatter/linter changes.
 - **`requirements.txt`** pins runtime dependencies for CLI, bot, Actions API, and MCP server.
@@ -125,7 +125,7 @@ python -m call.cli.main prompts --project * --state ready --format table
 
 ### Data Flow
 
-1. **Discovery** — Scanner (`repo_fs`) indexes Markdown cards from `agent/` and `prompt/` repos into `repo.db`
+1. **Discovery** — Scanner (`repo_fs`) indexes Markdown cards from `agent/` and `prompt/` repos into `repo.db` (default `.cache/call/repo.db`)
 2. **Resolution** — Selectors (`project`, `agent`, `prompt`, `target`) resolve to a `RunnableConfig` with instructions, model settings, metadata
 3. **Execution** — Runtime (`app.call.build_and_run_agent`) constructs an OpenAI Agents pipeline, applies model settings precedence (prompt > agent > project), invokes tools/MCPs
 4. **Routing** — Results delivered via Telegram (with session tracking), returned as structured JSON, or written to filesystem
@@ -218,22 +218,24 @@ python -m call.cli.main models --format yaml
 python -m call.cli.main list --project * --format text
 ```
 
+> If installed as a package (e.g., via `uv sync`), you can use the `call` console script instead of `python -m call.cli.main`.
+
 ### Workspace Sync
 
-Use `tools/repos.sh` to synchronize all Strato repositories:
+Use `src/call/tools/repos.sh` to synchronize all Strato repositories:
 
 ```bash
 # Clone or update all core repos (call, agent, prompt, server, rms, voice)
-./tools/repos.sh
+./src/call/tools/repos.sh
 
 # Install Python dependencies
-./tools/repos.sh --pip
+./src/call/tools/repos.sh --pip
 
 # Install MCP servers (requires npm/uv)
-./tools/repos.sh --mcp
+./src/call/tools/repos.sh --mcp
 
 # Codex preset (provisions /workspace/.venv)
-./tools/repos.sh --codex
+./src/call/tools/repos.sh --codex
 ```
 
 > **See also:** `CHANGELOG.md` for recent changes, `AGENTS.md` for contributor guidelines.
@@ -327,7 +329,7 @@ This allows:
 
 ### Repo Index (SQLite)
 
-Call maintains a single-source-of-truth index in `call/repo.db`:
+Call maintains a single-source-of-truth index in `.cache/call/repo.db`:
 
 **Schema:**
 
@@ -564,7 +566,7 @@ The runtime automatically loads external MCP servers when agents specify tools. 
 
 **MCP lifecycle and agent cache**
 
-- MCP servers are initialized once and reused between runs according to the lifecycle documented in `call/app/call.py` and `docs/mcp_sse_timeouts.md`.
+- MCP servers are initialized once and reused between runs according to the lifecycle documented in `src/call/app/call.py` and `docs/mcp_sse_timeouts.md`.
 - Agents (including agents-as-tools) are cached by name in a small in-memory `AGENT_CACHE` so they do not need to be re-instantiated on every call.
 - On reuse, each cached agent receives a fresh `mcp_servers` list built for the current run. This ensures that agents never hold onto MCP server instances whose sessions have already been cleaned up (for example, after Streamable HTTP timeouts or MCP auto-reinitialization for remote servers like Google Sheets `gsh`).
 - This design prevents follow-up calls from failing with `UserError("Server not initialized. Make sure you call connect() first.")` after an MCP reconnection, while still keeping agent construction overhead low.
@@ -573,7 +575,7 @@ The runtime automatically loads external MCP servers when agents specify tools. 
 
 ### Event Log
 
-Runtime events are durably appended to `call/call.db` for observability and future event streaming:
+Runtime events are durably appended to `.cache/call/call.db` for observability and future event streaming:
 
 **Operations:**
 - `call.lib.repo_db.push_event(event, payload)` — insert event, return sequence id
@@ -1126,9 +1128,16 @@ TELEGRAM_LIVE_KIND=skip        # Skip Telegram tests in CI
 
 ```env
 # Override default SQLite paths
-DB_PATH=call/repo.db           # Repository index (default)
-EVENT_DB_PATH=call/call.db     # Event log (default)
+DB_PATH=.cache/call/repo.db           # Repository index (default)
+EVENT_DB_PATH=.cache/call/call.db     # Event log (default)
+
+# Override cache root and workspace discovery
+CALL_CACHE_DIR=.cache/call            # Base directory for repo/event DBs
+CALL_REPO_ROOT=/home/tools/call       # Repo root (pyproject.toml)
+CALL_WORKSPACE_ROOT=/home/tools       # Workspace with prompt/agent repos
 ```
+
+> If `CALL_CACHE_DIR` is relative, it is resolved against `CALL_WORKSPACE_ROOT` (or the detected workspace root).
 
 ### Actions API Configuration
 
@@ -1342,7 +1351,7 @@ python -m call.app.call "BusinessAnalyticAgent" "приведи @Vasil3 в со�
 2. Delegate to `call.lib.api`
 3. Keep signature aligned with REST/CLI
 4. Update MCP Server section in README
-5. Reuse the shared warm-up helpers (`preinitialize_mcp_servers_async()` / `preinitialize_mcp_servers_sync()`) from `call/app/call.py` when adding new entrypoints to avoid cold starts.
+5. Reuse the shared warm-up helpers (`preinitialize_mcp_servers_async()` / `preinitialize_mcp_servers_sync()`) from `src/call/app/call.py` when adding new entrypoints to avoid cold starts.
 
 **Modifying card format:**
 
@@ -1784,7 +1793,7 @@ Call is part of the Strato Space AI infrastructure and integrates with:
 - Use environment-specific `.env` files
 - Configure `CALL_LOG_FILE` for persistent logging
 - Set `AGENTS_DEFAULT_MAX_TURNS` appropriately for workload
-- Monitor `call.db` and `repo.db` size, implement rotation if needed
+- Monitor `.cache/call/call.db` and `.cache/call/repo.db` size, implement rotation if needed
 
 ---
 

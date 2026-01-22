@@ -130,6 +130,7 @@ from telegram.request import HTTPXRequest
 
 # Library facade
 from call.lib import api as call_api
+from call.lib.paths import default_env_candidates
 from call.lib.logging import debug_print, configure_logging as call_logging, get_logger
 from call.lib.utils import parse_metadata_and_prompt
 from call.app.call import create_mcp_lifespan_callbacks
@@ -498,11 +499,12 @@ def _clear_instructions(
     return False
 
 
-# Load environment from call/.env first (module-relative), then allow process env to override
-_CALL_DIR = Path(__file__).resolve().parent.parent  # .../call/
-_CALL_ENV = _CALL_DIR / ".env"
-if _CALL_ENV.exists():
-    load_dotenv(dotenv_path=str(_CALL_ENV), override=True)
+# Load environment from repo/workspace .env first, then allow process env to override
+_env_candidates = default_env_candidates()
+_env_file = next((p for p in _env_candidates if p.exists()), None)
+_CALL_ENV = _env_file or (_env_candidates[0] if _env_candidates else Path(".env"))
+if _env_file:
+    load_dotenv(dotenv_path=str(_env_file), override=True)
 # Load default .env (cwd) and OS env; allow overriding too
 load_dotenv(override=True)
 

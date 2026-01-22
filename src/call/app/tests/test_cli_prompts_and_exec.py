@@ -3,14 +3,13 @@ import os
 import sys
 import subprocess
 
-
 from pathlib import Path
+
+from call.lib.paths import repo_root, workspace_root
 
 
 def _repo_root() -> str:
-    # this file: call/app/tests/test_cli_prompts_and_exec.py
-    # repo root is three levels up from call/app/tests -> .
-    return str(Path(__file__).resolve().parents[3])
+    return str(repo_root())
 
 
 def _run_cli(args, *, env=None, cwd=None):
@@ -324,8 +323,7 @@ def test_cli_call_print_instructions_malformed_prompt_bad_card_format(tmp_path):
     """Create a malformed prompt under existing project/agent and expect BAD_CARD_FORMAT (400)."""
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[3]
-    prompt_ready = repo_root / "prompt" / "ready"
+    prompt_ready = workspace_root() / "prompt" / "ready"
     prompt_ready.mkdir(parents=True, exist_ok=True)
     bad_id = "TempBadPrompt2"
     bad = prompt_ready / f"{bad_id}.md"
@@ -373,8 +371,7 @@ def test_cli_call_print_instructions_malformed_prompt_metadata_returns_400(tmp_p
     """Create a unique bad MD prompt, rescan DB, and expect 400 on print-instructions (strict MD-only)."""
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[3]
-    prompt_ready = repo_root / "prompt" / "ready"
+    prompt_ready = workspace_root() / "prompt" / "ready"
     prompt_ready.mkdir(parents=True, exist_ok=True)
     bad_id = "TempBadPrompt"
     bad = prompt_ready / f"{bad_id}.md"

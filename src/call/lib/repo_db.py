@@ -1,5 +1,5 @@
 """
-DB-only repository interface backed by SQLite (default: call/repo.db).
+DB-only repository interface backed by SQLite (default: .cache/call/repo.db).
 
 Functions:
 - list(project?, agent?, prompt?, state?, target?) -> list[dict]
@@ -21,11 +21,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import logging
+from call.lib.paths import default_event_db_path, default_repo_db_path
 
-# Location of the SQLite database. Default to call/repo.db next to this module,
-# but can be overridden via the DB_PATH environment variable.
-DB_PATH = os.getenv("DB_PATH", "call/repo.db")
-EVENT_DB_PATH = os.getenv("EVENT_DB_PATH", "call/call.db")
+# Location of the SQLite database (default: .cache/call/repo.db).
+# Override via the DB_PATH environment variable.
+DB_PATH = os.getenv("DB_PATH", str(default_repo_db_path()))
+EVENT_DB_PATH = os.getenv("EVENT_DB_PATH", str(default_event_db_path()))
 
 
 def _ensure_db() -> sqlite3.Connection:

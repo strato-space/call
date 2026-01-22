@@ -149,10 +149,15 @@ async def mcp_call(...):
   - `systemctl enable bot@MediaGenBlenderBot mcp@media-gen`
 - After MCP or prompt config changes, restart both:
   - `systemctl restart bot@MediaGenBlenderBot mcp@media-gen`
+- Bot units run via `uv` from `/home/tools/call`; ensure the package is installed (`uv sync --active`). If running straight from source, set `PYTHONPATH=/home/tools/call/src` so imports like `call.lib` resolve.
+- Use an absolute MCP config path in `/home/tools/call/.env` (e.g. `MCP_CONFIG_PATH=/home/tools/call/mcp_config.yaml`).
+- `CALL_CACHE_DIR` accepts relative paths, resolved against `CALL_WORKSPACE_ROOT` (or detected workspace root like `/home/strato-space`).
 
 ## Logs & Debugging (Bots + MCP)
 - Bot services (journald): `journalctl -u bot@MediaGenBlenderBot -f`, `journalctl -u bot@MediaGenMemeBot -f`
 - MCP services (journald): `journalctl -u mcp@media-gen -f`, `journalctl -u mcp@gsh -f`
+- If `bot@*` units exit with `ModuleNotFoundError: No module named 'httpx'`, install the dependency in the call env (for example `uv sync --active --extra dev` or `uv pip install httpx`) and restart the bots.
+- If `bot@*` units exit with `ModuleNotFoundError: No module named 'call.lib'`, confirm `uv sync --active` was run or set `PYTHONPATH=/home/tools/call/src`, and that `MCP_CONFIG_PATH` points to an absolute path.
 - MediaGen app logs (`/home/tools/mediagen`):
   - `agents/logs/fastagent-execution.jsonl` (tool call traces)
   - `agents/logs/agent-media-gen-services.log`
@@ -180,9 +185,9 @@ Thanks for keeping the repo tidy and well-documented!
 ## Build, Test & Development Commands
 
 - `pytest` runs all tests; add `-k fragment` to focus.
-- For a full run in this repo: `uv sync --active --extra dev` then `PYTHONPATH=/home/tools uv run --active pytest`.
-- `python -m cli.main --help` explores CLI workflows; `uvicorn actions.main:app --reload` serves REST locally.
-- Use `tools/` scripts to capture integration traces.
+- For a full run in this repo: `uv sync --active --extra dev` then `uv run --active pytest`.
+- `python -m call.cli.main --help` explores CLI workflows; `uvicorn call.actions.main:app --reload` serves REST locally.
+- Use `src/call/tools/` scripts to capture integration traces.
 
 ## Testing Guidelines
 

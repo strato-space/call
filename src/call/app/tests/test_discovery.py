@@ -2,6 +2,8 @@ from pathlib import Path
 import os
 import importlib
 
+from call.lib.paths import workspace_root
+
 
 def _ensure_test_env():
     # Minimal env required by call.app.call on import
@@ -12,9 +14,7 @@ def _ensure_test_env():
     os.environ.setdefault("TELEGRAPH_TOKEN", "test-telegraph")
     os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
     # Ensure discovery uses the workspace prompt repo regardless of cwd
-    os.environ.setdefault(
-        "PROMPT_REPO", str(Path(__file__).resolve().parents[3] / "prompt")
-    )
+    os.environ.setdefault("PROMPT_REPO", str(workspace_root() / "prompt"))
 
 
 def _mod():

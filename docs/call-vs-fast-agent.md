@@ -82,7 +82,7 @@ Summarized target capabilities:
 
 ### 11) OpenAI API strategy (Agents SDK vs Chat Completions, Responses API)
 - call: Uses OpenAI Agents SDK in runtime, with documented Responses API behavior and constraints (vendor lock tradeoff vs higher-level features).
-  - Evidence: call/app/call.py, call/docs/mcp_sse_timeouts.md
+  - Evidence: src/call/app/call.py, call/docs/mcp_sse_timeouts.md
 - fast-agent: Supports both OpenAI Chat Completions and Responses in the OpenAI provider; provider-agnostic architecture reduces lock-in.
   - Evidence: fast-agent/src/fast_agent/llm/provider/openai/llm_openai.py, fast-agent/src/fast_agent/llm/model_factory.py
 

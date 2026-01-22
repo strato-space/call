@@ -21,10 +21,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from call.lib.logging import debug_print
+from call.lib.paths import workspace_root
 
 # Keep the same default used previously in app layer so callers can reuse it
 # for samples/memory root resolution when needed by the pipeline.
-default_samples_dir: str = str(Path(__file__).resolve().parents[2])
+default_samples_dir: str = str(workspace_root())
 
 # KISS policy (2025-09-17): all lookups/use are case-sensitive. No normalization.
 
@@ -36,11 +37,10 @@ def discover_prompt_repo() -> Path:
     env_repo = os.environ.get("PROMPT_REPO")
     if env_repo and Path(env_repo).exists():
         return Path(env_repo)
-    # try sibling 'prompt' at workspace root
-    here = Path(__file__).resolve()
+    ws_root = workspace_root()
     candidates = [
-        here.parents[2] / "prompt",  # repo_root/prompt
-        here.parents[1] / "prompt",  # call/prompt (if copied inside)
+        ws_root / "prompt",  # workspace/prompt
+        ws_root / "call" / "prompt",  # fallback if copied inside
         Path("c:/Users/Leader/PycharmProjects/prompt"),
     ]
     for p in candidates:
@@ -58,10 +58,10 @@ def discover_agent_repo() -> Path:
     env_repo = os.environ.get("AGENT_REPO")
     if env_repo and Path(env_repo).exists():
         return Path(env_repo)
-    here = Path(__file__).resolve()
+    ws_root = workspace_root()
     candidates = [
-        here.parents[2] / "agent",  # repo_root/agent
-        here.parents[1] / "agent",  # call/agent (if copied inside)
+        ws_root / "agent",  # workspace/agent
+        ws_root / "call" / "agent",  # fallback if copied inside
     ]
     for p in candidates:
         if p.exists():
@@ -84,7 +84,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def load_projects_index(repo: Path | None = None) -> list[str]:
-    """DB-only projects index using call/repo.db.
+    """DB-only projects index using .cache/call/repo.db.
 
     Returns exact project names discovered by the last sync (scan).
     No filesystem reads. If the DB is empty, returns an empty list.
@@ -573,9 +573,9 @@ def github_blob_url(local_path: str | Path) -> str | None:
         import os as _os
 
         p = Path(local_path)
-        repo_root = Path(__file__).resolve().parents[2]
+        ws_root = workspace_root()
         try:
-            rel = str(Path(p).resolve().relative_to(repo_root.resolve()).as_posix())
+            rel = str(Path(p).resolve().relative_to(ws_root.resolve()).as_posix())
         except Exception:
             rel = p.name
         branch = _os.getenv("GITHUB_BRANCH", "master")

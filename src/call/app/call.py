@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from call.lib.api import RunnableConfig
 from call.lib.logging import debug_print
+from call.lib.paths import default_env_candidates, default_event_db_path, workspace_root
 
 
 # Local YAML loader for MCP configuration (simple safe_load)
@@ -284,13 +285,10 @@ def _dump_yaml_literal(obj: Any, *, width: int = 999999) -> str:
 # Import agent utilities (internal copy)
 try:
     from .utils.agent_utils import extract_agent_attributes, get_agent_instructions
-except ImportError:
-    # Fallback for when running as script directly
-    import sys
-    import os
-
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "utils"))
-    from agent_utils import extract_agent_attributes, get_agent_instructions
+except ImportError as exc:
+    raise ImportError(
+        "call.app.call must be imported as a package module (use python -m call.app.call)"
+    ) from exc
 import shutil
 
 # Import HTML/Telegram text utilities from package-relative utils
@@ -323,25 +321,19 @@ except Exception:
     pass
 
 """
-Environment loading: resolve .env relative to this file location, not CWD.
+Environment loading: resolve .env relative to repo/workspace, not CWD.
 Search order:
-  1) call/.env (sibling of this app/ directory)
-  2) repo_root/.env (one level above call/)
+  1) repo_root/.env
+  2) workspace_root/.env (one level above repo)
 If not found, raise with a helpful message. We do not copy files.
 """
-_here = Path(__file__).resolve()
-_app_dir = _here.parent
-_call_dir = _app_dir.parent
-_repo_root = _call_dir.parent
-
-_env_candidates = [
-    _call_dir / ".env",
-    _repo_root / ".env",
-]
+_env_candidates = default_env_candidates()
 _env_file = next((p for p in _env_candidates if p.exists()), None)
 if _env_file is None:
     checked = ", ".join(str(p) for p in _env_candidates)
     raise FileNotFoundError(f".env not found. Checked: {checked}")
+
+_WORKSPACE_ROOT = workspace_root()
 
 from agents import Agent, Runner, WebSearchTool, SQLiteSession
 from agents.tool import FileSearchTool, FunctionTool, ImageGenerationTool, function_tool
@@ -2102,7 +2094,7 @@ def _create_session_if_any(
     # Ensure uniqueness across concurrent requests (two messages can arrive in the same second).
     session_id = f"{session_id}:{uuid.uuid4().hex}"
 
-    db_path = os.getenv("CALL_DB", "call/call.db")
+    db_path = os.getenv("CALL_DB", str(default_event_db_path()))
     try:
         db_dir = os.path.dirname(db_path)
         if db_dir:
@@ -3441,7 +3433,7 @@ async def telegram_send_photo(
 
 logging.getLogger("openai").setLevel(logging.DEBUG)
 
-default_samples_dir = str(Path(__file__).resolve().parents[2])
+default_samples_dir = str(_WORKSPACE_ROOT)
 
 
 def normalize_agent_name(raw: str) -> str:
@@ -3522,7 +3514,7 @@ def github_blob_url(local_path: str | Path) -> str | None:
     try:
         p = Path(local_path)
         try:
-            rel = str(Path(p).resolve().relative_to(_repo_root.resolve()).as_posix())
+            rel = str(Path(p).resolve().relative_to(_WORKSPACE_ROOT.resolve()).as_posix())
         except Exception:
             rel = p.name
 
@@ -4774,11 +4766,9 @@ def discover_prompt_repo() -> Path:
     env_repo = os.environ.get("PROMPT_REPO")
     if env_repo and Path(env_repo).exists():
         return Path(env_repo)
-    # try sibling 'prompt' at workspace root
-    here = Path(__file__).resolve()
     candidates = [
-        here.parents[2] / "prompt",  # .../PycharmProjects/prompt
-        here.parents[1] / "prompt",  # .../call/prompt (if copied inside)
+        _WORKSPACE_ROOT / "prompt",  # workspace/prompt
+        _WORKSPACE_ROOT / "call" / "prompt",  # fallback if copied inside
         Path("c:/Users/Leader/PycharmProjects/prompt"),
     ]
     for p in candidates:

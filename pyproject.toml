@@ -30,12 +30,23 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "pytest-anyio",
   "pytest-asyncio",
   "trio",
 ]
 
+[project.scripts]
+call = "call.cli.main:main"
+call-telegram-bot = "call.telegram_bot.bot:main"
+
 [tool.uv]
-package = false
+package = true
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.uv.sources]
 "mcp-image" = { path = "/home/tools/mcp-images" }

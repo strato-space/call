@@ -6,8 +6,10 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from call.lib.paths import default_event_db_path
 
-DB_PATH = os.getenv("CALL_DB", ".cache/call/call.db")
+
+DB_PATH = os.getenv("CALL_DB", str(default_event_db_path()))
 log = logging.getLogger(__name__)
 
 

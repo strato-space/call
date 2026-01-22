@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence, Set as AbstractSet
 from call.lib import repo_db as call_repo
 from call.lib import repo_fs as repo_fs
+from call.lib.paths import default_event_db_path
 from call.lib.logging import debug_print
 
 
@@ -1912,7 +1913,7 @@ async def clear_session(
     def _sid_new(chat: int, thread: Optional[int]) -> str:
         return f"{chat}:{thread}" if thread is not None else f"{chat}"
 
-    db_path = os.getenv("CALL_DB", "call/call.db")
+    db_path = os.getenv("CALL_DB", str(default_event_db_path()))
     cleared: List[str] = []
     try:
         conn = sqlite3.connect(db_path)

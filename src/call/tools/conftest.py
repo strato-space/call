@@ -10,15 +10,27 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure repo root on sys.path so `import call.app...` works when running from call/
+def _find_repo_root(start: Path) -> Path:
+    for parent in (start, *start.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return start.parent
+
+
+# Ensure src root on sys.path so `import call.*` works when running from repo root
 _here = Path(__file__).resolve()
-_call_dir = _here.parent
-_repo_root = _call_dir.parent
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+_repo_root = _find_repo_root(_here)
+_src_root = _repo_root / "src"
+if str(_src_root) not in sys.path:
+    sys.path.insert(0, str(_src_root))
+
+if "CALL_REPO_ROOT" not in os.environ:
+    os.environ["CALL_REPO_ROOT"] = str(_repo_root)
+if "CALL_WORKSPACE_ROOT" not in os.environ:
+    os.environ["CALL_WORKSPACE_ROOT"] = str(_repo_root.parent)
 
 # Best-effort environment loader from call/.env
-_dotenv = _call_dir / ".env"
+_dotenv = _repo_root / ".env"
 if _dotenv.exists():
     try:
         for line in _dotenv.read_text(encoding="utf-8").splitlines():

@@ -35,7 +35,7 @@ PROMPT section contains only the text sent to the LLM. Keep runtime configuratio
 
 ## Strictness
 
-- Runtime API only reads paths from `call/repo.db` and accepts Markdown cards.
+- Runtime API only reads paths from `.cache/call/repo.db` and accepts Markdown cards.
 - If a prompt card is selected but its METADATA block is missing/malformed, CLI `--print-instructions` returns a 400 BAD_CARD_FORMAT envelope.
 - Scanner logs warnings for `.md` prompts missing METADATA and still indexes them by filename; runtime paths remain strict.
 

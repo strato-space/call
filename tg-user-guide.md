@@ -1,7 +1,7 @@
 # Telegram User Guide — Call / MCP
 
 ## Overview
-- Unified bot for running agents and prompts from the Call repo index (`call/repo.db`).
+- Unified bot for running agents and prompts from the Call repo index (`.cache/call/repo.db`).
 - Names are case-sensitive. Use exact `Project`, `Agent`, `Prompt` names as listed by the index.
 - Private chats accept plain text; group chats require explicit @-mentions.
 - Source of truth for behavior: `call/README.md`.

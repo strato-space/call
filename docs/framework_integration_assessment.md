@@ -3,9 +3,9 @@
 ## 1. What Call already provides
 
 - **Unified launch contract.** The public API (REST, MCP, CLI) accepts a single JSON payload with project/agent/prompt and passes it to the runtime without transformations. This simplifies external runner integration as long as they can return the final text and, optionally, a richer envelope. 【F:call/README.md†L41-L116】
-- **SQLite index over file repositories.** All projects, agents, and prompts are aggregated into `call/repo.db`, minimizing filesystem access and providing an extension point for alternative engines. 【F:call/README.md†L97-L132】【F:call/lib/repo_db.py†L1-L186】
+- **SQLite index over file repositories.** All projects, agents, and prompts are aggregated into `.cache/call/repo.db`, minimizing filesystem access and providing an extension point for alternative engines. 【F:call/README.md†L97-L132】【F:call/lib/repo_db.py†L1-L186】
 - **Configurable `RunnableConfig`.** Call builds a compact DTO from YAML/Markdown cards with instructions, MCP servers, and tools. Any external framework must accept this set and return a response. 【F:call/lib/api.py†L456-L560】
-- **Current runner based on the `agents` package.** The main function in `call/app/call.py` constructs an `Agent` from instructions and connects MCP/tools. This is the primary swap-out point for another runtime. 【F:call/app/call.py†L1-L135】
+- **Current runner based on the `agents` package.** The main function in `src/call/app/call.py` constructs an `Agent` from instructions and connects MCP/tools. This is the primary swap-out point for another runtime. 【F:src/call/app/call.py†L1-L135】
 
 ## 2. What exists in adjacent repositories
 
@@ -42,6 +42,6 @@
 1. Add an adapter layer (`call/lib/runners/metagpt.py`) that creates MetaGPT roles/tasks from `RunnableConfig` and prompts.
 2. Extend `call.lib.api.build_runnable_instructions_config` with a small `engine=metagpt` flag to select the runner without breaking compatibility with the `agents` package. 【F:call/lib/api.py†L456-L560】
 3. Keep the existing REST/MCP layer and repository index intact so Telegram and CLI continue to work. 【F:call/README.md†L57-L132】
-4. Add module tests under `call/app/tests` to verify that the new runner returns the envelope and supports tools/model settings.
+4. Add module tests under `src/call/app/tests` to verify that the new runner returns the envelope and supports tools/model settings.
 
 This strategy lets us gradually replace the `agents` package with MetaGPT (or another lightweight framework) without breaking adjacent repos or existing client integrations.

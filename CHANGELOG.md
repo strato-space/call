@@ -21,6 +21,23 @@ All notable changes to this project will be documented in this file.
 - `app/tests/test_actions_api_unit.py`: add `test_reload_ok`.
 - `README.md`, `AGENTS.md`: document `CALL_ACTIONS_BASE_URL` and `mcp_config.sample.yaml` usage.
 
+## 2026-01-22
+
+### PROBLEM SOLVED
+- Source/layout refactors and runtime paths were brittle (repo/workspace detection, cache/db locations, and .env visibility), leading to import and logging errors.
+- CALL cache paths and db defaults drifted between repo/workspace roots.
+
+### FEATURE IMPLEMENTED
+- Migrated the package to a proper `src/` layout with packaging metadata and console scripts.
+- Added path helpers with workspace detection and relative `CALL_CACHE_DIR` resolution, keeping legacy db paths readable.
+
+### CHANGES
+- `src/call/lib/paths.py`, `src/call/lib/api.py`, `src/call/lib/repo_db.py`, `src/call/lib/call_db.py`, `src/call/app/call.py`: centralize cache/db/workspace path resolution and legacy fallbacks.
+- `pyproject.toml`: enable package mode, add console scripts and dev dependency `pytest-anyio`.
+- `conftest.py`, `src/call/tools/conftest.py`, `src/call/app/tests/*`: align tests to the `src/` layout and path helpers.
+- `src/call/telegram_bot/bot.py`: fix env discovery logging and `_CALL_ENV` resolution.
+- `README.md`, `AGENTS.md`, `docs/*`, `tg-user-guide.md`: update layout/path references and cache env behavior.
+
 ## 2026-01-20
 
 ### PROBLEM SOLVED

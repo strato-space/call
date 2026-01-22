@@ -31,6 +31,7 @@ from call.lib import api as call_api
 from call.lib.logging import configure_logging as call_logging
 from call.lib.logging import debug_print
 from call.lib import repo_db as repo_db_module
+from call.lib.paths import default_env_candidates
 from dotenv import load_dotenv
 from pathlib import Path as _Path
 import logging as _logging
@@ -538,12 +539,10 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    # Load environment from call/.env first, then repo-root .env; do not override existing OS env
+    # Load environment from repo/workspace .envs; do not override existing OS env
     try:
-        _here = _Path(__file__).resolve()
-        _call_dir = _here.parent.parent  # .../call/
-        load_dotenv(dotenv_path=str(_call_dir / ".env"), override=False)
-        load_dotenv(dotenv_path=str(_call_dir.parent / ".env"), override=False)
+        for candidate in default_env_candidates():
+            load_dotenv(dotenv_path=str(candidate), override=False)
     except Exception:
         pass
 

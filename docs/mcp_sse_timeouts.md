@@ -355,7 +355,7 @@ required to handle the 5-minute OpenAI backend limit.
 
 ## 10. Agent cache and "dead" MCP sessions
 
-- `call/app/call.py` has a small agent cache `AGENT_CACHE` that keeps `Agent`
+- `src/call/app/call.py` has a small agent cache `AGENT_CACHE` that keeps `Agent`
   instances by name (including sub-agents used as tools, e.g.
   `PM-4-DialogTaskSummary`). This avoids re-creating agents for every call.
 - After introducing MCP auto-reinit

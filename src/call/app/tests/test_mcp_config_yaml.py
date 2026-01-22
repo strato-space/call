@@ -1,5 +1,4 @@
 import importlib
-from pathlib import Path
 import pytest
 
 from contextlib import AsyncExitStack
@@ -14,6 +13,7 @@ from call.app.call import (
     _set_mcp_exit_stack,
 )
 from call.app import call as call_module
+from call.lib.paths import default_mcp_config_path
 import asyncio
 import os
 import anyio
@@ -28,7 +28,7 @@ def _reset_state():
 
 def test_mcp_config_yaml_present_and_parsable():
     call_mod = importlib.import_module("call.app.call")
-    cfg_path = Path(__file__).resolve().parents[2] / "mcp_config.yaml"
+    cfg_path = default_mcp_config_path()
     assert cfg_path.exists(), "call/mcp_config.yaml should exist"
     data = call_mod._load_mcp_yaml_config(cfg_path)
     assert isinstance(data, dict)

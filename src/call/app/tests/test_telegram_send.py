@@ -6,12 +6,24 @@ from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Ensure the repository root is on sys.path so 'call' package is importable
-_this_file = Path(__file__).resolve()
-_call_dir = _this_file.parents[2]  # .../call
-_repo_root = _call_dir.parent  # .../
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+
+def _find_repo_root(start: Path) -> Path:
+    for parent in (start, *start.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return start.parent
+
+
+# Ensure src root is on sys.path so 'call' package is importable
+_repo_root = _find_repo_root(Path(__file__).resolve())
+_src_root = _repo_root / "src"
+if str(_src_root) not in sys.path:
+    sys.path.insert(0, str(_src_root))
+
+if "CALL_REPO_ROOT" not in os.environ:
+    os.environ["CALL_REPO_ROOT"] = str(_repo_root)
+if "CALL_WORKSPACE_ROOT" not in os.environ:
+    os.environ["CALL_WORKSPACE_ROOT"] = str(_repo_root.parent)
 
 from telegram import Bot
 from telegram.constants import ParseMode
@@ -37,21 +49,14 @@ pytestmark = [
 ]
 
 # --- Load .env from repo to populate TELEGRAM_* if not already set ---
-from pathlib import Path
-
-
 def _load_env_from_dotenv() -> None:
     """Best-effort .env loader for integration tests.
 
-    Attempts to load key=value pairs from call/.env into os.environ if not set.
+    Attempts to load key=value pairs from repo .env into os.environ if not set.
     This avoids adding a python-dotenv dependency just for tests.
     """
     try:
-        # test file path: call/app/tests/test_telegram_send.py
-        # repo root = parents[3], call dir = parents[2]
-        here = Path(__file__).resolve()
-        call_dir = here.parents[2]
-        dotenv = call_dir / ".env"
+        dotenv = _repo_root / ".env"
         if not dotenv.exists():
             return
         for line in dotenv.read_text(encoding="utf-8").splitlines():
@@ -106,15 +111,9 @@ def _env_token_chat_thread() -> tuple[str, str, Optional[int]]:
 
 
 # Load .env before evaluating skip markers
-_here = Path(__file__).resolve()
-_tests_dir = _here.parent
-_app_dir = _tests_dir.parent
-_call_dir = _app_dir.parent
-_repo_root = _call_dir.parent
-
 _env_candidates = [
-    _call_dir / ".env",
     _repo_root / ".env",
+    _repo_root.parent / ".env",
 ]
 for _cand in _env_candidates:
     if _cand.exists():

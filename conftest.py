@@ -10,9 +10,15 @@ import tempfile
 from pathlib import Path
 import pytest
 
-_ROOT = Path(__file__).resolve().parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parent
+_SRC_ROOT = _REPO_ROOT / "src"
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+
+if "CALL_REPO_ROOT" not in os.environ:
+    os.environ["CALL_REPO_ROOT"] = str(_REPO_ROOT)
+if "CALL_WORKSPACE_ROOT" not in os.environ:
+    os.environ["CALL_WORKSPACE_ROOT"] = str(_REPO_ROOT.parent)
 
 
 def _has_any(root: Path, rel_paths: list[Path]) -> bool:
@@ -75,8 +81,8 @@ _PROMPT_SENTINELS = [
 _agent_repo = _pick_repo(
     "AGENT_REPO",
     [
-        _ROOT.parent / "agent",
-        _ROOT / "agent",
+        _REPO_ROOT.parent / "agent",
+        _REPO_ROOT / "agent",
         Path("/home/backup/leagcy-2026-01-13/agent"),
         Path("/home/strato-space/agent"),
     ],
@@ -85,8 +91,8 @@ _agent_repo = _pick_repo(
 _prompt_repo = _pick_repo(
     "PROMPT_REPO",
     [
-        _ROOT.parent / "prompt",
-        _ROOT / "prompt",
+        _REPO_ROOT.parent / "prompt",
+        _REPO_ROOT / "prompt",
         Path("/home/backup/leagcy-2026-01-13/prompt"),
         Path("/home/strato-space/prompt"),
     ],

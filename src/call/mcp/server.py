@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from call.lib.logging import configure_logging as call_logging, get_logger, debug_print
+from call.lib.paths import default_env_candidates
 from call.app.call import MCPInitializationError, wait_for_mcp_init, start_mcp_owner_task, stop_mcp_owner_task
 
 try:
@@ -32,12 +33,10 @@ from call.lib import repo_db as repo_db_module
 
 @asynccontextmanager
 async def lifespan(app: FastMCP):
-    # Load environment deterministically: call/.env then repo-root .env (do not override OS env)
+    # Load environment deterministically: repo/workspace .env (do not override OS env)
     try:
-        here = Path(__file__).resolve()
-        call_dir = here.parent.parent  # .../call/
-        load_dotenv(dotenv_path=str(call_dir / ".env"), override=False)
-        load_dotenv(dotenv_path=str(call_dir.parent / ".env"), override=False)
+        for candidate in default_env_candidates():
+            load_dotenv(dotenv_path=str(candidate), override=False)
     except Exception:
         pass
     # Configure logging (DEBUG when CALL_DEBUG=1, else INFO)
@@ -53,7 +52,7 @@ async def lifespan(app: FastMCP):
     log = get_logger("mcp")
     log.info(
         "Starting mcp-call server (env loaded: call/.env exists=%s)",
-        (call_dir / ".env").exists() if "call_dir" in locals() else False,
+        bool(default_env_candidates() and default_env_candidates()[0].exists()),
     )
     debug_print("[mcp]", "[START]", "mcp-call server starting via stdio")
     
