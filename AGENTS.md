@@ -166,6 +166,7 @@ async def mcp_call(...):
   - `tail -n 100 agents/logs/fastagent-execution.jsonl | rg "fetch-images"`
 - Host rollups (if present): `/home/tools/logs/StratoSpace-*.log`
 - Local call log (if enabled): `call/logs/0x.log`
+- Invalid conversation history recoveries emit `[recovery]` logs and restart MCP once; investigate repeated recoveries in call logs.
 
 ## MediaGen Runtime Checklist
 - [ ] MCP config paths updated for renamed apps (see `call/mcp_config.yaml`)

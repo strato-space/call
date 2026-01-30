@@ -2031,6 +2031,10 @@ _FETCH_IMAGES_ANCHOR_RE = re.compile(
     r"<a\b[^>]*href=[\"'][^\"']*fetch-images[^\"']*[\"'][^>]*>.*?</a>",
     re.IGNORECASE | re.DOTALL,
 )
+_INVALID_HISTORY_RE = re.compile(
+    r"invalid conversation history: assistant message has pending tool calls",
+    re.IGNORECASE,
+)
 
 
 def _strip_fetch_images_links(text: str) -> str:
@@ -2065,6 +2069,12 @@ def _strip_fetch_images_links(text: str) -> str:
         else:
             pending_blank = True
     return "\n".join(output_lines).strip("\n")
+
+
+def _is_invalid_history_error(text: str | None) -> bool:
+    if not isinstance(text, str) or not text:
+        return False
+    return bool(_INVALID_HISTORY_RE.search(text))
 
 
 async def _init_bot_safe(*, project_name: str | None = None) -> None:
@@ -2216,6 +2226,46 @@ async def _send_error_notification(
         )
     except Exception:
         pass
+
+
+async def _send_history_recovery_notification(
+    *,
+    cfg: RunnableConfig,
+    selected_chat_id: int | None,
+    selected_thread_id: int | None,
+) -> None:
+    """Best-effort Telegram notification when invalid history is detected and recovery begins."""
+    if selected_chat_id is None:
+        return
+
+    log = logging.getLogger("call.recovery")
+    try:
+        await init_bot()
+    except Exception:
+        log.exception("[recovery] init_bot failed while sending history recovery notice")
+        return
+
+    try:
+        safe_title = sanitize_telegram_html(
+            getattr(cfg, "id", "") or getattr(cfg, "name", "") or "Agent"
+        )
+        body_text = (
+            "Обнаружена ошибка истории диалога при выполнении инструмента.\n"
+            "Действия: очистили историю, пересоздали сессию, перезапустили MCP и повторяем запрос.\n"
+            "Обработка продолжается."
+        )
+        safe_body = sanitize_telegram_html(body_text)
+        body = telegram_truncate_html_safe(
+            f"⚠️ <b>{safe_title}</b>\n\n<code>{safe_body}</code>", 3800
+        )
+        await safe_send_message(
+            chat_id=selected_chat_id,
+            message_thread_id=selected_thread_id,
+            text=body,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        log.exception("[recovery] Failed to send history recovery notice")
 
 
 def ensure_env(var: str, default: str = None) -> str:
@@ -5727,10 +5777,123 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
         )
         return getattr(result_local, "final_output", "") or ""
 
+    async def _recover_invalid_history(err_text: str | None) -> bool:
+        """Attempt to recover from invalid conversation history and rebuild runtime state."""
+        nonlocal mcp_servers, agent, tools, session, local_mcp_servers, cfg_yaml
+
+        log = logging.getLogger("call.recovery")
+        log.warning(
+            "[recovery] Invalid conversation history detected; attempting recovery. error=%s",
+            err_text or "",
+        )
+
+        await _send_history_recovery_notification(
+            cfg=cfg,
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+        )
+
+        try:
+            AGENT_CACHE.clear()
+            log.info("[recovery] Cleared agent cache after invalid history")
+        except Exception:
+            log.exception("[recovery] Failed to clear agent cache")
+
+        try:
+            await stop_mcp_owner_task()
+            log.info("[recovery] MCP owner task stopped")
+        except Exception:
+            log.exception("[recovery] Failed to stop MCP owner task")
+
+        try:
+            _reset_mcp_state()
+            log.info("[recovery] MCP state reset")
+        except Exception:
+            log.exception("[recovery] Failed to reset MCP state")
+
+        try:
+            await start_mcp_owner_task("history-recovery")
+            log.info("[recovery] MCP owner task restarted")
+        except Exception:
+            log.exception("[recovery] Failed to restart MCP owner task")
+
+        try:
+            await wait_for_mcp_init(timeout=120.0)
+        except Exception:
+            log.exception("[recovery] MCP reinit failed after invalid history")
+            return False
+
+        try:
+            local_mcp_servers, cfg_yaml = await _prepare_mcp_servers(astack=None)
+        except Exception:
+            log.exception("[recovery] Failed to rebuild MCP server list")
+            return False
+
+        mcp_servers = list(local_mcp_servers) + list(remote_mcp_servers)
+
+        new_tools: list[Any] | None = None
+        try:
+            new_tools = await build_tools_for_cfg(cfg)
+            _append_agent_tools_from_cfg(cfg=cfg, tools=new_tools, mcp_servers=mcp_servers)
+            log.info("[recovery] Tools rebuilt after invalid history")
+        except Exception:
+            log.exception("[recovery] Failed to rebuild tools; reusing existing tools")
+            new_tools = None
+
+        if new_tools is not None:
+            tools = new_tools
+
+        try:
+            agent = Agent(
+                name=cfg.id,
+                instructions=cfg.instructions,
+                model=cfg.model,
+                model_settings=agent_model_settings,
+                tools=tools,
+                mcp_servers=mcp_servers,
+            )
+            log.info("[recovery] Agent rebuilt after invalid history")
+        except Exception:
+            log.exception("[recovery] Failed to rebuild agent; trying to refresh in place")
+            try:
+                agent.mcp_servers = mcp_servers
+                agent.tools = tools
+                log.info("[recovery] Agent refreshed in place after invalid history")
+            except Exception:
+                log.exception("[recovery] Failed to refresh existing agent")
+                return False
+
+        try:
+            session = _create_session_if_any(selected_chat_id, selected_thread_id)
+            log.info("[recovery] Session recreated after invalid history")
+        except Exception:
+            log.exception("[recovery] Failed to recreate session after invalid history")
+            session = None
+
+        return True
+
     mcp_retried = False
+    history_retried = False
     while True:
         try:
             step1_output = await _run_agent_once()
+            if _is_invalid_history_error(step1_output):
+                if not history_retried:
+                    history_retried = True
+                    recovered = await _recover_invalid_history(step1_output)
+                    if recovered:
+                        continue
+                logging.error(
+                    "[app] Invalid conversation history persisted after recovery attempt"
+                )
+                step1_output = "Error: Invalid conversation history (recovery failed)"
+                await _send_error_notification(
+                    cfg=cfg,
+                    selected_chat_id=selected_chat_id,
+                    selected_thread_id=selected_thread_id,
+                    message="Ошибка истории диалога: восстановление не удалось. Проверьте логи.",
+                )
+                break
             debug_print("[call]", "step1_output: |-\n", step1_output)
             break
         except Exception as e:
@@ -5739,6 +5902,13 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                 err_text = format_exception_text(e)
             except Exception:
                 err_text = str(e)
+            invalid_history_detected = _is_invalid_history_error(err_text)
+            if invalid_history_detected:
+                if not history_retried:
+                    history_retried = True
+                    recovered = await _recover_invalid_history(err_text)
+                    if recovered:
+                        continue
             fatal_tokens = (
                 "unsupported_country_region_territory",
                 "request_forbidden",
@@ -5774,6 +5944,8 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
             # Non-fatal errors: log full exception and surface a short error
             logging.exception("[app] Agent run failed")
             short_msg = str(e) or "Error"
+            if invalid_history_detected:
+                short_msg = "Invalid conversation history (recovery failed)"
             debug_print("[app]", f"Error during main agent run: {short_msg}")
             step1_output = f"Error: {short_msg}"
             # TODO: verify error parsing and overall consistency of error message output.
@@ -5785,6 +5957,10 @@ async def build_and_run_agent(cfg: RunnableConfig, user_input: str = ""):
                     message_for_tg = msg_val.strip()
             if not message_for_tg:
                 message_for_tg = short_msg
+            if invalid_history_detected:
+                message_for_tg = (
+                    "Ошибка истории диалога: восстановление не удалось. Проверьте логи."
+                )
             await _send_error_notification(
                 cfg=cfg,
                 selected_chat_id=selected_chat_id,

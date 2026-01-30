@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-01-30
+
+### PROBLEM SOLVED
+- Invalid conversation history errors could stop MCP-driven tool runs without a recovery path.
+
+### FEATURE IMPLEMENTED
+- Automatic recovery for invalid conversation history by resetting MCP state and retrying once.
+
+### CHANGES
+- Recover from invalid conversation history errors by resetting MCP state, rebuilding the agent/session, and sending a recovery notice before retrying. (file: `app/call.py`)
+
 ## 2026-01-21
 
 ### PROBLEM SOLVED

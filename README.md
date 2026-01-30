@@ -1393,6 +1393,10 @@ python -m call.cli.main call --project UxFab --agent MyAgent --print-instruction
 python -m call.cli.main read MyAgent
 ```
 
+**Recover invalid history errors:**
+
+If you see `Invalid conversation history` in output, check the call logs for `[recovery]` entries; the runtime resets MCP state and retries once before surfacing the error.
+
 **Monitor Telegram bot updates:**
 
 ```bash
