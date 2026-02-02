@@ -1,4 +1,4 @@
-# From Proprietary `call` platform to fast-agent.ai: Lessons in Open Agent Platforms
+# From Proprietary `call` platform to `fast-agent.ai`: Lessons in Open Agent Platforms
 
 I spent a **lot** of time building my own agent platform `call` on top of OpenAI Agents SDK… and then I made a decision that felt both painful and obvious:
 

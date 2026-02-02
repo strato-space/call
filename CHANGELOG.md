@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 - 06:30 Bump package version to `0.0.5`. (files: `pyproject.toml`, `uv.lock`)
 - 09:15 Refresh LinkedIn draft with updated stack framing and references. (file: `docs/lessons-in-open-agent-platforms.md`)
 - 09:15 Bump package version to `0.0.6`. (files: `pyproject.toml`, `uv.lock`)
+- 10:05 Polish LinkedIn draft title formatting. (file: `docs/lessons-in-open-agent-platforms.md`)
+- 10:05 Bump package version to `0.0.7`. (files: `pyproject.toml`, `uv.lock`)
 
 ## 2026-01-30
 
