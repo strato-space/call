@@ -14,7 +14,7 @@
 - `actions/` — FastAPI REST surface for GPT Actions clients. It re-exports the public `call.lib.api` helpers and enforces bearer auth; keep OpenAPI metadata (`actions/openapi.json`) up to date when adding endpoints.
 - `mcp/` — Model Context Protocol (MCP) server implementation built with `fastmcp`. Tools here should stay in sync with the REST surface and reuse `call.lib.api` helpers only (avoid reaching into app internals).
 - `docs/`, `README.md`, `tg-user-guide*.md` — user and operator documentation. Fixtures for shared tests live in `conftest.py`.
-- `docs/linked_in_post_draft_markdown.md` — LinkedIn draft post covering open-agent standards and migration notes.
+- `docs/lessons-in-open-agent-platforms.md` — LinkedIn draft post covering open-agent standards and migration notes.
 - `telegram_bot/` — production Telegram bot implementation. It wraps the public API layer, so changes here must preserve the structured envelopes returned by `call.lib.api`.
 - `wallet/` — secure credentials (e.g., Google service-account JSON). Treat everything under this folder as sensitive and never check real secrets into commits or logs.
 - `windsurf/` — IDE preset (`settings.json`) for the Windsurf editor. Update it in lock-step with repo-wide tooling changes (linters, formatters, etc.).

@@ -11,8 +11,10 @@ All notable changes to this project will be documented in this file.
 - Added a LinkedIn draft post outlining open-agent standards and updated the docs index to surface it.
 
 ### CHANGES
-- 05:20 Update LinkedIn post draft with standards links and align naming to `fast agent`. (files: `docs/linked_in_post_draft_markdown.md`, `README.md`, `AGENTS.md`)
+- 05:20 Update LinkedIn post draft with standards links and align naming to `fast agent`. (files: `docs/lessons-in-open-agent-platforms.md`, `README.md`, `AGENTS.md`)
 - 05:20 Bump package version to `0.0.4`. (file: `pyproject.toml`)
+- 06:30 Rename LinkedIn draft file with git history preserved and update references. (files: `docs/lessons-in-open-agent-platforms.md`, `README.md`, `AGENTS.md`)
+- 06:30 Bump package version to `0.0.5`. (files: `pyproject.toml`, `uv.lock`)
 
 ## 2026-01-30
 
