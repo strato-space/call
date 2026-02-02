@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-02-02
+
+### PROBLEM SOLVED
+- No shared reference block captured the key open-agent standards and links for the LinkedIn migration post.
+
+### FEATURE IMPLEMENTED
+- Added a LinkedIn draft post outlining open-agent standards and updated the docs index to surface it.
+
+### CHANGES
+- 05:20 Update LinkedIn post draft with standards links and align naming to `fast agent`. (files: `docs/linked_in_post_draft_markdown.md`, `README.md`, `AGENTS.md`)
+- 05:20 Bump package version to `0.0.4`. (file: `pyproject.toml`)
+
 ## 2026-01-30
 
 ### PROBLEM SOLVED
@@ -12,6 +24,7 @@ All notable changes to this project will be documented in this file.
 
 ### CHANGES
 - Recover from invalid conversation history errors by resetting MCP state, rebuilding the agent/session, and sending a recovery notice before retrying. (file: `app/call.py`)
+- Normalize `meme_train`/`meme_pack` tool payloads to JSON strings when `message` is sent as a dict. (file: `app/call.py`)
 
 ## 2026-01-21
 

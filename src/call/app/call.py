@@ -4201,6 +4201,29 @@ class MCPServerHookMixin:
     ) -> CallToolResult:
         logging.info("[mcp][%s] 🔧 call_tool: %s", self._mcp_title, tool_name)
         debug_print(f"[MCP Hook][{self._mcp_title}] Calling tool: {tool_name}")
+
+        if (
+            tool_name in {"meme_train", "meme_pack"}
+            and isinstance(arguments, dict)
+            and isinstance(arguments.get("message"), (dict, list))
+        ):
+            try:
+                fixed_args = dict(arguments)
+                fixed_args["message"] = json.dumps(
+                    fixed_args["message"], ensure_ascii=False
+                )
+                arguments = fixed_args
+                logging.warning(
+                    "[mcp][%s] Normalized %s message payload to JSON string",
+                    self._mcp_title,
+                    tool_name,
+                )
+            except Exception:
+                logging.exception(
+                    "[mcp][%s] Failed to normalize %s message payload",
+                    self._mcp_title,
+                    tool_name,
+                )
         
         # Log arguments preview
         try:

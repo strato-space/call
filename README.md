@@ -36,6 +36,7 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [Project-Level Prompts](docs/project-level-prompts.md) — Prompts attached directly to projects without agents
   - [MCP Config](docs/mcp_config.md) — MCP server configuration and setup
   - [Cards](docs/cards.md) — Agent and prompt card system
+  - [LinkedIn post draft](docs/linked_in_post_draft_markdown.md) — Draft post on open-agent standards and migration notes
   - [DB Diagnostics](docs/DB_DIAGNOSTICS.md) — Database diagnostics tool for troubleshooting
 - [Developer Guide](#developer-guide)
 - [Reference](#reference)
