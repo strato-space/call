@@ -13,7 +13,7 @@ This isn’t a “my framework is better than your framework” story. It’s a 
 When I started, my mental model was simple:
 
 - **Agents should be Markdown “cards” in GitHub** — editable by any teammate.
-- **Use OpenAI platform** as much as possible (Responses API, WebSearch/FileSearch tools, whisper, gpt-image-1).
+- **Use OpenAI platform** as much as possible (Responses API, FileSearch tool, wisper, gpt-image-1).
 - **Sequential thinking** and step-by-step decomposition is a great default.
 - **Non-technical users must access agents from ChatGPT** (via Actions in chatgpt.com) → REST API is mandatory.
 - **Non-technical users must access agents from Telegram** → adapters and an ergonomic UX matter.
@@ -21,7 +21,7 @@ When I started, my mental model was simple:
 - **Inside Telegram or chatgpt.com, agents should be addressable via @mentions.**
 - **Complex LangChain workflows are often unnecessary** if agents can call other agents.
 
-So I built it [strato-space/call](<https://github.com/strato-space/call>). 
+So I built it. github.com/strato-space/call
 
 And yes — it worked:
 
@@ -50,19 +50,15 @@ That’s why **fast-agent.ai** stood out during my platform research.
 
 ---
 
-## Why fast-agent.ai
+## Why fast agent
 
-fast-agent.ai [evalstate/fast-agent](<https://github.com/evalstate/fast-agent>) pulled me in with a very specific combo:
+fast agent pulled me in with a very specific combo:
 
-- 1st‑class support for all MCP aspects — including sampling and elicitation
 - broad model support (pragmatic reality: everyone is multi-provider now)
-- full workflow set out of the box
-- a compact, readable panel that shows execution flow *as it happens*
 - clear, transparent documentation
-- fast onboarding
-- a polished CLI
+- fast onboarding and a polished CLI
+- a compact, readable panel that shows execution flow *as it happens*
 - product-grade “mass adoption” potential (it was built as a shippable product from day one)
-- you can read user reviews here: https://fast-agent.ai/ref/fast_agent_ai_articles/
 
 And then I hit the first big migration friction…
 
@@ -75,9 +71,9 @@ In OpenAI Agents SDK, “Agents as Tools” is a native concept: the parent agen
 I needed that immediately — because one of my core use cases is **same prompt, many datasets**.
 Example: daily/weekly summaries across **20+ projects**.
 
-So I started implementing **Agents-as-Tools** for fast-agent.ai — and that became my first major contribution.
+So I started implementing **Agents-as-Tools** for fast agent — and that became my first major contribution.
 
-It turns out: doing this *well* in fast-agent.ai is harder than in a minimal console runtime, because fast-agent.ai has something better:
+It turns out: doing this *well* in fast agent is harder than in a minimal console runtime, because fast agent has something better:
 
 - a shared panel
 - structured logs
@@ -98,13 +94,12 @@ I agree with the spirit completely: **simple patterns win**.
 
 But I think the “minimum viable open agent stack” is now slightly bigger than “just MCP”.
 
-After many discussions with evalstate (Shaun Smith — https://huggingface.co/evalstate / https://github.com/evalstate), the stack I see emerging is:
+The stack I see emerging is:
 
-- **ACP** to connect agents to IDEs and IM
 - **MCP** for tool/runtime interoperability
-- **AgentCard** as a portable agent definition format (removing vendor lock-in)
-- **Agents calling agents** as the primitive (not “workflows as code, just call from prompt”)
 - **SKILLS** as portable, typed capability modules
+- **AgentCard** as a portable agent definition format (removing vendor lock-in)
+- **Agents calling agents** as the primitive (not “workflows as code”)
 - **True REPL** for agent development: **run → observe → self-reflect → evolve → run again**
 
 That last piece matters more than it sounds.
@@ -125,14 +120,14 @@ Closed agent platforms are doomed because they can’t compound with the ecosyst
 
 Open platforms will win — but only if they deeply support standards and composability:
 
-- **ACP, MCP, AgentCard, SKILLS, True REPL** + **Building Effective Agents** in the box
+- **MCP, ACP, SKILLS, AgentCard** + **Building Effective Agents** in the box
 
-- **ACP**: [Agent Client Protocol](<https://zed.dev/acp>)
 - **MCP**: [Model Context Protocol](<https://modelcontextprotocol.io>)
-- **AgentCard**: [AgentCard at the Summit: The Multi-Agent Standardization Revolution](<https://github.com/evalstate/fast-agent/blob/main/plan/agentcard-standards-mini-article.md>)
+- **ACP**: [Agent Client Protocol](<https://zed.dev/acp>)
 - **SKILLS**: <https://github.com/anthropics/skills>
-- **True REPL**: run → observe → self-reflect → evolve → run again
-- **Anthropic’s Workflows Definitions**: [Building Effective Agents](<https://www.anthropic.com/engineering/building-effective-agents>)
+- **AgentCard**: [AgentCard at the Summit: The Multi-Agent Standardization Revolution](<https://github.com/evalstate/fast-agent/blob/main/plan/agentcard-standards-mini-article.md>)
+- plus pragmatic patterns like those described in Anthropic’s *Building Effective Agents*:
+  - https://www.anthropic.com/engineering/building-effective-agents
 
 ---
 
@@ -140,7 +135,7 @@ Open platforms will win — but only if they deeply support standards and compos
 
 If you’re building agent infrastructure — or betting your company on agents — this is the time to converge on shared primitives.
 
-- Follow fast-agent.ai: https://github.com/evalstate/fast-agent/
+- Follow fast agent: https://github.com/evalstate/fast-agent/
 - Join the discussion: https://discord.com/invite/xg5cJ7ndN6
 
 ---
@@ -152,13 +147,10 @@ What is the **ideal agent platform** *right now*?
 What qualities should it have out of the box:
 
 - interoperability?
-- a broad set of adapters out of the box?
 - transparency?
 - REPL-first development?
 - portable agents (AgentCard)?
 - portable capabilities (Skills)?
-- All Anthropic’s Workflows Definitions?
-- portable AgentJARs (AgentCards + Skills + MCP config) in zip format?
 - agent-to-agent composition as the default?
 
 And how compatible do we actually want platforms to be:
@@ -171,3 +163,4 @@ And how compatible do we actually want platforms to be:
 I’m convinced this is where real competition should happen — on standards, composability, and developer ergonomics — not on closed ecosystems.
 
 ---
+

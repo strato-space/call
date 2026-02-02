@@ -13,8 +13,6 @@ All notable changes to this project will be documented in this file.
 ### CHANGES
 - 05:20 Update LinkedIn post draft with standards links and align naming to `fast agent`. (files: `docs/linked_in_post_draft_markdown.md`, `README.md`, `AGENTS.md`)
 - 05:20 Bump package version to `0.0.4`. (file: `pyproject.toml`)
-- 06:10 Refine LinkedIn draft bullets and stack wording; add review link and normalize `fast-agent.ai` naming. (file: `docs/linked_in_post_draft_markdown.md`)
-- 06:10 Bump package version to `0.0.17`. (files: `pyproject.toml`, `uv.lock`)
 
 ## 2026-01-30
 
