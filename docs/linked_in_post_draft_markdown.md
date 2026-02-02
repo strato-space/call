@@ -98,15 +98,13 @@ I agree with the spirit completely: **simple patterns win**.
 
 But I think the “minimum viable open agent stack” is now slightly bigger than “just MCP”.
 
-After many discussions with the project author — Shaun Smith (https://huggingface.co/evalstate / https://github.com/evalstate) — the stack I see emerging is:
+After many discussions with evalstate (Shaun Smith — https://huggingface.co/evalstate / https://github.com/evalstate), the stack I see emerging is:
 
-- **MCP** for tool/runtime interoperability
 - **ACP** to connect agents to IDEs and IM
-- **REST API adapter** for web applications
-- **Chatbot SDK** for messaging platforms
+- **MCP** for tool/runtime interoperability
+- **AgentCard** as a portable agent definition format (removing vendor lock-in)
 - **Agents calling agents** as the primitive (not “workflows as code, just call from prompt”)
 - **SKILLS** as portable, typed capability modules
-- **AgentCard** as a portable agent definition format (removing vendor lock-in)
 - **True REPL** for agent development: **run → observe → self-reflect → evolve → run again**
 
 That last piece matters more than it sounds.
