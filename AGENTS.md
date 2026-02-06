@@ -15,6 +15,7 @@
 - `mcp/` — Model Context Protocol (MCP) server implementation built with `fastmcp`. Tools here should stay in sync with the REST surface and reuse `call.lib.api` helpers only (avoid reaching into app internals).
 - `docs/`, `README.md`, `tg-user-guide*.md` — user and operator documentation. Fixtures for shared tests live in `conftest.py`.
 - `docs/lessons-in-open-agent-platforms.md` — LinkedIn draft post covering open-agent standards and migration notes.
+- `docs/when-agents-call-agents.md` — Why agent-to-agent composition matters (and why skills alone don’t scale).
 - `telegram_bot/` — production Telegram bot implementation. It wraps the public API layer, so changes here must preserve the structured envelopes returned by `call.lib.api`.
 - `wallet/` — secure credentials (e.g., Google service-account JSON). Treat everything under this folder as sensitive and never check real secrets into commits or logs.
 - `windsurf/` — IDE preset (`settings.json`) for the Windsurf editor. Update it in lock-step with repo-wide tooling changes (linters, formatters, etc.).

@@ -37,7 +37,7 @@ Call is a minimal, extensible runtime that provides unified invocation syntax, c
   - [MCP Config](docs/mcp_config.md) — MCP server configuration and setup
   - [Cards](docs/cards.md) — Agent and prompt card system
   - [Lessons in Open Agent Platforms](docs/lessons-in-open-agent-platforms.md) — Draft post on open-agent standards and migration notes
-  - [When Agents Call Agents](docs/when-agents-call-agents-why-it-matters.md) — Why skills alone do not scale to portfolio operations
+  - [When Agents Call Agents](docs/when-agents-call-agents.md) — Why skills alone do not scale to portfolio operations
   - [DB Diagnostics](docs/DB_DIAGNOSTICS.md) — Database diagnostics tool for troubleshooting
 - [Developer Guide](#developer-guide)
 - [Reference](#reference)

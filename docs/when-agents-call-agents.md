@@ -1,4 +1,4 @@
-# When Agents Call Agents — Why It Matters (and why Skills aren’t enough)
+# When Agents Call Agents (and why Skills aren’t enough)
 
 You don’t run **one** project. You run a **portfolio**.
 
@@ -123,9 +123,13 @@ The point isn’t complexity. The point is **composability and compatibility**.
 
 ## Links & examples
 
-- FastAgent repo + samples: https://github.com/evalstate/fast-agent
+- FastAgent repo + samples: 
+```bash
+git clone https://github.com/evalstate/fast-agent
+cd fast-agent/ 
+cd fast-agent/ 
+```
 - Discord: https://discord.com/invite/xg5cJ7ndN6
 
 If you want to experiment: run the FastAgent workflow examples.
 If you want to debate architecture  - welcome to Discord.
-
