@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 ### CHANGES
 - 18:20 Add `tool_filter` support when initializing MCP servers from YAML (stdio and Streamable HTTP; bridge inherits filters). (file: `src/call/app/call.py`)
 - 18:20 Document tool exposure controls and fix `mcp_config.yaml` path references; add agent-composition note to docs index. (files: `docs/mcp_config.md`, `docs/when-agents-call-agents-why-it-matters.md`, `README.md`, `AGENTS.md`)
+- 18:29 Bump `python-multipart` to `0.0.22` (fixes Dependabot alert `GHSA-wp53-j4wj-2cfg` / `CVE-2026-24486`). (file: `uv.lock`)
 
 ## 2026-02-02
 
