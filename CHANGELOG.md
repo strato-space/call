@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-02-06
+
+### PROBLEM SOLVED
+- MCP servers defined in `mcp_config.yaml` could not restrict which tools were exposed to the agent runtime, making it harder to control per-server tool surfaces.
+
+### FEATURE IMPLEMENTED
+- Added per-server tool allow/block filtering for MCP servers via the Agents SDK `tool_filter` (supports `tools`, `blocked_tool_names`, `blocked_tools`).
+
+### CHANGES
+- 18:20 Add `tool_filter` support when initializing MCP servers from YAML (stdio and Streamable HTTP; bridge inherits filters). (file: `src/call/app/call.py`)
+- 18:20 Document tool exposure controls and fix `mcp_config.yaml` path references; add agent-composition note to docs index. (files: `docs/mcp_config.md`, `docs/when-agents-call-agents-why-it-matters.md`, `README.md`, `AGENTS.md`)
+
 ## 2026-02-02
 
 ### PROBLEM SOLVED

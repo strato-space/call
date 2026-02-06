@@ -340,6 +340,11 @@ from agents.tool import FileSearchTool, FunctionTool, ImageGenerationTool, funct
 from agents.run_context import RunContextWrapper
 from agents.mcp import MCPServerStdio
 try:
+    # Optional helper (Agents SDK). If missing, tool-level filtering is disabled.
+    from agents.mcp.util import create_static_tool_filter
+except Exception:  # pragma: no cover
+    create_static_tool_filter = None
+try:
     from agents.mcp import MCPServerStreamableHttp
 except ImportError:
     from agents.mcp.server import MCPServerStreamableHttp
@@ -5463,6 +5468,36 @@ async def _build_mcp_servers_from_yaml(
         except Exception as e:
             logging.debug("[mcp] Failed to print config info: %s", e)
 
+        def _tool_filter_from_spec(server_name: str, spec: dict) -> object | None:
+            # Build Agents SDK tool_filter from YAML spec.
+            # We treat spec['tools'] as an allowlist (comma/whitespace-separated).
+            # Optional spec['blocked_tool_names'] or spec['blocked_tools'] further excludes tools.
+            if create_static_tool_filter is None:
+                return None
+            try:
+                tools_raw = (spec or {}).get('tools')
+                allowed: list[str] = []
+                if isinstance(tools_raw, str):
+                    allowed = [t.strip() for t in re.split(r'[\s,]+', tools_raw) if t.strip()]
+                elif isinstance(tools_raw, list):
+                    allowed = [str(t).strip() for t in tools_raw if str(t).strip()]
+
+                blocked_raw = (spec or {}).get('blocked_tool_names') or (spec or {}).get('blocked_tools')
+                blocked: list[str] = []
+                if isinstance(blocked_raw, str):
+                    blocked = [t.strip() for t in re.split(r'[\s,]+', blocked_raw) if t.strip()]
+                elif isinstance(blocked_raw, list):
+                    blocked = [str(t).strip() for t in blocked_raw if str(t).strip()]
+
+                if allowed or blocked:
+                    return create_static_tool_filter(
+                        allowed_tool_names=allowed or None,
+                        blocked_tool_names=blocked or None,
+                    )
+            except Exception as e:
+                logging.debug('[mcp] Failed to build tool filter for %s: %s', server_name, e)
+            return None
+
         def _skip_self_call_server(name: str, spec: dict) -> bool:
             mode = os.getenv("CALL_MCP_SERVER_MODE")
             if not mode:
@@ -5486,6 +5521,7 @@ async def _build_mcp_servers_from_yaml(
             cmd = (spec or {}).get("command")
             args = (spec or {}).get("args") or []
             env = _normalize_env((spec or {}).get("env"))
+            tool_filter = _tool_filter_from_spec(name, spec)
             if not cmd:
                 return None
             
@@ -5504,6 +5540,7 @@ async def _build_mcp_servers_from_yaml(
                     params={"command": cmd, "args": args, "env": env},
                     name=name,
                     client_session_timeout_seconds=timeout,
+                    tool_filter=tool_filter,
                 )
             )
             
@@ -5548,6 +5585,9 @@ async def _build_mcp_servers_from_yaml(
                         fmt_args.append(a)
                     bridge_env = _normalize_env(bridge.get("env") or spec.get("env"))
                     bridge_spec = {"command": bcmd, "args": fmt_args, "env": bridge_env}
+                    bridge_spec["tools"] = spec.get("tools")
+                    bridge_spec["blocked_tool_names"] = spec.get("blocked_tool_names")
+                    bridge_spec["blocked_tools"] = spec.get("blocked_tools")
                     timeout = int(spec.get("timeoutSeconds", 1200))
                     srv = await _open_stdio(name, bridge_spec, timeout)
                     if srv:
@@ -5579,6 +5619,7 @@ async def _build_mcp_servers_from_yaml(
                             },
                             name=name,
                             client_session_timeout_seconds=float(spec.get("timeoutSeconds", 1200)),
+                            tool_filter=_tool_filter_from_spec(name, spec),
                         )
                         srv = await astack.enter_async_context(srv)
                         mcp_servers_started.append(srv)
