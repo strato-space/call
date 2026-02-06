@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - 18:20 Document tool exposure controls and fix `mcp_config.yaml` path references; add agent-composition note to docs index. (files: `docs/mcp_config.md`, `docs/when-agents-call-agents-why-it-matters.md`, `README.md`, `AGENTS.md`)
 - 18:29 Bump `python-multipart` to `0.0.22` (fixes Dependabot alert `GHSA-wp53-j4wj-2cfg` / `CVE-2026-24486`). (file: `uv.lock`)
 - 18:37 Bump `openai-agents` to `0.8.0` and `mcp` to `1.26.0`. (files: `pyproject.toml`, `uv.lock`)
+- 18:44 Refresh `uv.lock` to latest compatible versions (e.g., `openai` `2.17.0`, `requests` `2.32.5`, `python-telegram-bot` `22.6`, `mcp-server-time` `2026.1.26`). (file: `uv.lock`)
 
 ## 2026-02-02
 
