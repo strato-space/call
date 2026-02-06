@@ -60,7 +60,7 @@ It’s a robust pattern: **delegate, isolate, run in parallel, aggregate**.
 
 ---
 
-## Agents-as-Tools in fast-agent.ai: why the details matter
+## Agents-as-Tools in fast-agent.ai
 
 FastAgent implements the **Agents-as-Tools** pattern inspired by OpenAI’s Agents SDK: child agents are exposed as callable tools to a parent.
 
@@ -99,7 +99,7 @@ That’s how you get repeatable, comparable, decision-ready outputs.
 
 ---
 
-## Respect to Sarmad Qadri—and the “simple patterns win” philosophy
+## Simple patterns win
 
 Huge respect to **Sarmad Qadri** and the *mcp-agent* vision:
 
@@ -115,21 +115,25 @@ What’s emerging in practice:
 - **Skills** — portable capability modules
 - **AgentCard** — portable agent definition (reduces vendor lock)
 - **Agent→Agent composition** — delegation as the default primitive
-- **True REPL loop** — run → inspect → self-reflect → patch → rerun
+- **True REPL loop** — Read Eval Print Loop: run → inspect → self-reflect → patch → rerun
 
 The point isn’t complexity. The point is **composability and compatibility**.
 
 ---
 
 ## Links & examples
-
-- FastAgent repo + samples: 
+- **FastAgent**: fast-agent.ai
+- **MCP**: [Model Context Protocol](<https://modelcontextprotocol.io>)
+- **SKILLS**: <https://github.com/anthropics/skills>
+- **FastAgent repo + examples**: 
 ```bash
 git clone https://github.com/evalstate/fast-agent
-cd fast-agent/ 
-cd fast-agent/ 
+cd fast-agent/examples/workflows-md
+uv run fast-agent --card agents_as_tools_simple
 ```
-- Discord: https://discord.com/invite/xg5cJ7ndN6
+- [**AgentCard at the Summit: The Multi-Agent Standardization Revolution**](<https://github.com/evalstate/fast-agent/blob/main/plan/agentcard-standards-mini-article.md>)
+- **Agent→Agent composition** 
+- **Discord**: https://discord.com/invite/xg5cJ7ndN6
 
 If you want to experiment: run the FastAgent workflow examples.
 If you want to debate architecture  - welcome to Discord.

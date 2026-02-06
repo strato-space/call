@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - 18:37 Bump `openai-agents` to `0.8.0` and `mcp` to `1.26.0`. (files: `pyproject.toml`, `uv.lock`)
 - 18:44 Refresh `uv.lock` to latest compatible versions (e.g., `openai` `2.17.0`, `requests` `2.32.5`, `python-telegram-bot` `22.6`, `mcp-server-time` `2026.1.26`). (file: `uv.lock`)
 - 18:51 Rename the "When Agents Call Agents" doc to a shorter filename and simplify the title. (files: `docs/when-agents-call-agents.md`, `README.md`)
+- 19:20 Polish the "When Agents Call Agents" doc headings and links; fix the FastAgent example command. (file: `docs/when-agents-call-agents.md`)
 
 ## 2026-02-02
 
