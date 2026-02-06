@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "openai>=2.8.1,<3",
-  "openai-agents[voice]==0.6.1",
+  "openai-agents[voice]>=0.6.1,<1",
   "requests[socks]>=2.31.0",
   "httpx[socks]",
   "telegraph[aio]>=0.3.2",
@@ -18,7 +18,7 @@ dependencies = [
   "python-dotenv",
   "PyYAML",
   "beautifulsoup4",
-  "mcp>=1.22.0",
+  "mcp>=1.22.0,<2",
   "pydantic>=2.12.3,<3",
   "pydantic-settings[dotenv]>=2.5.2,<3",
   "fastapi",
