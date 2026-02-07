@@ -55,8 +55,13 @@ def parse_metadata_and_prompt(
 ) -> Dict[str, Any]:
     """Parse agent/prompt card content.
 
-    Supports Markdown cards with METADATA/PROMPT sections and pure YAML cards.
-    Returns a metadata dictionary with a ``prompt`` field (may be ``""`` for YAML-only cards).
+    Supports:
+    - YAML frontmatter (AgentCard-style) + Markdown body
+    - Markdown cards with METADATA/PROMPT sections
+    - Pure YAML cards (YAML-only DTOs)
+
+    For Markdown cards, returns a metadata dictionary with a ``prompt`` field.
+    For pure YAML cards, returns a mapping without a ``prompt`` field (legacy behavior).
 
     Raises:
         ValueError: when the content does not match the expected Markdown or YAML formats.
@@ -70,19 +75,72 @@ def parse_metadata_and_prompt(
 
     text = md_text
 
-    # Step 1: try parsing as pure YAML
+    def _strip_bom(value: str) -> str:
+        return value.lstrip("\ufeff") if value.startswith("\ufeff") else value
+
+    # Step 1: YAML frontmatter (AgentCard-style) at the top of a Markdown file.
+    # Format:
+    #   ---
+    #   key: value
+    #   ...
+    #   ---
+    #   prompt / body...
+    #
+    # We intentionally detect this before "pure YAML" parsing because PyYAML can
+    # misinterpret frontmatter + body as YAML-only and drop the body.
+    fm_meta: Dict[str, Any] | None = None
+    fm_body: str | None = None
     try:
-        loaded_meta = _yaml.safe_load(text)
-        if isinstance(loaded_meta, dict):
-            return dict(loaded_meta)
+        fm_text = _strip_bom(text)
+        # Only treat as frontmatter if the first non-empty line is exactly '---'
+        if fm_text.startswith("---") and (
+            fm_text == "---" or fm_text.startswith("---\n") or fm_text.startswith("---\r\n")
+        ):
+            # Find the closing delimiter on its own line.
+            m = _re.match(r"^---\s*\r?\n", fm_text)
+            if m:
+                start = m.end()
+                m_end = _re.search(r"^\s*---\s*$", fm_text[start:], _re.MULTILINE)
+                if m_end:
+                    yaml_payload = fm_text[start : start + m_end.start()]
+                    rest = fm_text[start + m_end.end() :]
+                    parsed = _yaml.safe_load(yaml_payload) or {}
+                    if not isinstance(parsed, dict):
+                        raise ValueError("Frontmatter must be a YAML mapping")
+                    fm_meta = dict(parsed)
+                    fm_body = rest
     except Exception:
-        pass
+        fm_meta = None
+        fm_body = None
+
+    if fm_meta is None:
+        # Step 2: try parsing as pure YAML (YAML-only cards).
+        try:
+            loaded_meta = _yaml.safe_load(text)
+            if isinstance(loaded_meta, dict):
+                return dict(loaded_meta)
+        except Exception:
+            pass
 
     if not isinstance(text, str):
         raise ValueError("Card content must be string or YAML mapping")
 
-    working_text = text
-    meta: Dict[str, Any] = {}
+    working_text = fm_body if fm_body is not None else text
+    # Tolerate legacy variants / malformed tags.
+    # Example: '<!-- META:START --' (missing '>') is normalized.
+    working_text = _re.sub(
+        r"<!--\s*(?:META|METADATA)\s*:??\s*START\s*--\s*>?",
+        "<!-- METADATA:START -->",
+        working_text,
+        flags=_re.IGNORECASE,
+    )
+    working_text = _re.sub(
+        r"<!--\s*(?:META|METADATA)\s*:??\s*END\s*--\s*>?",
+        "<!-- METADATA:END -->",
+        working_text,
+        flags=_re.IGNORECASE,
+    )
+    meta: Dict[str, Any] = dict(fm_meta or {})
 
     flags = _re.IGNORECASE | _re.DOTALL
     meta_start = _re.search(r"<!--\s*METADATA\s*:??\s*START\s*-->", working_text, flags)
@@ -112,7 +170,8 @@ def parse_metadata_and_prompt(
             )
         if not isinstance(parsed_meta, dict):
             raise ValueError("Markdown card METADATA did not parse into a mapping")
-        meta = dict(parsed_meta)
+        # Merge frontmatter + legacy METADATA (legacy wins on key conflicts).
+        meta.update(dict(parsed_meta))
         working_text = (
             working_text[: meta_start.start()] + working_text[meta_end.end() :]
         )

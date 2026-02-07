@@ -185,24 +185,20 @@ def _read_agent_name(path: Path, *, default: str) -> str:
     name = default
     try:
         if str(path).lower().endswith((".md", ".markdown")):
-            text = path.read_text(encoding="utf-8")
-            try:
-                y0 = text.index("<!-- METADATA:START -->")
-                y1 = text.index("```yaml", y0) + len("```yaml")
-                y2 = text.index("```", y1)
-                import yaml
+            from call.lib.utils import parse_metadata_and_prompt
 
-                meta = yaml.safe_load(text[y1:y2]) or {}
-                cand = (
+            text = path.read_text(encoding="utf-8")
+            meta = parse_metadata_and_prompt(text, path=str(path)) or {}
+            if isinstance(meta, dict):
+                cand = str(
                     meta.get("id") or meta.get("name") or meta.get("title") or ""
                 ).strip()
-                if not cand:
-                    cand = path.stem
-                name = str(cand)
-            except Exception:
-                pass
+                if cand:
+                    name = cand
     except Exception:
         pass
+    if not name:
+        name = path.stem
     return name
 
 
@@ -297,14 +293,14 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
 
     def _read_meta(md_path: Path) -> dict:
         try:
-            text = md_path.read_text(encoding="utf-8")
-            y0 = text.index("<!-- METADATA:START -->")
-            y1 = text.index("```yaml", y0) + len("```yaml")
-            y2 = text.index("```", y1)
-            import yaml as _yaml
+            from call.lib.utils import parse_metadata_and_prompt
 
-            meta = _yaml.safe_load(text[y1:y2]) or {}
-            return meta if isinstance(meta, dict) else {}
+            text = md_path.read_text(encoding="utf-8")
+            meta = parse_metadata_and_prompt(text, path=str(md_path)) or {}
+            if not isinstance(meta, dict):
+                return {}
+            meta.pop("prompt", None)
+            return meta
         except Exception:
             return {}
 
@@ -383,19 +379,9 @@ def _scan_agent_repo(cur) -> tuple[int, list[dict]]:
                     ag_name = _read_agent_name(f, default=child.name)
                     eng = ""
                     orch = ""
-                    meta = {}
-                    try:
-                        text = f.read_text(encoding="utf-8")
-                        y0 = text.index("<!-- METADATA:START -->")
-                        y1 = text.index("```yaml", y0) + len("```yaml")
-                        y2 = text.index("```", y1)
-                        import yaml as _yaml
-
-                        meta = _yaml.safe_load(text[y1:y2]) or {}
-                        eng = str(meta.get("engine") or "")
-                        orch = str(meta.get("orchestration") or "")
-                    except Exception:
-                        meta = {}
+                    meta = _read_meta(f)
+                    eng = str(meta.get("engine") or "")
+                    orch = str(meta.get("orchestration") or "")
                     relp, url = _rel_url(f)
                     _upsert_row(
                         cur,

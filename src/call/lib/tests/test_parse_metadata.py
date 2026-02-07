@@ -24,6 +24,70 @@ Hello world
     assert meta["prompt"] == "Hello world"
 
 
+def test_parse_frontmatter_sets_metadata_and_prompt():
+    text = """\
+---
+id: Demo
+model: gpt-5
+engine: fast-agent
+---
+
+Hello from body
+"""
+
+    meta = parse_metadata_and_prompt(text)
+
+    assert meta["id"] == "Demo"
+    assert meta["model"] == "gpt-5"
+    assert meta["engine"] == "fast-agent"
+    assert meta["prompt"] == "Hello from body"
+
+
+def test_parse_frontmatter_and_legacy_metadata_merges_with_legacy_winning():
+    text = """\
+---
+id: Demo
+engine: fast-agent
+orchestration: front
+---
+
+<!-- METADATA: START -->
+```yaml
+engine: openai-agents
+orchestration: legacy
+```
+<!-- METADATA: END -->
+
+Body
+"""
+
+    meta = parse_metadata_and_prompt(text)
+
+    assert meta["id"] == "Demo"
+    assert meta["engine"] == "openai-agents"
+    assert meta["orchestration"] == "legacy"
+    assert meta["prompt"] == "Body"
+
+
+def test_parse_frontmatter_with_prompt_block_prefers_prompt_block():
+    text = """\
+---
+id: Demo
+---
+
+<!-- PROMPT: START -->
+Prompt block
+<!-- PROMPT: END -->
+
+Ignored body
+"""
+
+    meta = parse_metadata_and_prompt(text)
+
+    assert meta["id"] == "Demo"
+    assert meta["prompt"] == "Prompt block"
+
+
 def test_parse_yaml_card_returns_mapping_without_prompt():
     text = """\
 name: PlainYAML
