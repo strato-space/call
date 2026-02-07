@@ -132,8 +132,8 @@ cd fast-agent/examples/workflows-md
 uv run fast-agent --card agents_as_tools_simple
 ```
 - [**AgentCard at the Summit: The Multi-Agent Standardization Revolution**](<https://github.com/evalstate/fast-agent/blob/main/plan/agentcard-standards-mini-article.md>)
-- **Agent→Agent composition** 
+- **Agent→Agent composition** [fast-agent.ai: Agents As Tools](<https://fast-agent.ai/agents/workflows/#agents-as-tools_1>), [OpenAI Agents SDK: Agents As Tools](<https://openai.github.io/openai-agents-python/tools/#agents-as-tools>)
 - **Discord**: https://discord.com/invite/xg5cJ7ndN6
 
 If you want to experiment: run the FastAgent workflow examples.
-If you want to debate architecture  - welcome to Discord.
+If you want to debate architecture - welcome to Discord / LinkedIn.
