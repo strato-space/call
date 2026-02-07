@@ -1,184 +1,184 @@
-# How I Built a "Strangler" App Server That Lived 25+ Years in Telco BSS
+# How I Built an "App Server" That Lived 25+ Years in Telco BSS (Without a Rewrite)
 
-This is a draft for a longer write-up about a telco BSS core that survived (and kept evolving) for more than 25 years.
+Most people hear "25-year-old telco BSS" and think "rewrite".
+In BSS, rewriting billing is a great way to lose sleep and customers.
 
-The short version: Oracle was the center of the BSS universe, the UI started as classic client-server (Oracle + Delphi, with small Oracle Forms elements), and the "app server" gradually moved closer and closer to the database until it effectively lived there.
+We kept a core system alive for 25+ years by doing something boring and effective:
+move logic closer to the data, and evolve interfaces via a strangler approach.
 
-The system lasted because it was:
-- simple enough to reason about
-- close to the data (and transactions)
-- designed to evolve via a strangler approach instead of rewrites
+## The original stack
 
-## Starting point: Oracle + Delphi client-server
+At the center of the BSS world was Oracle.
+The UI started as classic client-server:
+- Oracle RDBMS core
+- Delphi thick client
+- a few small Oracle Forms islands
 
-At the time, the architecture was the obvious one:
-- Oracle RDBMS as the core
-- Delphi thick client (plus small Oracle Forms islands where it made sense)
-- business logic split between client code and database code
+For performance-critical paths we also had server-side C++ code talking to Oracle via OTL:
+https://otl.sourceforge.net/
 
-Then requirements shifted:
-- web UIs, partner integrations, new channels
+Then the world changed:
+- web and partner integrations
 - XML/XSLT wave
 - early mobile devices
-- more external APIs, more data consumers
-- higher scale and stricter correctness expectations
+- more consumers, more APIs, more scale
 
-A rewrite was not an option. Too risky. Too expensive. Billing never sleeps.
+We could not afford a big-bang rewrite, so we evolved in-place.
 
-So we evolved the system in-place.
+## What actually made it last
 
-## Why PL/SQL worked (better than many expect)
+Three things mattered more than any framework choice:
 
-Oracle PL/SQL is a very strong procedural language when you accept its strengths:
-- it is tightly integrated with SQL
-- transactional semantics are a first-class default
-- modularity via packages is a real architectural boundary
-- a small team can ship business logic quickly and safely
+1. **Algorithms near the data**
+2. **Modularity via PL/SQL packages**
+3. **Strangler evolution instead of rewrites**
 
-Oracle also tried to bolt on OOP (object types, etc.). In practice, for BSS-style domains, the procedural style plus good package boundaries was the winning model.
+That combination scaled surprisingly well for a small team and a high-correctness domain.
 
-The core architectural idea was:
+## PL/SQL: great procedural core, mediocre OOP story
+
+Oracle PL/SQL is not fashionable, but it is extremely practical for BSS-style domains:
+- deep integration with SQL (you do not fight the database, you use it)
+- transactions are first-class (money and entitlements stay consistent)
+- packages are a strong modular boundary
+
+Oracle did attempt to bolt on OOP (object types, etc.). For us, the sweet spot was:
+procedural logic, good package boundaries, and clear contracts.
+
+The core idea:
 
 > keep algorithms close to data
 
-When logic lives next to the data:
-- the mental model is simpler (fewer moving parts and hops)
-- correctness is easier (fewer distributed edge cases)
-- performance is better (less chatty client <-> DB traffic)
-- operations are safer (fewer services to keep in sync)
+It simplifies the system because you have fewer hops and fewer distributed edge cases.
 
-## The strangler move: evolve without rewriting
+## Tradeoffs (pros and cons)
+
+Some of our architectural choices were "right" in context, but they had a price.
+
+Pros:
+- C++ + OTL made the system fast early on (low overhead, high throughput).
+- Keeping caches in-process (STL containers) made hot reads extremely cheap.
+
+Cons:
+- The C++ core was harder to change quickly. Shipping new business behavior got slower over time.
+- In-process caches widened the failure domain: when the main process died, everything died and cold start took longer.
+- The original architect got promoted into management too fast, and we never got a clean "extension layer" (we wanted to embed a scripting language like JS).
+- Java dominated enterprise stacks back then, but Java + C++ integration was painful, so the "make it scriptable" plan kept slipping.
+- We introduced XSLT not only at the edge (Apache `mod_xslt_proxy` style), but also inside the server, which produced some very strange scripts.
+
+## The strangler approach (the only safe way in BSS)
 
 We did not "replace the system".
-We strangled it (Strangler Fig Pattern style): introduce a new path, route more and more behavior through it, keep the old path alive until it is no longer needed.
+We strangled it.
 
-In practice, the steps looked like:
+Practical steps:
 1. keep the Oracle model stable (schemas, invariants, transactions)
 2. move more business rules into PL/SQL packages where correctness matters
-3. add new integration surfaces around it without breaking existing clients
+3. add new integration surfaces without breaking existing clients
+4. gradually route more usage through the new surfaces
 
-## PL/SQL for everything (including HTML): mod_plsql era
+This is how you modernize without creating a second system that never catches up.
 
-There was a period where we experimented with mod_plsql / PL/SQL gateway style:
-- PL/SQL handlers as request endpoints
-- HTML generated directly from PL/SQL
+## Interfaces evolved: HTML to XML to JSON to REST
 
-It sounds weird now, but it was pragmatic then.
-I even remember Tom Kyte's site being on a similar platform at some point, which was a reassuring signal that this wasn't purely a hack.
+Yes, there was a mod_plsql era:
+- PL/SQL handlers as web endpoints
+- HTML generated from PL/SQL
 
-The important point is not "PL/SQL generated HTML".
-The important point is: we added a web surface without a rewrite.
+The key point is not "PL/SQL generated HTML".
+The key point is: we added a web surface without a rewrite.
 
-## XML/XSLT and the early mobile era
+Then came XML/XSLT and mobile, and the system naturally moved toward structured payloads:
+- emit XML first, later JSON
+- keep PL/SQL as the business/API layer
+- transform/present elsewhere when needed
 
-XML/XSLT and early mobile clients pushed the system toward a cleaner separation:
-- PL/SQL as the business/API layer
-- structured payloads (XML first, later JSON) as the output contract
-- transformations/presentation handled outside the DB when needed
+## Design rule: PL/SQL maps cleanly to REST (bind variables = parameters)
 
-Still one strong core, but with cleaner interfaces.
+One pattern that aged extremely well:
+- PL/SQL procedure/function = business operation
+- SQL queries with bind variables = efficient data access
+- HTTP endpoint = 1:1 mapping to that operation
 
-## Design principle: PL/SQL maps 1:1 to REST (bind variables = parameters)
-
-A pattern that aged surprisingly well:
-- PL/SQL procedures/functions define business operations
-- SQL queries with bind variables define efficient data access
-- HTTP endpoints map to those operations almost 1:1
-
-Mental template:
+Example mental model:
 - `GET /customers/{id}/services` -> `pkg_services.get_services(p_customer_id => :id)`
 - `POST /contracts/{id}/activate` -> `pkg_contracts.activate(p_contract_id => :id, p_actor => :user)`
 
-Bind variables map naturally to:
-- path parameters
-- query parameters
-- request bodies (after validation/normalization)
+It makes incremental API growth straightforward and keeps the business layer explicit.
 
-This made it feasible to add APIs incrementally and keep them honest.
+## Resilience: sometimes you must serve without the database
 
-## Performance and resilience: caching without the database
+Telco reality: the DB can be hot, slow, or temporarily unreachable.
+Some parts of the product still need to behave.
 
-Telco reality: the DB can be hot, slow, or temporarily unreachable, but the product still needs to behave.
+We used caches for read-heavy, user-facing flows like:
+- service catalog / list of services
+- reference data
+- precomputed entitlements (where safe)
 
-We had patterns where parts of the system could serve from caches:
-- list of available services
-- reference/catalog data
-- precomputed entitlements for read-heavy flows
+Not everything can run without the DB. More can degrade gracefully than most teams plan for.
+But putting caches into the same C++ address space as the main service is a tradeoff:
+great latency, bad blast radius.
 
-Not everything can work without the DB, but more of the UX can degrade gracefully than people assume.
+## What we should have done sooner
 
-## It was basically "tools over Oracle" before MCP was mainstream
+If I could go back in time, two changes should have happened earlier (even as "ugly" incremental steps):
+- detach the cache from the main process (separate failure domain, faster recovery)
+- embed a widely used scripting language (JS would have been ideal) to speed up changes
 
-If you squint, an API surface built from PL/SQL packages is a tool surface:
+## What I would do now: MCP transport + generated interfaces
+
+If I was modernizing this system today, I would not start with a rewrite.
+I would start by making it callable and composable:
+- add an MCP transport
+- generate tool schemas and interfaces dynamically from the DB/PL/SQL surface (and version them)
+- treat the Oracle core as a tool server (auth, audit, contracts)
+
+## It was basically a "tool server" for Oracle before MCP was mainstream
+
+If you squint, a PL/SQL package surface looks like a tool surface:
 - stable operations
 - transactional semantics
 - auditable execution paths
 
-In that sense, it was a "server" for calling Oracle business operations long before modern tool schemas and transports became mainstream.
+Modern stacks give this a better shape (schemas, auth methods, transports), but the architectural intent is the same:
+make the data core callable via a stable set of operations.
 
-## Does "RDBMS returns JSON/XML" still make sense today?
+## Why I care now: "Agents will replace all software"
 
-I think yes, in the right places:
-- when you need strong consistency
-- when relational semantics are complex and central
-- when latency matters and chatty service graphs hurt
-- when the team is small and correctness is expensive
-
-A modern version of the pattern:
-- stored procedures return JSON (or XML where needed)
-- upstream services/clients treat the DB layer as an API boundary
-- contracts are versioned and tested
-
-Not universal. Still valid.
-
-## "Agents will replace ALL software": why this story matters again
-
-Microsoft CEO Satya Nadella has been quoted (often in a viral framing) as essentially predicting that business apps will shift toward agent-driven interaction.
+Satya Nadella has been quoted (often with viral framing) as predicting that business apps shift toward agent-driven interaction.
 
 Video: https://www.youtube.com/watch?v=uGOLYz2pgr8
 
-Even ignoring hype, the direction feels real:
-- the UI becomes more "agent-shaped"
+Ignore the hype and look at the shape:
+- the UI becomes more agent-like
 - the durable layer becomes the tool/API layer
-- SaaS becomes more composable and less monolithic
 
-In that world, BSS systems do not disappear. They become tool servers:
-- discoverable operations (contracts, billing, entitlements)
-- strict auth and audit
-- stable, versioned interfaces
-- predictable performance
+In that world, BSS systems do not disappear.
+They become tool servers for billing, entitlements, and contracts.
 
-And "algorithms near the data" becomes interesting again because agent runtimes reward:
+And "algorithms near the data" becomes relevant again because agent runtimes reward:
 - fewer hops
 - clearer contracts
 - stronger transactional semantics
 
-## What I'd do differently today
+## What I'd do differently today (same idea, more discipline)
 
-If I were rebuilding the same evolution now, I'd keep the core idea but add modern discipline:
+If I rebuilt this evolution today, I would keep the core idea and add modern guardrails:
 - explicit API contracts + contract tests
 - correlation IDs end-to-end
-- structured logging for every operation
+- structured logs and audit trails for every operation
 - strict versioning strategy for procedures/endpoints
-- automated CI for PL/SQL packaging, linting, and deploys
-- clear split between:
-  - write paths (transactional)
-  - read models (caches, materialized views, search)
+- CI for packaging, linting, and deploys
+- clear split between write paths (transactions) and read models (caches/search)
 
 ## Closing
 
-This was not "the best architecture on paper".
+This was not "the prettiest architecture on paper".
 It was a durable architecture under telco constraints:
 - correctness over cleverness
 - simplicity over sprawl
 - evolvability over purity
 
-And the agent era might make this style popular again, just with better tooling, transport, packaging, and standards.
-
-## TODOs (to turn this into a real case study)
-
-- timeline: years + major transitions (Delphi, mod_plsql, XML/XSLT, REST/JSON)
-- scale: TPS, DB size, subscriber/contracts counts, batch volumes
-- team: size, cadence, biggest operational lessons
-- one incident story: why transactions-at-the-core mattered
-- one migration story: feature moved from client code -> PL/SQL -> API without breaking clients
+If you want this as a real case study, I can add a follow-up with:
+timeline, scale metrics, team size, and a couple of war stories.
