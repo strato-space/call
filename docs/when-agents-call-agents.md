@@ -11,7 +11,7 @@ As a CTO or PMO lead, you want to ask—anytime:
 - What changed since yesterday?
 - What’s the next best decision?
 
-And ideally, every morning before standup, you want a clean **independent audit** per project: status, risks, blockers, opportunities—consistent format, comparable across projects.
+And ideally, every morning before stand-up, you want a clean **independent audit** per project: status, risks, blockers, opportunities—consistent format, comparable across projects.
 
 That is not a “single assistant” problem.
 
@@ -115,7 +115,7 @@ What’s emerging in practice:
 - **Skills** — portable capability modules
 - **AgentCard** — portable agent definition (reduces vendor lock)
 - **Agent→Agent composition** — delegation as the default primitive
-- **True REPL loop** — Read Eval Print Loop: run → inspect → self-reflect → patch → rerun
+- **True REPL loop** — Read-Eval-Print Loop: run → inspect → self-reflect → patch → rerun
 
 The point isn’t complexity. The point is **composability and compatibility**.
 
@@ -136,4 +136,4 @@ uv run fast-agent --card agents_as_tools_simple
 - **Discord**: https://discord.com/invite/xg5cJ7ndN6
 
 If you want to experiment: run the FastAgent workflow examples.
-If you want to debate architecture - welcome to Discord / LinkedIn.
+If you want to debate architecture, ping me on Discord or LinkedIn.
