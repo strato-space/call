@@ -1549,7 +1549,7 @@ title: Human Title
 project: ProjectName
 agent: AgentName
 model: gpt-5
-engine: openai
+engine: fast-agent
 orchestration: llm
 
 model-settings-gpt-5:
@@ -1572,12 +1572,16 @@ Your instruction text here...
 | `project` | string | Project name |
 | `agent` | string | Agent name |
 | `model` | string | Model identifier (`gpt-5`, `gpt-4.1`) |
-| `engine` | string | Runtime engine (`openai`, `openai-agents`) |
+| `engine` | string | Runtime engine (`fast-agent`, `openai-agents`) |
 | `orchestration` | string | Control flow (`llm`, `handoff`, `langgraph`) |
 | `model-settings` | object | Generic model settings |
 | `model-settings-<model>` | object | Model-specific settings |
 | `tags` | array | Classification tags |
 | `version` | string | Card version |
+
+Notes:
+- Default engine is `fast-agent` (override via `CALL_DEFAULT_ENGINE`).
+- Cards may also use AgentCard-style YAML frontmatter; when the Markdown body is empty, `instruction` is used as the prompt.
 
 **Model Settings Fields:**
 
