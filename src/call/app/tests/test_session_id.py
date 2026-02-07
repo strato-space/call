@@ -7,6 +7,12 @@ from call.lib.api import RunnableConfig
 
 def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
     api = importlib.import_module("call.lib.api")
+    app_call = importlib.import_module("call.app.call")
+
+    async def _noop_notify(**_kwargs):
+        return None
+
+    monkeypatch.setattr(app_call, "_notify_digest_if_applicable", _noop_notify, raising=False)
     monkeypatch.setattr(
         api,
         "resolve_agent",
@@ -46,85 +52,26 @@ def _setup_resolve_single(monkeypatch, name="NewsAggr", project="UxFab"):
 
 def test_session_id_in_success_response(monkeypatch):
     api = _setup_resolve_single(monkeypatch)
-    app_call = importlib.import_module("call.app.call")
+    runtime = importlib.import_module("call.app.runtime")
 
-    class _Cfg:
-        def __init__(self, out):
-            self._last_final_output = out
-            self.id = "NewsAggr"
-            self.type = "agent"
-            self.project = "UxFab"
-            self.agent = "NewsAggr"
-            self.prompt = None
-            self.path = "/p/UxFab/NewsAggr/agent.md"
-            self.url = None
-            self.goal = None
-            self.instructions = ""
-            self.model = "gpt-4.1-mini"
-            self.model_settings = ModelSettings()
-            self.attributes = {}
-            self.tools = []
-            self.mcp = []
+    async def fake_run_cfg_turn(*, cfg, conversation_id, input_text):
+        return importlib.import_module("types").SimpleNamespace(output_text="ok")
 
-    class _DummyAgent:
-        pass
+    monkeypatch.setattr(runtime, "run_cfg_turn", fake_run_cfg_turn, raising=True)
 
-    class _DummySession:
-        def __init__(self, sid):
-            self.id = sid
-
-    async def fake_build_and_run_agent(*, cfg, user_input=""):
-        # Simulate a created session id (agentless format chat[:thread])
-        return _DummyAgent(), _Cfg("ok"), _DummySession("-100123:10")
-
-    monkeypatch.setattr(
-        app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True
-    )
-
-    res = api.call(project="UxFab", agent="NewsAggr", input="hello")
+    res = api.call(project="UxFab", agent="NewsAggr", input="hello", chat_id=-100123, thread_id=10)
     assert res.get("ok") is True
     assert res.get("session_id") == "-100123:10"
 
 
 def test_session_id_override_parsed_and_used(monkeypatch):
     api = _setup_resolve_single(monkeypatch)
-    app_call = importlib.import_module("call.app.call")
+    runtime = importlib.import_module("call.app.runtime")
 
-    class _Cfg:
-        def __init__(self, out):
-            self._last_final_output = out
-            self.id = "NewsAggr"
-            self.type = "agent"
-            self.project = "UxFab"
-            self.agent = "NewsAggr"
-            self.prompt = None
-            self.path = "/p/UxFab/NewsAggr/agent.md"
-            self.url = None
-            self.goal = None
-            self.instructions = ""
-            self.model = "gpt-4.1-mini"
-            self.model_settings = ModelSettings()
-            self.attributes = {}
-            self.tools = []
-            self.mcp = []
+    async def fake_run_cfg_turn(*, cfg, conversation_id, input_text):
+        return importlib.import_module("types").SimpleNamespace(output_text="ok")
 
-    class _DummyAgent:
-        pass
-
-    class _DummySession:
-        def __init__(self, sid):
-            self.id = sid
-
-    async def fake_build_and_run_agent(*, cfg, user_input=""):
-        # Build SID from globals set by lib.api (parsed from session_id)
-        chat = getattr(app_call, "selected_chat_id", None)
-        thr = getattr(app_call, "selected_thread_id", None)
-        sid = f"{cfg.agent}:{chat}:{thr}" if thr is not None else f"{cfg.agent}:{chat}"
-        return _DummyAgent(), _Cfg("ok"), _DummySession(sid)
-
-    monkeypatch.setattr(
-        app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True
-    )
+    monkeypatch.setattr(runtime, "run_cfg_turn", fake_run_cfg_turn, raising=True)
 
     override = "-100888:77"
     res = api.call(
@@ -136,36 +83,12 @@ def test_session_id_override_parsed_and_used(monkeypatch):
 
 def test_no_session_without_routing(monkeypatch):
     api = _setup_resolve_single(monkeypatch)
-    app_call = importlib.import_module("call.app.call")
+    runtime = importlib.import_module("call.app.runtime")
 
-    class _Cfg:
-        def __init__(self, out):
-            self._last_final_output = out
-            self.id = "NewsAggr"
-            self.type = "agent"
-            self.project = "UxFab"
-            self.agent = "NewsAggr"
-            self.prompt = None
-            self.path = "/p/UxFab/NewsAggr/agent.md"
-            self.url = None
-            self.goal = None
-            self.instructions = ""
-            self.model = "gpt-4.1-mini"
-            self.model_settings = ModelSettings()
-            self.attributes = {}
-            self.tools = []
-            self.mcp = []
+    async def fake_run_cfg_turn(*, cfg, conversation_id, input_text):
+        return importlib.import_module("types").SimpleNamespace(output_text="ok")
 
-    class _DummyAgent:
-        pass
-
-    async def fake_build_and_run_agent(*, cfg, user_input=""):
-        # No session created path
-        return _DummyAgent(), _Cfg("ok"), None
-
-    monkeypatch.setattr(
-        app_call, "build_and_run_agent", fake_build_and_run_agent, raising=True
-    )
+    monkeypatch.setattr(runtime, "run_cfg_turn", fake_run_cfg_turn, raising=True)
 
     res = api.call(project="UxFab", agent="NewsAggr", input="hello")
     assert res.get("ok") is True

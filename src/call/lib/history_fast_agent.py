@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fast_agent.mcp.prompt_message_extended import PromptMessageExtended
 
 from call.lib.history_models import HistoryMessage, normalize_role
 
+
+logger = logging.getLogger(__name__)
 
 def messages_to_fast_agent(messages: list[HistoryMessage]) -> list[PromptMessageExtended]:
     out: list[PromptMessageExtended] = []
@@ -30,7 +33,8 @@ def fast_agent_to_messages(fa_messages: list[PromptMessageExtended]) -> list[His
         try:
             if msg.stop_reason is not None:
                 stop_reason = str(msg.stop_reason)
-        except Exception:
+        except Exception as exc:
+            logger.debug("[history] failed normalizing stop_reason: %s", exc)
             stop_reason = None
 
         out.append(

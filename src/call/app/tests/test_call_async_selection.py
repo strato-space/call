@@ -36,27 +36,21 @@ def test_call_too_many_rows(monkeypatch):
 def test_call_success_with_prompt_override(monkeypatch):
     api = importlib.import_module("call.lib.api")
 
-    # Patch build_and_run_agent to avoid heavy runtime and return a cfg with _last_final_output
+    # Patch middleware runtime to avoid network/engine execution.
+    runtime = importlib.import_module("call.app.runtime")
     app_call = importlib.import_module("call.app.call")
 
-    class _Cfg:
-        def __init__(self, out):
-            self._last_final_output = out
+    async def _noop_notify(**_kwargs):
+        return None
 
-    class _DummyAgent:
-        pass
+    monkeypatch.setattr(app_call, "_notify_digest_if_applicable", _noop_notify, raising=False)
 
-    class _DummySession:
-        pass
-
-    async def fake_build_and_run_agent(*, cfg, user_input=""):
-        return (
-            _DummyAgent(),
-            _Cfg(f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{user_input}"),
-            _DummySession(),
+    async def fake_run_cfg_turn(*, cfg, conversation_id, input_text):
+        return types.SimpleNamespace(
+            output_text=f"ok:{cfg.agent}:{cfg.prompt}:{cfg.project}:{input_text}"
         )
 
-    monkeypatch.setattr(app_call, "build_and_run_agent", fake_build_and_run_agent)
+    monkeypatch.setattr(runtime, "run_cfg_turn", fake_run_cfg_turn, raising=True)
 
     res = api.call(
         project="UxFab",

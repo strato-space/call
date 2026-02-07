@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -10,6 +11,8 @@ from call.lib.paths import default_event_db_path
 
 
 SCHEMA_VERSION = "call.history.v1"
+
+logger = logging.getLogger(__name__)
 
 
 def _db_path() -> str:
@@ -65,14 +68,26 @@ def load_history(conversation_id: str, agent_name: str) -> list[HistoryMessage]:
         if not isinstance(raw, list):
             return []
         out: list[HistoryMessage] = []
+        skipped = 0
+        first_skip: str | None = None
         for item in raw:
             try:
                 out.append(HistoryMessage.model_validate(item))
-            except Exception:
-                # Best-effort salvage; never crash on malformed persisted history.
-                continue
+            except Exception as exc:
+                skipped += 1
+                if first_skip is None:
+                    first_skip = f"{type(exc).__name__}: {exc}"
+        if skipped:
+            logger.debug(
+                "[history] loaded %s messages for %s (skipped=%s, first=%s)",
+                len(out),
+                sid,
+                skipped,
+                first_skip,
+            )
         return out
-    except Exception:
+    except Exception as exc:
+        logger.debug("[history] load failed for %s: %s", sid, exc)
         return []
 
 
@@ -114,4 +129,3 @@ def clear_history(conversation_id: str, agent_name: str) -> None:
     with sqlite3.connect(db_path) as conn:
         _ensure_schema(conn)
         conn.execute("DELETE FROM conversation_history WHERE session_id = ?", (sid,))
-

@@ -184,5 +184,12 @@ def parse_metadata_and_prompt(
         return meta
 
     prompt_text = working_text.strip()
+    if not prompt_text:
+        # AgentCard compatibility: support instruction text living in frontmatter only.
+        for key in ("instruction", "instructions"):
+            candidate = meta.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                prompt_text = candidate.strip()
+                break
     meta["prompt"] = prompt_text if prompt_text else ""
     return meta

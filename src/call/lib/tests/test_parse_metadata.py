@@ -43,6 +43,22 @@ Hello from body
     assert meta["prompt"] == "Hello from body"
 
 
+def test_parse_frontmatter_instruction_field_used_when_body_empty():
+    text = """\
+---
+type: agent
+name: Demo
+instruction: "Hello from frontmatter"
+---
+"""
+
+    meta = parse_metadata_and_prompt(text)
+
+    assert meta["type"] == "agent"
+    assert meta["name"] == "Demo"
+    assert meta["prompt"] == "Hello from frontmatter"
+
+
 def test_parse_frontmatter_and_legacy_metadata_merges_with_legacy_winning():
     text = """\
 ---

@@ -19,6 +19,27 @@ All notable changes to this project will be documented in this file.
 - 18:51 Rename the "When Agents Call Agents" doc to a shorter filename and simplify the title. (files: `docs/when-agents-call-agents.md`, `README.md`)
 - 19:20 Polish the "When Agents Call Agents" doc headings and links; fix the FastAgent example command. (file: `docs/when-agents-call-agents.md`)
 
+## 2026-02-07
+
+### PROBLEM SOLVED
+- `call` runtime history and engine execution were tightly coupled to the OpenAI Agents SDK session model, making it hard to run mixed engines or keep history stable across engine changes.
+
+### FEATURE IMPLEMENTED
+- Added a call-owned engine middleware layer with call-owned SQLite history:
+  - Default engine: `fast-agent` (keeps `openai-agents` available as a secondary engine).
+  - Mixed-mode composition via a built-in `call_agent` tool.
+- Added AgentCard-compatible YAML frontmatter support (keeps legacy METADATA/PROMPT blocks).
+- Updated `clear_session` to clear call-owned history (`conversation_history`) in addition to legacy tables.
+
+### CHANGES
+- `src/call/app/runtime.py`: new canonical runtime entrypoint that routes `cfg + conversation_id + input` through engine adapters and call-owned history.
+- `src/call/lib/history_db.py`: new call-owned `conversation_history` store (env override `CALL_DB`).
+- `src/call/engine/*`: engine adapters for `fast-agent` and `openai-agents`, plus shared context + mixed-mode `call_agent` tool.
+- `src/call/lib/utils.py`: AgentCard frontmatter `instruction` fallback when body is empty.
+- `src/call/lib/api.py`: route execution through `call.app.runtime` and restore Telegram digest publishing behavior.
+- `docs/cards.md`: document YAML frontmatter + engine semantics.
+- Bump package version to `0.0.8`. (file: `pyproject.toml`)
+
 ## 2026-02-02
 
 ### PROBLEM SOLVED

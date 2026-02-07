@@ -1344,15 +1344,27 @@ async def call_async(
             )
 
         try:
-            # Build and run the agent once with a ready config (returns directly, no context manager)
-            agent_obj, _cfg, _session = await app_call.build_and_run_agent(
-                cfg=cfg, user_input=((getattr(cfg, "input", None) or input) or "")
+            # Run one turn via call-owned middleware (engine + history owned by call).
+            from call.app.runtime import run_cfg_turn
+
+            user_text = (getattr(cfg, "input", None) or input) or ""
+            conversation_id = sid_override
+            if not conversation_id:
+                if selected_chat_id is not None:
+                    conversation_id = (
+                        f"{selected_chat_id}:{selected_thread_id}"
+                        if (selected_thread_id is not None)
+                        else f"{selected_chat_id}"
+                    )
+                else:
+                    conversation_id = "local"
+
+            resp = await run_cfg_turn(
+                cfg=cfg,
+                conversation_id=conversation_id,
+                input_text=str(user_text),
             )
-            final_output = getattr(_cfg, "_last_final_output", None)
-            try:
-                actual_sid = getattr(_session, "id", None)
-            except Exception:
-                actual_sid = None
+            final_output = resp.output_text
         except Exception as e:
             # Convert pipeline errors to structured error; map known tracing 403 to 403
             logging.exception("[api] Pipeline execution failed")
@@ -1426,6 +1438,19 @@ async def call_async(
 
     # If the pipeline returned a plain-text error (e.g., "Error: ...\n\nTraceback ..."),
     # convert it to a structured error envelope to avoid printing stack traces to users.
+    # Mirror legacy app behavior: publish a Telegram digest/error notification (best-effort)
+    # when routing is configured. Telegram bot suppresses duplicates based on status/code.
+    try:
+        await app_call._notify_digest_if_applicable(
+            cfg=cfg,
+            user_input=str((getattr(cfg, "input", None) or input) or ""),
+            step1_output=str(final_output or ""),
+            selected_chat_id=selected_chat_id,
+            selected_thread_id=selected_thread_id,
+        )
+    except Exception as notify_exc:
+        logging.debug("[api] digest notification failed: %s", notify_exc)
+
     if isinstance(final_output, str) and final_output.strip().lower().startswith(
         "error:"
     ):
@@ -1903,7 +1928,9 @@ async def clear_session(
     - If `name` is given: ignored for session id derivation; delete only "chat[:thread]" for the provided chat/thread.
     - If `name` is empty/None: same behavior — delete only "chat[:thread]".
 
-    We operate on two tables if present: messages(session_id) and sessions(id).
+    We operate on two schemas:
+    - call-owned history: conversation_history (conversation_id scope; clears all agents for the chat/thread)
+    - legacy OpenAI Agents tables (if present): messages(session_id) and sessions(id)
     """
 
     # Validate inputs
@@ -1921,6 +1948,10 @@ async def clear_session(
 
         # Detect existing tables once
         cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_history'"
+        )
+        has_call_history = bool(cur.fetchone())
+        cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
         )
         has_messages = bool(cur.fetchone())
@@ -1932,6 +1963,12 @@ async def clear_session(
         # Single candidate: new format only
         sids: List[str] = []
         candidate = _sid_new(int(chat_id), thread_id)
+        if has_call_history:
+            cur.execute(
+                "SELECT session_id FROM conversation_history WHERE conversation_id = ?",
+                (candidate,),
+            )
+            sids += [row[0] for row in cur.fetchall()]
         if has_sessions:
             cur.execute("SELECT id FROM sessions WHERE id = ?", (candidate,))
             sids += [row[0] for row in cur.fetchall()]
@@ -1947,6 +1984,18 @@ async def clear_session(
             conn.close()
             return {"ok": True, "cleared": []}
 
+        # call-owned history: clear all agent sessions for this conversation id once.
+        if has_call_history:
+            try:
+                cur.execute(
+                    "DELETE FROM conversation_history WHERE conversation_id = ?",
+                    (candidate,),
+                )
+                conn.commit()
+            except Exception as exc:
+                conn.rollback()
+                logging.debug("[api] clear_session failed clearing conversation_history %s: %s", candidate, exc)
+
         # Deduplicate and delete
         for sid in sorted(set(sids)):
             try:
@@ -1956,8 +2005,9 @@ async def clear_session(
                     cur.execute("DELETE FROM sessions WHERE id = ?", (sid,))
                 conn.commit()
                 cleared.append(sid)
-            except Exception:
+            except Exception as exc:
                 conn.rollback()
+                logging.debug("[api] clear_session failed clearing legacy tables sid=%s: %s", sid, exc)
                 continue
 
         cur.close()
